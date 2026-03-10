@@ -17,9 +17,10 @@ interface SearchConfigProps {
   onAutopilotTimeChange: (time: string) => void;
   onAutopilotQuantityChange: (quantity: number) => void;
   autopilotRanToday: boolean;
+  totalLeadsGenerated: number;
 }
 
-export function SearchConfig({ config, onChange, onSearch, onStop, isSearching, onOpenCriteria, autopilotEnabled, autopilotTime, autopilotQuantity, onAutopilotToggle, onAutopilotTimeChange, onAutopilotQuantityChange, autopilotRanToday }: SearchConfigProps & { onStop: () => void }) {
+export function SearchConfig({ config, onChange, onSearch, onStop, isSearching, onOpenCriteria, autopilotEnabled, autopilotTime, autopilotQuantity, onAutopilotToggle, onAutopilotTimeChange, onAutopilotQuantityChange, autopilotRanToday, totalLeadsGenerated }: SearchConfigProps & { onStop: () => void }) {
   const [showTimePicker, setShowTimePicker] = useState(false); // Default 10 for auto-pilot
 
   // Helper to handle manual number input clearly
@@ -27,7 +28,12 @@ export function SearchConfig({ config, onChange, onSearch, onStop, isSearching, 
     let val = parseInt(e.target.value);
     if (isNaN(val)) val = 1;
     if (val < 1) val = 1;
-    if (val > 50) val = 50;
+    if (val > 20) val = 20;
+
+    // Hard limit per limits
+    const maxAllowed = Math.max(0, 150 - totalLeadsGenerated);
+    if (val > maxAllowed) val = maxAllowed;
+
     onChange({ maxResults: val });
   };
 
@@ -45,6 +51,9 @@ export function SearchConfig({ config, onChange, onSearch, onStop, isSearching, 
       // Optional: Close picker after selecting minutes if you want auto-close
     }
   };
+
+  const isLimitReached = totalLeadsGenerated >= 150;
+  const maxAllowedInput = Math.max(1, Math.min(20, 150 - totalLeadsGenerated));
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -69,7 +78,7 @@ export function SearchConfig({ config, onChange, onSearch, onStop, isSearching, 
                   Cantidad de Leads
                 </label>
                 <div className="bg-secondary/50 rounded-md px-2 py-1">
-                  <span className="text-xs font-mono text-muted-foreground">MAX: 50</span>
+                  <span className="text-xs font-mono text-muted-foreground">MAX: 20</span>
                 </div>
               </div>
 
@@ -77,7 +86,7 @@ export function SearchConfig({ config, onChange, onSearch, onStop, isSearching, 
                 <input
                   type="range"
                   min="1"
-                  max="50"
+                  max={maxAllowedInput}
                   step="1"
                   value={config.maxResults || 1}
                   onChange={(e) => onChange({ maxResults: parseInt(e.target.value) })}
@@ -89,13 +98,32 @@ export function SearchConfig({ config, onChange, onSearch, onStop, isSearching, 
                 <input
                   type="number"
                   min="1"
-                  max="50"
+                  max={maxAllowedInput}
                   value={config.maxResults}
                   onChange={handleNumberChange}
                   onClick={(e) => e.currentTarget.select()}
                   className="w-16 text-center font-bold text-lg bg-background border-2 border-input rounded-lg py-1 focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-sm"
-                  disabled={isSearching}
+                  disabled={isSearching || isLimitReached}
                 />
+              </div>
+
+              {/* Progress Tracker */}
+              <div className="mt-4 bg-secondary/30 rounded-lg border border-border/50 p-3">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-xs font-semibold text-foreground">Consumo Total</span>
+                  <span className={`text-xs font-mono ${isLimitReached ? 'text-destructive' : 'text-primary'}`}>
+                    {totalLeadsGenerated} / 150
+                  </span>
+                </div>
+                <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all ${isLimitReached ? 'bg-destructive' : 'bg-primary'}`}
+                    style={{ width: `${Math.min(100, (totalLeadsGenerated / 150) * 100)}%` }}
+                  />
+                </div>
+                {isLimitReached && (
+                  <p className="text-xs text-destructive mt-2 font-medium">Has alcanzado el límite máximo permitido.</p>
+                )}
               </div>
             </div>
           </div>
@@ -120,7 +148,8 @@ export function SearchConfig({ config, onChange, onSearch, onStop, isSearching, 
             ) : (
               <button
                 onClick={onSearch}
-                className="w-full h-[48px] flex items-center justify-center rounded-lg font-bold text-sm transition-all shadow-lg shadow-primary/20 bg-primary text-primary-foreground hover:brightness-110 active:scale-[0.98]"
+                disabled={isLimitReached}
+                className="w-full h-[48px] flex items-center justify-center rounded-lg font-bold text-sm transition-all shadow-lg shadow-primary/20 bg-primary text-primary-foreground hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Play className="w-4 h-4 mr-2 fill-current" />
                 Generar Ahora

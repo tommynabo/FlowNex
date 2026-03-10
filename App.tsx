@@ -39,6 +39,7 @@ function App() {
   // History State
   const [history, setHistory] = useState<SearchSession[]>([]);
   const [selectedHistorySession, setSelectedHistorySession] = useState<SearchSession | null>(null);
+  const [totalLeadsGenerated, setTotalLeadsGenerated] = useState(0);
 
   // Autopilot State
   const [autopilotEnabled, setAutopilotEnabled] = useState(autopilotService.getConfig().enabled);
@@ -204,7 +205,9 @@ function App() {
         );
 
         setHistory(sessions);
-        console.log(`[HISTORY] Cargadas ${sessions.length} búsquedas con ${sessions.reduce((sum, s) => sum + s.leads.length, 0)} leads del cloud`);
+        const leadsSum = sessions.reduce((sum, s) => sum + s.leads.length, 0);
+        setTotalLeadsGenerated(leadsSum);
+        console.log(`[HISTORY] Cargadas ${sessions.length} búsquedas con ${leadsSum} leads del cloud`);
       }
     } catch (e) {
       console.error('Error loading history', e);
@@ -270,6 +273,7 @@ function App() {
           leads: results
         };
         setHistory(prev => [newSession, ...prev]);
+        setTotalLeadsGenerated(prev => prev + results.length);
 
         // Save to Supabase (Cloud)
         if (userId) {
@@ -388,6 +392,7 @@ function App() {
           leads: results
         };
         setHistory(prev => [newSession, ...prev]);
+        setTotalLeadsGenerated(prev => prev + results.length);
 
         if (userId) {
           try {
@@ -553,6 +558,7 @@ function App() {
               onAutopilotTimeChange={handleAutopilotTimeChange}
               onAutopilotQuantityChange={handleAutopilotQuantityChange}
               autopilotRanToday={autopilotService.hasRunToday()}
+              totalLeadsGenerated={totalLeadsGenerated}
             />
 
             <AgentTerminal

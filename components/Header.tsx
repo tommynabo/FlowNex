@@ -38,20 +38,7 @@ export function Header({ currentPage, onNavigate, onLogout, userName }: HeaderPr
         </nav>
 
         <div className="flex items-center gap-4">
-          <button className="p-2 hover:bg-secondary rounded-full transition-colors relative">
-            <Bell className="w-5 h-5 text-muted-foreground" />
-            <span className="absolute top-2 right-2 w-2 h-2 bg-primary rounded-full animate-pulse"></span>
-          </button>
-
-          <div className="flex items-center gap-3">
-            {/* Disabled Avatar (Non-interactive) */}
-            <div
-              className="w-8 h-8 bg-secondary rounded-full border border-border flex items-center justify-center cursor-default"
-              title={userName || "Usuario"}
-            >
-              <span className="text-xs font-bold text-muted-foreground">{initials}</span>
-            </div>
-
+          <div className="flex items-center gap-2">
             {/* Separate Logout Button */}
             <button
               onClick={onLogout}

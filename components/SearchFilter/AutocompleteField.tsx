@@ -125,9 +125,19 @@ export function AutocompleteField({
           />
 
           {/* Chevron Icon */}
-          <ChevronDown
-            className={`w-4 h-4 text-zinc-500 transition-transform ${isOpen ? 'rotate-180' : ''}`}
-          />
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setIsOpen(!isOpen);
+            }}
+            className="p-1 hover:bg-zinc-700 rounded-md transition-colors"
+          >
+            <ChevronDown
+              className={`w-4 h-4 text-zinc-500 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+            />
+          </button>
         </div>
 
         {/* Dropdown */}
@@ -141,20 +151,18 @@ export function AutocompleteField({
                     <button
                       key={option.value}
                       onClick={() => handleSelect(option.value)}
-                      className={`w-full text-left px-4 py-2 text-sm transition-colors ${
-                        isSelected
+                      className={`w-full text-left px-4 py-2 text-sm transition-colors ${isSelected
                           ? 'bg-blue-500/20 text-blue-300 font-semibold'
                           : 'text-zinc-300 hover:bg-zinc-700/50'
-                      }`}
+                        }`}
                     >
                       <div className="flex items-center gap-2">
                         {isMulti && (
                           <div
-                            className={`w-4 h-4 rounded border-2 transition-colors ${
-                              isSelected
+                            className={`w-4 h-4 rounded border-2 transition-colors ${isSelected
                                 ? 'bg-blue-500 border-blue-500'
                                 : 'border-zinc-500'
-                            }`}
+                              }`}
                           />
                         )}
                         <span>{option.label}</span>

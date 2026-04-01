@@ -10,7 +10,7 @@ interface LeadsTableProps {
 }
 
 const exportToCSV = (leads: Lead[]) => {
-  const headers = ['Empresa', 'Email', 'Teléfono', 'Web', 'Decisor', 'Cargo', 'LinkedIn', 'Perfil LinkedIn', 'Ubicación', 'CUELLO DE BOTELLA', '🧠 PERFIL PSICOLÓGICO', '🏢 MOMENTO EMPRESARIAL', '💡 ÁNGULO DE VENTA', 'MENSAJE PERSONALIZADO'];
+  const headers = ['Nombre', 'Apellido', 'Email', 'Cargo', 'Perfil LinkedIn', 'CUELLO DE BOTELLA', '🧠 PERFIL PSICOLÓGICO', '🏢 MOMENTO EMPRESARIAL', '💡 ÁNGULO DE VENTA', 'MENSAJE PERSONALIZADO'];
   const escapeCSV = (value: string | undefined) => {
     if (!value) return '';
     const escaped = value.replace(/"/g, '""').replace(/\n/g, ' ').replace(/\r/g, '');
@@ -19,22 +19,25 @@ const exportToCSV = (leads: Lead[]) => {
       : escaped;
   };
 
-  const rows = leads.map(l => [
-    escapeCSV(l.companyName),
-    escapeCSV(l.decisionMaker?.email),
-    escapeCSV(l.decisionMaker?.phone),
-    escapeCSV(l.website),
-    escapeCSV(l.decisionMaker?.name),
-    escapeCSV(l.decisionMaker?.role),
-    escapeCSV(l.decisionMaker?.linkedin),
-    escapeCSV(l.decisionMaker?.linkedin ? l.decisionMaker.linkedin : ''), // Explicit Profile Link
-    escapeCSV(l.location),
-    escapeCSV(l.aiAnalysis?.generatedIcebreaker || 'Pendiente de detección'), // Bottleneck
-    escapeCSV(l.aiAnalysis?.psychologicalProfile || 'Pendiente'),
-    escapeCSV(l.aiAnalysis?.businessMoment || 'Pendiente'),
-    escapeCSV(l.aiAnalysis?.salesAngle || 'Pendiente'),
-    escapeCSV(l.aiAnalysis?.fullMessage || 'Pendiente de generación') // Personalized message
-  ].join(','));
+  const rows = leads.map(l => {
+    const fullName = l.decisionMaker?.name || '';
+    const nameParts = fullName.trim().split(' ');
+    const firstName = nameParts[0] || '';
+    const lastName = nameParts.slice(1).join(' ') || '';
+
+    return [
+      escapeCSV(firstName),
+      escapeCSV(lastName),
+      escapeCSV(l.decisionMaker?.email),
+      escapeCSV(l.decisionMaker?.role),
+      escapeCSV(l.decisionMaker?.linkedin || ''),
+      escapeCSV(l.aiAnalysis?.generatedIcebreaker || 'Pendiente de detección'),
+      escapeCSV(l.aiAnalysis?.psychologicalProfile || 'Pendiente'),
+      escapeCSV(l.aiAnalysis?.businessMoment || 'Pendiente'),
+      escapeCSV(l.aiAnalysis?.salesAngle || 'Pendiente'),
+      escapeCSV(l.aiAnalysis?.fullMessage || 'Pendiente de generación')
+    ].join(',');
+  });
 
   const csvContent = [headers.join(','), ...rows].join('\n');
   const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });

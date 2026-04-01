@@ -250,6 +250,7 @@ TONO (REGLA DE ORO): Directo, pragmático, de igual a igual. Cero humo. Nada de 
 
 FRONTERA DE CONTEXTO: Analiza el perfil del creador/consultor y el tipo de servicio o comunidad que ofrece. Redacta una línea de apertura que conecte su nicho específico (ej. consultoría SEO, coaching de nutrición, comunidad de inversores) con el cuello de botella de escalar operaciones online sin quemarse respondiendo mensajes manuales. No repitas su titular. Demuestra que entiendes cómo funciona su modelo de negocio digital.
 Variables a ingerir para la personalización: Años en el puesto/empresa, sector específico, hitos recientes.
+IMPORTANTE: NUNCA incluyas la despedida "Un saludo", ni "[Tu Nombre]", "[Tu Empresa]", o "[Tu Teléfono]". El mensaje debe cortarse antes de la firma.
 
 DEBES generar exactamente este JSON (sin markdown, solo JSON puro):
 {
@@ -342,6 +343,7 @@ EL OBJETIVO NO ES VENDER, es empujar a ver un Loom/Miro o agendar llamada rápid
 TONO: Directo, pragmático, de igual a igual. Cero humo. Nada de cumplidos vacíos. Lenguaje de negocios digitales.
 
 CONTEXTO (FRONTERA): Analiza el perfil del creador/consultor y el tipo de servicio o comunidad que ofrece. Redacta una línea de apertura que conecte su nicho específico (ej. consultoría SEO, coaching de nutrición, comunidad de inversores) con el cuello de botella de escalar operaciones online sin quemarse respondiendo mensajes manuales. No repitas su titular. Demuestra que entiendes cómo funciona su modelo de negocio digital.
+IMPORTANTE: NUNCA incluyas la despedida "Un saludo", ni "[Tu Nombre]", "[Tu Empresa]", o "[Tu Teléfono]". El mensaje debe cortarse antes de la firma.
 
 Responde SOLO con JSON: {"messageA": "..."}`
                         },
@@ -860,31 +862,30 @@ Genera el mensaje.`
         if (this.isRunning) {
             const leadsToAnalyze = validLeads.slice(0, targetCount);
 
-            for (let i = 0; i < leadsToAnalyze.length && this.isRunning; i++) {
-                const lead = leadsToAnalyze[i];
+            const aiPromises = leadsToAnalyze.map(async (lead) => {
+                if (!this.isRunning) return;
                 lead.aiAnalysis.generatedIcebreaker = `Hola, he visto vuestra web ${lead.website}...`;
                 lead.status = 'ready';
 
-                if (leadsToAnalyze.length <= 20) {
-                    try {
-                        const research = await this.deepResearchLead(lead, (m) => { });
-                        const analysis = await this.generateUltraAnalysis(lead, research);
-                        lead.aiAnalysis.fullAnalysis = analysis.fullAnalysis;
-                        lead.aiAnalysis.psychologicalProfile = analysis.psychologicalProfile;
-                        lead.aiAnalysis.businessMoment = analysis.businessMoment;
-                        lead.aiAnalysis.salesAngle = analysis.salesAngle;
-                        lead.aiAnalysis.fullMessage = analysis.personalizedMessage;
+                try {
+                    const research = await this.deepResearchLead(lead, (m) => { });
+                    const analysis = await this.generateUltraAnalysis(lead, research);
+                    lead.aiAnalysis.fullAnalysis = analysis.fullAnalysis;
+                    lead.aiAnalysis.psychologicalProfile = analysis.psychologicalProfile;
+                    lead.aiAnalysis.businessMoment = analysis.businessMoment;
+                    lead.aiAnalysis.salesAngle = analysis.salesAngle;
+                    lead.aiAnalysis.fullMessage = analysis.personalizedMessage;
 
-                        // Generate Message A (Product-focused)
-                        const messages = await this.generateOneMessage(lead);
-                        lead.messageA = messages.messageA;
-                    } catch (e) {
-                        lead.aiAnalysis.fullMessage = `Contacto disponible en ${lead.website}`;
-                        // Fallback message
-                        lead.messageA = `Hola ${lead.decisionMaker?.name || 'equipo'}, quisiera hablar sobre automatización.`;
-                    }
+                    // Generate Message A (Product-focused)
+                    const messages = await this.generateOneMessage(lead);
+                    lead.messageA = messages.messageA;
+                } catch (e) {
+                    lead.aiAnalysis.fullMessage = `Contacto disponible en ${lead.website}`;
+                    // Fallback message
+                    lead.messageA = `Hola ${lead.decisionMaker?.name || 'equipo'}, quisiera hablar sobre automatización.`;
                 }
-            }
+            });
+            await Promise.all(aiPromises);
         }
 
         onLog(`[GMAIL] 🏁 FINALIZADO: ${validLeads.length} leads listos`);
@@ -1041,11 +1042,15 @@ Genera el mensaje.`
 
                 const POSTS_SCRAPER = 'LQQIXN9Othf8f7R5n';
 
-                // Process AI only for the needed unique profiles
-                for (let i = 0; i < candidatesToProcess.length && this.isRunning; i++) {
-                    if (validLeads.length >= targetCount) break;
+                const prevCount = validLeads.length;
+                const processCount = Math.min(candidatesToProcess.length, targetCount - prevCount);
+                if (processCount <= 0) break;
 
-                    const candidate = candidatesToProcess[i];
+                const candidatesBatch = candidatesToProcess.slice(0, processCount);
+
+                const aiPromises = candidatesBatch.map(async (candidate) => {
+                    if (!this.isRunning) return null;
+
                     onLog(`[RESEARCH] 🧠 Analizando: ${candidate.decisionMaker?.name}...`);
 
                     let recentPostsText = "";
@@ -1089,11 +1094,18 @@ Genera el mensaje.`
                         candidate.messageA = messages.messageA;
                         candidate.status = 'ready';
 
-                        validLeads.push(candidate);
-                        onLog(`[SUCCESS] ✅ Lead ${validLeads.length}/${targetCount}: ${candidate.companyName}`);
-
+                        return candidate;
                     } catch (e) {
                         onLog(`[RESEARCH] ⚠️ Análisis fallido para ${candidate.decisionMaker?.name}`);
+                        return null;
+                    }
+                });
+
+                const results = await Promise.all(aiPromises);
+                for (const candidate of results) {
+                    if (candidate && validLeads.length < targetCount) {
+                        validLeads.push(candidate);
+                        onLog(`[SUCCESS] ✅ Lead ${validLeads.length}/${targetCount}: ${candidate.companyName}`);
                     }
                 }
 

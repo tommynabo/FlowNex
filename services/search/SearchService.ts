@@ -31,7 +31,7 @@ export class SearchService {
         try {
             console.log('[INTERPRET] 📡 Llamando /api/openai...');
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 sec timeout
+            const timeoutId = setTimeout(() => controller.abort(), 300000); // 300 sec timeout (uncapped)
 
             // Llamar a nuestra API route privada en lugar de OpenAI directamente
             const response = await fetch('/api/openai', {
@@ -321,8 +321,8 @@ IMPORTANTE: Responde SOLO con JSON válido.`
             const controller = new AbortController();
             const timeoutId = setTimeout(() => {
                 controller.abort();
-                console.error('[MESSAGE] TIMEOUT (15s)');
-            }, 15000);
+                console.error('[MESSAGE] TIMEOUT (300s)');
+            }, 300000); // 300 sec timeout (uncapped)
 
             const response = await fetch('/api/openai', {
                 method: 'POST',
@@ -408,8 +408,8 @@ Genera el mensaje.`
             const controller = new AbortController();
             const timeoutId = setTimeout(() => {
                 controller.abort();
-                console.error('[APIFY] TIMEOUT en POST /runs (10s)');
-            }, 10000);
+                console.error('[APIFY] TIMEOUT en POST /runs (300s)');
+            }, 300000); // 300 sec timeout (uncapped)
 
             startResponse = await fetch(startUrl, {
                 method: 'POST',
@@ -452,7 +452,7 @@ Genera el mensaje.`
         // STAGE 2: Poll status con timeout MAX 2 minutos
         let isFinished = false;
         let pollCount = 0;
-        const MAX_POLLS = 24; // 24 * 5s = 120s
+        const MAX_POLLS = 600; // 600 * 5s = 3000s (uncapped)
 
         while (!isFinished && this.isRunning && pollCount < MAX_POLLS) {
             await new Promise(r => setTimeout(r, 5000));
@@ -623,7 +623,7 @@ Genera el mensaje.`
         // Check Hard Limit
         let targetCount = config.maxResults;
         if (!targetCount || targetCount < 1) targetCount = 1;
-        if (targetCount > 20) targetCount = 20;
+        // if (targetCount > 20) targetCount = 20; // Removed limit
 
         let query = `${interpreted.searchQuery} ${interpreted.location}`;
 
@@ -910,7 +910,7 @@ Genera el mensaje.`
         // Check Hard Limit
         let targetCount = config.maxResults;
         if (!targetCount || targetCount < 1) targetCount = 1;
-        if (targetCount > 20) targetCount = 20;
+        // if (targetCount > 20) targetCount = 20; // Removed limit
 
         const validLeads: Lead[] = [];
         let attempts = 0;

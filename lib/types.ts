@@ -1,6 +1,6 @@
 export type PlatformSource = 'gmail' | 'instagram' | 'tiktok';
 export type SearchMode = 'fast' | 'deep';
-export type PageView = 'login' | 'dashboard' | 'campaigns';
+export type PageView = 'login' | 'dashboard' | 'generator' | 'campaigns' | 'history';
 export type VslSentStatus = 'pending' | 'sent' | 'opened' | 'clicked' | 'converted';
 export type AudienceTier = 'nano' | 'micro' | 'mid' | 'macro';
 

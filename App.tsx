@@ -452,7 +452,7 @@ addLog(`[DB] Search registered (ID: ${searchId})`);
           </div>
         )}
 
-        {currentPage === 'campaigns' && (
+        {currentPage === 'generator' && (
           <div className="animate-[fadeIn_0.3s_ease-out] space-y-6">
             <SearchConfig
               config={config}
@@ -474,13 +474,34 @@ addLog(`[DB] Search registered (ID: ${searchId})`);
               leads={leads}
               onViewMessage={setSelectedLead}
             />
+          </div>
+        )}
 
-            <CampaignsView
-              history={history}
-              campaigns={campaigns}
-              onSelectSession={handleViewSessionResults}
-              onCreateCampaign={() => setShowCampaignCreator(true)}
-            />
+        {currentPage === 'campaigns' && (
+          <div className="animate-[fadeIn_0.3s_ease-out] space-y-6">
+            <div className="bg-card border border-border rounded-xl p-6">
+              <CampaignsView
+                viewType="campaigns"
+                history={history}
+                campaigns={campaigns}
+                onSelectSession={handleViewSessionResults}
+                onCreateCampaign={() => setShowCampaignCreator(true)}
+              />
+            </div>
+          </div>
+        )}
+
+        {currentPage === 'history' && (
+          <div className="animate-[fadeIn_0.3s_ease-out] space-y-6">
+            <div className="bg-card border border-border rounded-xl p-6">
+              <CampaignsView
+                viewType="history"
+                history={history}
+                campaigns={campaigns}
+                onSelectSession={handleViewSessionResults}
+                onCreateCampaign={() => setShowCampaignCreator(true)}
+              />
+            </div>
           </div>
         )}
 

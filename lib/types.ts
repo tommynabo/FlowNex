@@ -1,15 +1,15 @@
-export type PlatformSource = 'gmail' | 'linkedin' | 'instagram';
+export type PlatformSource = 'gmail' | 'instagram' | 'tiktok';
 export type SearchMode = 'fast' | 'deep';
 export type PageView = 'login' | 'dashboard' | 'campaigns';
+export type VslSentStatus = 'pending' | 'sent' | 'opened' | 'clicked' | 'converted';
+export type AudienceTier = 'nano' | 'micro' | 'mid' | 'macro';
 
-export interface ApexEngineConfig {
-  targetIndustries: string[];
-  companySizes: string[];
-  requiredTitles: string[];
-  excludeTitles: string[];
-  dailyContactLimit: number;
-  enableNPLDetection: boolean;
-  batchScrapingStrategy: 'provincial' | 'alphabetical' | 'random';
+export interface FlowNextConfig {
+  targetNiches: string[];
+  targetHashtags: string[];
+  followerRanges: { label: string; min: number; max: number }[];
+  dailyEmailLimit: number;
+  vslLink: string;
 }
 
 export interface ProjectConfig {
@@ -17,7 +17,7 @@ export interface ProjectConfig {
   clientName: string;
   primaryColor: string;
   targets: {
-    icp: string; // Ideal Customer Profile description
+    icp: string;
     locations: string[];
   };
   enabledPlatforms: PlatformSource[];
@@ -25,38 +25,38 @@ export interface ProjectConfig {
     defaultDepth: number;
     defaultMode: SearchMode;
   };
-  apexEngineConfig?: ApexEngineConfig;
+  flownextConfig?: FlowNextConfig;
 }
 
 export interface Lead {
   id: string;
   source: PlatformSource;
-  companyName: string;
-  website?: string;
-  socialUrl?: string;
+  ig_handle?: string;
+  follower_count?: number;
+  niche?: string;
+  audience_tier?: AudienceTier;
   location?: string;
   decisionMaker?: {
     name: string;
-    role: string; // e.g., "Founder", "Owner", "CEO"
+    role: string;
     email: string;
     phone?: string;
-    linkedin?: string;
-    facebook?: string;
     instagram?: string;
   };
   aiAnalysis: {
     summary: string;
     painPoints: string[];
     generatedIcebreaker: string;
-    fullMessage: string;
-    fullAnalysis: string; // Legacy/Fallback
-    psychologicalProfile: string; // New structured field
-    businessMoment: string;       // New structured field
-    salesAngle: string;           // New structured field
+    coldEmailSubject: string;
+    coldEmailBody: string;
+    vslPitch: string;
+    fullAnalysis: string;
+    psychologicalProfile: string;
+    engagementSignal: string;
+    salesAngle: string;
   };
-  // New fields for Marcos' messages
-  messageA?: string; // Automation-focused message
-  isNPLPotential?: boolean;
+  vsl_sent_status?: VslSentStatus;
+  email_status?: 'pending' | 'sent' | 'bounced' | 'replied';
   status: 'scraped' | 'enriched' | 'ready' | 'contacted' | 'replied' | 'discarded';
 }
 
@@ -83,4 +83,10 @@ export interface SearchSession {
   source: PlatformSource;
   resultsCount: number;
   leads: Lead[];
+}
+
+export interface VslStats {
+  emailsDelivered: number;
+  vslClicks: number;
+  conversions: number;
 }

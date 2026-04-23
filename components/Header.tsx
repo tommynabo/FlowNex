@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, Bell, LogOut } from 'lucide-react';
+import { Instagram, LogOut, Zap } from 'lucide-react';
 import { PageView } from '../lib/types';
 
 interface HeaderProps {
@@ -27,14 +27,14 @@ export function Header({ currentPage, onNavigate, onLogout, userName }: HeaderPr
       <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
         <div className="flex items-center gap-2 cursor-pointer" onClick={() => onNavigate('dashboard')}>
           <div className="w-8 h-8 bg-primary/20 rounded-lg flex items-center justify-center border border-primary/30">
-            <Activity className="w-5 h-5 text-primary" />
+            <Zap className="w-5 h-5 text-primary" />
           </div>
-          <span className="font-bold text-lg tracking-tight">Apex<span className="text-primary">Engine</span></span>
+          <span className="font-bold text-lg tracking-tight">Flow<span className="text-primary">Next</span></span>
         </div>
 
         <nav className="hidden md:flex items-center gap-8 text-sm font-medium">
-          <a onClick={() => onNavigate('dashboard')} className={getLinkClass('dashboard')}>Panel</a>
-          <a onClick={() => onNavigate('campaigns')} className={getLinkClass('campaigns')}>Historial de Búsquedas</a>
+          <a onClick={() => onNavigate('dashboard')} className={getLinkClass('dashboard')}>Dashboard</a>
+          <a onClick={() => onNavigate('campaigns')} className={getLinkClass('campaigns')}>Campaigns</a>
         </nav>
 
         <div className="flex items-center gap-4">
@@ -43,7 +43,7 @@ export function Header({ currentPage, onNavigate, onLogout, userName }: HeaderPr
             <button
               onClick={onLogout}
               className="p-2 hover:bg-destructive/10 hover:text-destructive rounded-full transition-colors text-muted-foreground"
-              title="Cerrar Sesión"
+              title="Sign Out"
             >
               <LogOut className="w-4 h-4" />
             </button>

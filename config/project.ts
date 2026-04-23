@@ -1,31 +1,31 @@
 import { ProjectConfig } from '../lib/types';
 
 export const PROJECT_CONFIG: ProjectConfig = {
-    clientId: 'apex_engine_global',
-    clientName: 'Apex Engine',
-    primaryColor: 'hsl(210, 100%, 50%)', // Dark blue for official look
+    clientId: 'flownext_global',
+    clientName: 'FlowNext',
+    primaryColor: 'hsl(152, 100%, 50%)', // Neon green – Flow State energy
     targets: {
-        icp: 'Dueños y Directivos de empresas B2B de servicios (CEO, Fundador, Socio, COO)',
-        locations: ['España'], // National scope
+        icp: 'English-speaking Fitness & Personal Development content creators on Instagram/TikTok (10K-1M followers)',
+        locations: ['United States', 'United Kingdom', 'Canada', 'Australia'],
     },
-    enabledPlatforms: ['linkedin'],
+    enabledPlatforms: ['instagram'],
     searchSettings: {
-        defaultDepth: 10,
+        defaultDepth: 20,
         defaultMode: 'fast'
     },
-    // New specific settings
-    apexEngineConfig: {
-        targetIndustries: ['Agencias de Marketing B2B', 'Consultoras de Negocio', 'Empresas de Mantenimiento Industrial'],
-        companySizes: ['1-10', '11-50', '51-200'],
-        requiredTitles: [
-            'CEO', 'Fundador', 'Socio', 'COO', 'Owner',
-            'Propietario', 'Director General', 'Gerente', 'Managing Director'
+    flownextConfig: {
+        targetNiches: ['fitness', 'gym', 'workout', 'personaldev', 'mindset', 'selfimprovement', 'motivation'],
+        targetHashtags: [
+            '#fitnesscoach', '#fitnessmotivation', '#personaltrainer',
+            '#personaldevelopment', '#mindset', '#selfimprovement',
+            '#gymlife', '#workout', '#healthylifestyle', '#lifecoach'
         ],
-        excludeTitles: [
-            'Agente', 'Asesor', 'Comercial', 'Consultor', 'Franquiciado'
+        followerRanges: [
+            { label: 'Nano', min: 10_000, max: 50_000 },
+            { label: 'Micro', min: 50_000, max: 200_000 },
+            { label: 'Mid', min: 200_000, max: 1_000_000 },
         ],
-        dailyContactLimit: 25, 
-        enableNPLDetection: true,
-        batchScrapingStrategy: 'provincial' // or 'alphabetical'
+        dailyEmailLimit: 100,
+        vslLink: 'https://flownext.io/vsl',
     }
 };

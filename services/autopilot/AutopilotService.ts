@@ -13,6 +13,8 @@ export interface AutopilotConfig {
   enabled: boolean;
   scheduledTime: string;       // "HH:MM" format
   leadsQuantity: number;       // Number of leads to search
+  dailyEmailLimit: number;     // Max emails to send per day
+  emailsSentToday: number;     // Emails sent so far today
   lastRunDate: string | null;  // "YYYY-MM-DD" to track daily execution
 }
 
@@ -43,6 +45,8 @@ class AutopilotService {
           enabled: parsed.enabled ?? false,
           scheduledTime: parsed.scheduledTime ?? '09:00',
           leadsQuantity: parsed.leadsQuantity ?? 10,
+          dailyEmailLimit: parsed.dailyEmailLimit ?? 100,
+          emailsSentToday: parsed.emailsSentToday ?? 0,
           lastRunDate: parsed.lastRunDate ?? null,
         };
       }
@@ -53,6 +57,8 @@ class AutopilotService {
       enabled: false,
       scheduledTime: '09:00',
       leadsQuantity: 10,
+      dailyEmailLimit: 100,
+      emailsSentToday: 0,
       lastRunDate: null,
     };
   }
@@ -85,7 +91,7 @@ class AutopilotService {
     this.config.leadsQuantity = quantity;
     this.saveConfig();
     this.startMonitoring();
-    this.onLog?.(`[AUTOPILOT] ✅ Piloto automático ACTIVADO — Programado a las ${time} con ${quantity} leads`);
+    this.onLog?.(`[AUTOPILOT] Autopilot ENABLED — Scheduled at ${time} | ${quantity} leads | ${this.config.dailyEmailLimit} emails/day limit`);
   }
 
   /** Disable autopilot */
@@ -93,7 +99,7 @@ class AutopilotService {
     this.config.enabled = false;
     this.saveConfig();
     this.stopMonitoring();
-    this.onLog?.('[AUTOPILOT] ⏹️ Piloto automático DESACTIVADO');
+    this.onLog?.('[AUTOPILOT] Autopilot DISABLED');
   }
 
   /** Update scheduled time */
@@ -138,6 +144,21 @@ class AutopilotService {
   resetTodayRun(): void {
     this.config.lastRunDate = null;
     this.saveConfig();
+  }
+
+  /** Track an email sent — increments daily counter */
+  markEmailSent(): void {
+    const today = new Date().toISOString().split('T')[0];
+    if (this.config.lastRunDate !== today) {
+      this.config.emailsSentToday = 0;
+    }
+    this.config.emailsSentToday += 1;
+    this.saveConfig();
+  }
+
+  /** Whether daily email limit has been reached */
+  canSendEmail(): boolean {
+    return this.config.emailsSentToday < this.config.dailyEmailLimit;
   }
 
   // --- Internal Logic ---
@@ -186,15 +207,15 @@ class AutopilotService {
     const timeStr = new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
 
     this.onLog?.('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    this.onLog?.(`[AUTOPILOT] 🤖 PILOTO AUTOMÁTICO ACTIVADO`);
-    this.onLog?.(`[AUTOPILOT] ⏰ Hora programada: ${this.config.scheduledTime} | Hora actual: ${timeStr}`);
-    this.onLog?.(`[AUTOPILOT] 📊 Buscando ${this.config.leadsQuantity} leads automáticamente...`);
+    this.onLog?.(`[AUTOPILOT] AUTOPILOT TRIGGERED`);
+    this.onLog?.(`[AUTOPILOT] Scheduled: ${this.config.scheduledTime} | Current: ${timeStr}`);
+    this.onLog?.(`[AUTOPILOT] Searching ${this.config.leadsQuantity} creators automatically...`);
     this.onLog?.('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
     this.onTrigger?.(this.config.leadsQuantity);
   }
 }
 
-export const autopilotService = new AutopilotService('leados_diego');
+export const autopilotService = new AutopilotService('flownext_global');
 
 export default AutopilotService;

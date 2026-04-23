@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Activity, ArrowRight, Lock, Mail, AlertCircle } from 'lucide-react';
+import { Zap, ArrowRight, Lock, Mail, AlertCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { PROJECT_CONFIG } from '../config/project';
 
@@ -39,7 +39,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
       }
     } catch (err: any) {
       console.error(err);
-      setError(err.message || (isRegistering ? 'Error al crear cuenta. Verifica tus datos.' : 'Error al iniciar sesión. Verifica tus credenciales.'));
+      setError(err.message || (isRegistering ? 'Error creating account. Check your details.' : 'Login failed. Check your credentials.'));
     } finally {
       setLoading(false);
     }
@@ -49,14 +49,15 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4 relative overflow-hidden">
       {/* Background Gradients */}
       <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-primary/5 rounded-full blur-[100px] pointer-events-none" />
-      <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-blue-500/5 rounded-full blur-[100px] pointer-events-none" />
+      <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-violet-500/5 rounded-full blur-[100px] pointer-events-none" />
 
       <div className="w-full max-w-md space-y-8 relative z-10">
         <div className="text-center space-y-2">
           <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-primary/20 border border-primary/30 mb-4">
-            <Activity className="w-6 h-6 text-primary" />
+            <Zap className="w-6 h-6 text-primary" />
           </div>
-          <h1 className="text-3xl font-bold tracking-tight">Apex Engine</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Flow<span className="text-primary">Next</span></h1>
+          <p className="text-muted-foreground text-sm">Find. Connect. Convert.</p>
         </div>
 
         <div className="bg-card border border-border rounded-xl p-8 shadow-2xl">
@@ -70,7 +71,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
             )}
 
             <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">Email Corporativo</label>
+              <label className="text-sm font-medium text-foreground">Email</label>
               <div className="relative group">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <Mail className="h-5 w-5 text-muted-foreground group-focus-within:text-primary transition-colors" />
@@ -81,13 +82,13 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="block w-full pl-10 pr-3 py-2.5 bg-secondary/50 border border-input rounded-lg focus:ring-1 focus:ring-primary focus:border-primary text-sm transition-all text-gray-900 placeholder:text-gray-500"
-                  placeholder="admin@empresa.com"
+                  placeholder="you@example.com"
                 />
               </div>
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">Contraseña</label>
+              <label className="text-sm font-medium text-foreground">Password</label>
               <div className="relative group">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <Lock className="h-5 w-5 text-muted-foreground group-focus-within:text-primary transition-colors" />
@@ -112,7 +113,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                 <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
               ) : (
                 <>
-                  {isRegistering ? 'Crear Cuenta' : 'Iniciar Sesión'} <ArrowRight className="ml-2 w-4 h-4" />
+                  {isRegistering ? 'Create Account' : 'Sign In'} <ArrowRight className="ml-2 w-4 h-4" />
                 </>
               )}
             </button>
@@ -126,7 +127,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
               }}
               className="text-primary hover:underline"
             >
-              {isRegistering ? '¿Ya tienes una cuenta? Iniciar Sesión' : '¿No tienes cuenta? Regístrate'}
+              {isRegistering ? 'Already have an account? Sign In' : "Don't have an account? Create one"}
             </button>
           </div>
 

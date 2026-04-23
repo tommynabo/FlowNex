@@ -1,315 +1,132 @@
 import { Lead } from '../../lib/types';
 import { supabase } from '../../lib/supabase';
 
-/**
- * DeduplicationService
- * Implementa la lógica Anti-Duplicados para sistemas de prospección
- * 
- * REGLA DE ORO:
- * "Un lead nunca debe ser procesado ni entregado si ya existe en la base de datos
- * histórica del usuario, independientemente de la búsqueda actual"
- */
 export class DeduplicationService {
-  /**
-   * Normaliza URLs para comparación
-   * Convierte a minúsculas, elimina https://, www., y trailing slashes
-   * @param url - URL a normalizar
-   * @returns URL normalizada
-   */
-  private normalizeUrl(url: string): string {
-    if (!url) return '';
-    return url
-      .toLowerCase()
-      .replace(/^https?:\/\//i, '') // Remove protocol
-      .replace(/^www\./, '') // Remove www
-      .replace(/\/$/, '') // Remove trailing slash
-      .trim();
-  }
-
-  /**
-   * Normaliza nombres de empresas para comparación
-   * Convierte a minúsculas y elimina espacios extras
-   * @param name - Nombre a normalizar
-   * @returns Nombre normalizado
-   */
-  private normalizeName(name: string): string {
-    if (!name) return '';
-    return name
-      .toLowerCase()
-      .trim()
-      .replace(/\s+/g, ' '); // Normalize spaces
-  }
-
-  /**
-   * FASE 1: Pre-Flight
-   * Descarga todos los dominios y nombres de empresas del usuario desde Supabase
-   * Los guarda en Sets para búsqueda rápida en memoria
-   * 
-   * @param userId - ID del usuario
-   * @returns Objeto con Sets de dominios y nombres existentes
-   */
-  async fetchExistingLeads(userId: string | null): Promise<{
-    existingWebsites: Set<string>;
-    existingCompanyNames: Set<string>;
-    existingEmails: Set<string>;
-    existingLinkedinUrls: Set<string>;
-    totalCount: number;
-  }> {
-    const existingWebsites = new Set<string>();
-    const existingCompanyNames = new Set<string>();
-    const existingEmails = new Set<string>();
-    const existingLinkedinUrls = new Set<string>();
-
-    if (!userId) {
-      console.warn('[DEDUP] No userId provided. Skipping duplicate check.');
-      return { existingWebsites, existingCompanyNames, existingEmails, existingLinkedinUrls, totalCount: 0 };
+    private normalizeHandle(handle: string): string {
+        return handle.toLowerCase().replace(/^@/, '').trim();
     }
 
-    try {
-      // Fetch all leads from user's history (NEW SCHEMA: table 'leads')
-      const { data, error } = await supabase
-        .from('leads')
-        .select('company_name, company_website, linkedin_url, email')
-        .eq('user_id', userId);
+    async fetchExistingLeads(userId: string | null): Promise<{
+        existingIgHandles: Set<string>;
+        existingEmails: Set<string>;
+        totalCount: number;
+    }> {
+        const existingIgHandles = new Set<string>();
+        const existingEmails = new Set<string>();
 
-      if (error) {
-        console.error('[DEDUP] Error fetching existing leads:', error);
-        return { existingWebsites, existingCompanyNames, existingEmails, existingLinkedinUrls, totalCount: 0 };
-      }
-
-      if (!data || data.length === 0) {
-        console.log('[DEDUP] ✅ Pre-Flight: Usuario sin historial previo');
-        return { existingWebsites, existingCompanyNames, existingEmails, existingLinkedinUrls, totalCount: 0 };
-      }
-
-      // Extract and normalize all previously scraped leads
-      for (const row of data) {
-        // Add normalized website
-        if (row.company_website) {
-          const normalizedUrl = this.normalizeUrl(row.company_website);
-          existingWebsites.add(normalizedUrl);
+        if (!userId) {
+            console.warn('[DEDUP] No userId provided. Skipping duplicate check.');
+            return { existingIgHandles, existingEmails, totalCount: 0 };
         }
 
-        // Add normalized company name
-        if (row.company_name) {
-          const normalizedName = this.normalizeName(row.company_name);
-          if (
-            row.company_name !== 'Sin Nombre' &&
-            row.company_name !== 'Empresa Desconocida' &&
-            !normalizedName.includes('sin nombre') &&
-            !normalizedName.includes('empresa desconocida')
-          ) {
-            existingCompanyNames.add(normalizedName);
-          }
-          // Add email
-          if (row.email) {
-            existingEmails.add(row.email.toLowerCase().trim());
-          }
+        try {
+            const { data, error } = await supabase
+                .from('leads')
+                .select('ig_handle, email')
+                .eq('user_id', userId);
 
-          // Add linkedin url
-          if (row.linkedin_url) {
-            existingLinkedinUrls.add(row.linkedin_url.toLowerCase().trim());
-          }
+            if (error) {
+                console.error('[DEDUP] Error fetching existing leads:', error);
+                return { existingIgHandles, existingEmails, totalCount: 0 };
+            }
+
+            if (!data || data.length === 0) {
+                return { existingIgHandles, existingEmails, totalCount: 0 };
+            }
+
+            for (const row of data) {
+                if (row.ig_handle) existingIgHandles.add(this.normalizeHandle(row.ig_handle));
+                if (row.email) existingEmails.add(row.email.toLowerCase().trim());
+            }
+
+            const totalCount = existingIgHandles.size + existingEmails.size;
+            console.log('[DEDUP] Pre-Flight: ' + existingIgHandles.size + ' IG handles, ' + existingEmails.size + ' emails');
+            return { existingIgHandles, existingEmails, totalCount };
+        } catch (error) {
+            console.error('[DEDUP] Unexpected error in fetchExistingLeads:', error);
+            return { existingIgHandles, existingEmails, totalCount: 0 };
         }
-      }
-
-      // We allow multiple "Empresa Desconocida" leads because they might be different people
-      const totalCount = existingWebsites.size + existingCompanyNames.size + existingEmails.size + existingLinkedinUrls.size;
-      console.log(
-        `[DEDUP] ✅ Pre-Flight Complete: ${existingWebsites.size} dominios + ${existingCompanyNames.size} empresas descargadas`
-      );
-
-      return { existingWebsites, existingCompanyNames, existingEmails, existingLinkedinUrls, totalCount };
-    } catch (error) {
-      console.error('[DEDUP] Unexpected error in fetchExistingLeads:', error);
-      return { existingWebsites, existingCompanyNames, existingEmails, existingLinkedinUrls, totalCount: 0 };
     }
-  }
 
-  /**
-   * FASE 2: Filtrado (In-Loop)
-   * Compara cada candidato contra los Sets de leads existentes
-   * Descarta cualquier lead que ya existe
-   * 
-   * @param candidates - Array de leads candidatos
-   * @param existingWebsites - Set de dominios ya conocidos
-   * @param existingCompanyNames - Set de nombres de empresas ya conocidas
-   * @param existingEmails - Set de emails ya conocidos
-   * @param existingLinkedinUrls - Set de URLs de linkedin ya conocidos
-   * @returns Array filtrado solo con leads únicos
-   */
-  filterUniqueCandidates(
-    candidates: Lead[],
-    existingWebsites: Set<string>,
-    existingCompanyNames: Set<string>,
-    existingEmails: Set<string> = new Set(),
-    existingLinkedinUrls: Set<string> = new Set()
-  ): Lead[] {
-    const uniqueCandidates: Lead[] = [];
-    const duplicateLog: string[] = [];
+    filterUniqueCandidates(
+        candidates: Lead[],
+        existingIgHandles: Set<string>,
+        existingEmails: Set<string> = new Set()
+    ): Lead[] {
+        const uniqueCandidates: Lead[] = [];
+        const sessionHandles = new Set<string>();
+        const sessionEmails = new Set<string>();
 
-    for (const candidate of candidates) {
-      let isDuplicate = false;
-      let duplicateReason = '';
+        for (const candidate of candidates) {
+            let isDuplicate = false;
 
-      // Check website
-      if (candidate.website) {
-        const normalizedUrl = this.normalizeUrl(candidate.website);
-        if (existingWebsites.has(normalizedUrl)) {
-          isDuplicate = true;
-          duplicateReason = `website: ${candidate.website}`;
+            if (candidate.ig_handle) {
+                const handle = this.normalizeHandle(candidate.ig_handle);
+                if (existingIgHandles.has(handle) || sessionHandles.has(handle)) {
+                    isDuplicate = true;
+                } else {
+                    sessionHandles.add(handle);
+                }
+            }
+
+            if (!isDuplicate && candidate.decisionMaker?.email) {
+                const email = candidate.decisionMaker.email.toLowerCase().trim();
+                if (existingEmails.has(email) || sessionEmails.has(email)) {
+                    isDuplicate = true;
+                } else {
+                    sessionEmails.add(email);
+                }
+            }
+
+            if (!isDuplicate) uniqueCandidates.push(candidate);
         }
-      }
 
-      // Check linkedin url
-      if (!isDuplicate && candidate.decisionMaker?.linkedin) {
-        const urlToMatch = candidate.decisionMaker.linkedin.toLowerCase().trim();
-        if (existingLinkedinUrls.has(urlToMatch)) {
-          isDuplicate = true;
-          duplicateReason = `linkedin: ${urlToMatch}`;
+        console.log('[DEDUP] ' + uniqueCandidates.length + '/' + candidates.length + ' unique (' + (candidates.length - uniqueCandidates.length) + ' rejected)');
+        return uniqueCandidates;
+    }
+
+    async saveUniqueLeads(leads: Lead[], userId: string | null, sessionId: string): Promise<boolean> {
+        if (!userId || leads.length === 0) {
+            console.warn('[DEDUP] No leads to save or missing userId');
+            return false;
         }
-      }
 
-      // Check email
-      if (!isDuplicate && candidate.decisionMaker?.email) {
-        const emailToMatch = candidate.decisionMaker.email.toLowerCase().trim();
-        if (existingEmails.has(emailToMatch)) {
-          isDuplicate = true;
-          duplicateReason = `email: ${emailToMatch}`;
+        try {
+            const leadsToInsert = leads.map(lead => ({
+                user_id: userId,
+                search_id: sessionId,
+                name: lead.decisionMaker?.name || ('@' + lead.ig_handle) || '',
+                ig_handle: lead.ig_handle || '',
+                follower_count: lead.follower_count || 0,
+                niche: lead.niche || '',
+                audience_tier: lead.audience_tier || 'nano',
+                job_title: lead.decisionMaker?.role || 'Content Creator',
+                email: lead.decisionMaker?.email || '',
+                location: lead.location || '',
+                ai_summary: lead.aiAnalysis?.summary || '',
+                ai_pain_points: lead.aiAnalysis?.painPoints || [],
+                cold_email_subject: lead.aiAnalysis?.coldEmailSubject || '',
+                cold_email_body: lead.aiAnalysis?.coldEmailBody || '',
+                vsl_pitch: lead.aiAnalysis?.vslPitch || '',
+                vsl_sent_status: lead.vsl_sent_status || 'pending',
+                email_status: lead.email_status || 'pending',
+                status: lead.status || 'scraped'
+            }));
+
+            const { error } = await supabase.from('leads').insert(leadsToInsert);
+
+            if (error) {
+                console.error('[DEDUP] Error saving leads:', error);
+                return false;
+            }
+
+            console.log('[DEDUP] Saved: ' + leads.length + ' leads');
+            return true;
+        } catch (error) {
+            console.error('[DEDUP] Unexpected error in saveUniqueLeads:', error);
+            return false;
         }
-      }
-
-      // Check company name (only if not already marked as duplicate)
-      if (!isDuplicate && candidate.companyName) {
-        const normalizedName = this.normalizeName(candidate.companyName);
-
-        // Skip check if the candidate itself has a generic name
-        // We allow multiple "Empresa Desconocida" leads because they might be different people
-        const isGeneric =
-          candidate.companyName === 'Sin Nombre' ||
-          candidate.companyName === 'Empresa Desconocida' ||
-          normalizedName.includes('sin nombre') ||
-          normalizedName.includes('empresa desconocida');
-
-        if (!isGeneric && existingCompanyNames.has(normalizedName)) {
-          isDuplicate = true;
-          duplicateReason = `company: ${candidate.companyName}`;
-        }
-      }
-
-      if (isDuplicate) {
-        duplicateLog.push(`❌ DESCARTADO: ${candidate.companyName || 'Unknown'} (${duplicateReason})`);
-      } else {
-        uniqueCandidates.push(candidate);
-      }
     }
-
-    // Log results
-    if (duplicateLog.length > 0) {
-      console.log(`[DEDUP] 🎯 Fase de Filtrado: ${duplicateLog.length} duplicados descartados`);
-      duplicateLog.forEach(log => console.log(`[DEDUP] ${log}`));
-    }
-
-    console.log(
-      `[DEDUP] ✅ Resultado: ${uniqueCandidates.length}/${candidates.length} leads únicos (${candidates.length - uniqueCandidates.length} rechazados)`
-    );
-
-    return uniqueCandidates;
-  }
-
-  /**
-   * PHASE 3: Logging
-   * Registers duplicate findings in the deduplication_log table
-   * 
-   * @param duplicates - Array of duplicate records found
-   * @param userId - User ID for the log entry
-   * @param sessionId - Search session ID
-   * @returns boolean indicating success
-   */
-  async logDuplications(
-    duplicates: Array<{ name: string; reason: string }>,
-    userId: string | null,
-    sessionId: string
-  ): Promise<boolean> {
-    if (!userId || duplicates.length === 0) {
-      return true; // Skip if no duplicates
-    }
-
-    try {
-      const logEntries = duplicates.map(dup => ({
-        user_id: userId,
-        search_id: sessionId,
-        duplicate_name: dup.name,
-        duplicate_reason: dup.reason,
-        detected_at: new Date().toISOString()
-      }));
-
-      const { error } = await supabase.from('deduplication_log').insert(logEntries);
-
-      if (error) {
-        console.warn('[DEDUP] Warning logging duplicates:', error.message);
-        return false;
-      }
-
-      console.log(`[DEDUP] 📝 Registered ${duplicates.length} duplicates in log`);
-      return true;
-    } catch (error) {
-      console.warn('[DEDUP] Unexpected error logging duplicates:', error);
-      return false;
-    }
-  }
-
-  /**
-   * FASE 3: Guardado
-   * Solo guarda en la base de datos los leads que pasaron el filtro de deduplicación
-   * Este método es llamado desde App.tsx después de obtener los resultados
-   * 
-   * @param leads - Leads ya deduplicados
-   * @param userId - ID del usuario propietario
-   * @param sessionId - ID de la sesión de búsqueda
-   * @returns boolean indicando éxito o fallo
-   */
-  async saveUniqueLeads(leads: Lead[], userId: string | null, sessionId: string): Promise<boolean> {
-    if (!userId || leads.length === 0) {
-      console.warn('[DEDUP] No leads to save or missing userId');
-      return false;
-    }
-
-    try {
-      // Save each lead individually to the 'leads' table (new schema)
-      const leadsToInsert = leads.map(lead => ({
-        user_id: userId,
-        search_id: sessionId,
-        name: lead.decisionMaker?.name || lead.companyName || '',
-        company_name: lead.companyName || '',
-        job_title: lead.decisionMaker?.role || '',
-        linkedin_url: lead.decisionMaker?.linkedin || '',
-        email: lead.decisionMaker?.email || '',
-        phone: lead.decisionMaker?.phone || '',
-        company_website: lead.website || '',
-        location: lead.location || '',
-        ai_summary: lead.aiAnalysis?.summary || '',
-        ai_pain_points: lead.aiAnalysis?.painPoints || [],
-        ai_business_moment: lead.aiAnalysis?.businessMoment || '',
-        ai_is_npl_potential: lead.isNPLPotential || false,
-        status: lead.status || 'scraped'
-      }));
-
-      const { error } = await supabase.from('leads').insert(leadsToInsert);
-
-      if (error) {
-        console.error('[DEDUP] Error saving leads:', error);
-        return false;
-      }
-
-      console.log(`[DEDUP] 💾 Guardado exitoso: ${leads.length} leads guardados en base de datos`);
-      return true;
-    } catch (error) {
-      console.error('[DEDUP] Unexpected error in saveUniqueLeads:', error);
-      return false;
-    }
-  }
 }
 
-// Export singleton instance
 export const deduplicationService = new DeduplicationService();

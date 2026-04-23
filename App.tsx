@@ -22,8 +22,8 @@ function App() {
 
   // Search State
   const [config, setConfig] = useState<SearchConfigState>({
-    query: '("Emprendedor digital" OR "Infoproductor" OR "Coach High Ticket" OR "Consultor" OR "Dueño") AND ("CEO" OR "Fundador" OR "Propietario")',
-    source: 'linkedin',
+    query: '#fitnesscoach OR #personaldevelopment OR #mindset',
+    source: 'instagram',
     mode: 'fast',
     maxResults: 1
   });
@@ -42,6 +42,9 @@ function App() {
 
 
 
+
+  // VSL Stats State
+  const [vslStats, setVslStats] = useState({ emailsDelivered: 0, vslClicks: 0, conversions: 0 });
 
   // Modal State
   const [isCriteriaModalOpen, setIsCriteriaModalOpen] = useState(false);
@@ -158,30 +161,32 @@ function App() {
               // Transform DB leads to Lead interface
               leads = leadsData.map(l => ({
                 id: l.id,
-                source: row.source as any || 'linkedin',
-                companyName: l.company_name || 'Sin Nombre',
-                website: l.company_website,
+                source: row.source as any || 'instagram',
+                ig_handle: l.ig_handle || '',
+                follower_count: l.follower_count || 0,
+                niche: l.niche || '',
+                audience_tier: l.audience_tier as any || 'nano',
+                vsl_sent_status: l.vsl_sent_status as any || 'pending',
+                email_status: l.email_status || 'pending',
                 location: l.location,
                 decisionMaker: {
                   name: l.name,
-                  role: l.job_title || '',
+                  role: l.job_title || 'Content Creator',
                   email: l.email || '',
-                  phone: l.phone,
-                  linkedin: l.linkedin_url,
-                  facebook: l.facebook_url,
-                  instagram: l.instagram_url
+                  instagram: l.ig_handle ? 'https://instagram.com/' + l.ig_handle : ''
                 },
                 aiAnalysis: {
                   summary: l.ai_summary || '',
                   painPoints: l.ai_pain_points || [],
                   generatedIcebreaker: '',
-                  fullMessage: '',
+                  coldEmailSubject: l.cold_email_subject || '',
+                  coldEmailBody: l.cold_email_body || '',
+                  vslPitch: l.vsl_pitch || '',
                   fullAnalysis: l.ai_summary || '',
                   psychologicalProfile: '',
-                  businessMoment: l.ai_business_moment || '',
+                  engagementSignal: '',
                   salesAngle: ''
                 },
-                isNPLPotential: l.ai_is_npl_potential || false,
                 status: l.status as any || 'scraped'
               }));
             }
@@ -289,34 +294,37 @@ function App() {
 
             if (searchError) {
               console.error('DB Error saving search_history:', searchError);
-              addLog(`[DB] ⚠️ Error al guardar búsqueda: ${searchError.message}`);
+              addLog(`[DB] Error saving search: ${searchError.message}`);
               return;
             }
 
             if (!data || data.length === 0) {
-              addLog(`[DB] ⚠️ No se obtuvo ID de búsqueda.`);
+              addLog('[DB] No search ID returned.');
               return;
             }
 
             const searchId = data[0].id;
-            addLog(`[DB] ✅ Búsqueda registrada (ID: ${searchId})`);
+addLog(`[DB] Search registered (ID: ${searchId})`);
 
             // 2. Save each lead to the leads table with search_id reference
             const leadsToInsert = results.map(lead => ({
               user_id: userId,
               search_id: searchId,
-              name: lead.decisionMaker?.name || lead.companyName || '',
-              company_name: lead.companyName || '',
-              job_title: lead.decisionMaker?.role || '',
-              linkedin_url: lead.decisionMaker?.linkedin || '',
+              name: lead.decisionMaker?.name || ('@' + lead.ig_handle) || '',
+              ig_handle: lead.ig_handle || '',
+              follower_count: lead.follower_count || 0,
+              niche: lead.niche || '',
+              audience_tier: lead.audience_tier || 'nano',
+              job_title: lead.decisionMaker?.role || 'Content Creator',
               email: lead.decisionMaker?.email || '',
-              phone: lead.decisionMaker?.phone || '',
-              company_website: lead.website || '',
               location: lead.location || '',
               ai_summary: lead.aiAnalysis?.summary || '',
               ai_pain_points: lead.aiAnalysis?.painPoints || [],
-              ai_business_moment: lead.aiAnalysis?.businessMoment || '',
-              ai_is_npl_potential: lead.isNPLPotential || false,
+              cold_email_subject: lead.aiAnalysis?.coldEmailSubject || '',
+              cold_email_body: lead.aiAnalysis?.coldEmailBody || '',
+              vsl_pitch: lead.aiAnalysis?.vslPitch || '',
+              vsl_sent_status: lead.vsl_sent_status || 'pending',
+              email_status: lead.email_status || 'pending',
               status: 'scraped'
             }));
 
@@ -326,16 +334,16 @@ function App() {
 
             if (leadsError) {
               console.error('DB Error saving leads:', leadsError);
-              addLog(`[DB] ⚠️ Error al guardar ${results.length} contactos: ${leadsError.message}`);
+              addLog(`[DB] Error saving ${results.length} leads: ${leadsError.message}`);
             } else {
-              addLog(`[DB] ✅ ${results.length} contactos guardados correctamente.`);
+              addLog(`[DB] ${results.length} creators saved.`);
             }
           } catch (err) {
             console.error('Failed to save results to DB', err);
             addLog(`[ERROR] Excepción al guardar: ${err}`);
           }
         } else {
-          addLog('[⚠️] No se guardó en la nube (usuario no autenticado).');
+          addLog('[WARNING] Not saved to cloud (user not authenticated).');
         }
 
         playGlassSound();
@@ -351,7 +359,7 @@ function App() {
       searchService.stop();
       setIsSearching(false);
       setTerminalExpanded(false);
-      addLog('[USUARIO] 🛑 Generación detenida manualmente.');
+      addLog('[STOP] Search stopped manually.');
     }
   };
 
@@ -397,8 +405,25 @@ function App() {
           <div className="animate-[fadeIn_0.3s_ease-out]">
             <div className="max-w-4xl mx-auto mb-10 text-center space-y-2">
               <h1 className="text-3xl md:text-4xl font-bold tracking-tight">
-                Apex<span className="text-primary">Engine</span>
+                Flow<span className="text-primary">Next</span>
               </h1>
+              <p className="text-muted-foreground text-sm">Find. Connect. Convert.</p>
+            </div>
+
+            {/* VSL Stats Widget */}
+            <div className="grid grid-cols-3 gap-4 mb-8">
+              <div className="glass-card border border-border rounded-xl p-4 text-center">
+                <p className="text-xs text-muted-foreground mb-1">Emails Delivered</p>
+                <p className="text-3xl font-bold text-primary">{vslStats.emailsDelivered}</p>
+              </div>
+              <div className="glass-card border border-border rounded-xl p-4 text-center">
+                <p className="text-xs text-muted-foreground mb-1">VSL Clicks</p>
+                <p className="text-3xl font-bold" style={{ color: '#7c3aed' }}>{vslStats.vslClicks}</p>
+              </div>
+              <div className="glass-card border border-border rounded-xl p-4 text-center">
+                <p className="text-xs text-muted-foreground mb-1">Conversions</p>
+                <p className="text-3xl font-bold text-primary">{vslStats.conversions}</p>
+              </div>
             </div>
 
             <SearchConfig

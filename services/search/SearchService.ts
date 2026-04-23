@@ -5,7 +5,7 @@ import { PROJECT_CONFIG } from '../../config/project';
 export type LogCallback = (message: string) => void;
 export type ResultCallback = (leads: Lead[]) => void;
 
-const INSTAGRAM_PROFILE_SCRAPER = 'apify/instagram-profile-scraper';
+const INSTAGRAM_PROFILE_SCRAPER = 'apify~instagram-profile-scraper';
 
 export class SearchService {
     private isRunning = false;
@@ -125,7 +125,7 @@ export class SearchService {
     }
 
     private async callApifyActor(actorId: string, input: any, onLog: LogCallback): Promise<any[]> {
-        const baseUrl = '/api/apify';
+        const baseUrl = 'https://api.apify.com/v2';
         const startUrl = baseUrl + '/acts/' + actorId + '/runs?token=' + this.apiKey;
         onLog('[APIFY] Launching ' + actorId.split('/').pop() + '...');
 

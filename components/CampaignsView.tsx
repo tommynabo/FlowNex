@@ -1,6 +1,6 @@
 import React from 'react';
 import { SearchSession } from '../lib/types';
-import { Calendar, Search, Mail, Instagram, ArrowRight, User } from 'lucide-react';
+import { Calendar, Search, Mail, Instagram, ArrowRight, User, History } from 'lucide-react';
 
 interface CampaignsViewProps {
   history: SearchSession[];
@@ -8,64 +8,56 @@ interface CampaignsViewProps {
 }
 
 export function CampaignsView({ history, onSelectSession }: CampaignsViewProps) {
-  if (history.length === 0) {
-    return (
-      <div className="text-center py-20 animate-[fadeIn_0.5s_ease-out]">
-        <div className="w-16 h-16 bg-secondary rounded-full flex items-center justify-center mx-auto mb-4">
-          <Search className="w-8 h-8 text-muted-foreground" />
-        </div>
-        <h3 className="text-xl font-semibold mb-2">No search history yet</h3>
-        <p className="text-muted-foreground">Your recent searches will appear here.</p>
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-6 animate-[fadeIn_0.5s_ease-out]">
-       <div className="flex items-center justify-between mb-8">
-          <div>
-            <h2 className="text-2xl font-bold tracking-tight">Campaign History</h2>
-            <p className="text-muted-foreground">Your recent creator searches saved as campaigns.</p>
-          </div>
-       </div>
+    <div className="space-y-4">
+      <div className="flex items-center gap-3 pt-2 pb-1 border-t border-border">
+        <History className="w-4 h-4 text-muted-foreground" />
+        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Past Campaigns</h3>
+        {history.length > 0 && (
+          <span className="text-xs bg-secondary rounded-full px-2 py-0.5 text-muted-foreground">{history.length}</span>
+        )}
+      </div>
 
-       <div className="grid gap-4">
+      {history.length === 0 ? (
+        <div className="text-center py-10 text-muted-foreground">
+          <Search className="w-8 h-8 mx-auto mb-3 opacity-30" />
+          <p className="text-sm">No campaigns yet. Run your first search above.</p>
+        </div>
+      ) : (
+        <div className="grid gap-3">
           {history.map((session) => (
-             <div 
-                key={session.id} 
-                onClick={() => onSelectSession(session)}
-                className="bg-card border border-border rounded-xl p-5 hover:border-primary/50 transition-all cursor-pointer group shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4"
-             >
-                <div className="flex items-start gap-4">
-                   <div className="w-12 h-12 bg-secondary/50 rounded-lg flex items-center justify-center border border-border group-hover:bg-primary/10 group-hover:text-primary transition-colors">
-                      {session.source === 'instagram' ? <Instagram className="w-6 h-6" /> : <Mail className="w-6 h-6" />}
-                   </div>
-                   
-                   <div>
-                      <h3 className="font-semibold text-lg group-hover:text-primary transition-colors">
-                        {session.date.toLocaleDateString('en-US', { day: '2-digit', month: '2-digit', year: 'numeric' })} - {session.query}
-                      </h3>
-                      <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
-                         <div className="flex items-center gap-1.5">
-                            <Calendar className="w-3.5 h-3.5" />
-                            <span>{session.date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</span>
-                         </div>
-                         <div className="flex items-center gap-1.5">
-                            <User className="w-3.5 h-3.5" />
-                            <span>{session.resultsCount} creators found</span>
-                         </div>
-                      </div>
-                   </div>
+            <div
+              key={session.id}
+              onClick={() => onSelectSession(session)}
+              className="bg-card border border-border rounded-xl p-4 hover:border-primary/50 transition-all cursor-pointer group flex flex-col md:flex-row md:items-center justify-between gap-3"
+            >
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 bg-secondary/50 rounded-lg flex items-center justify-center border border-border group-hover:bg-primary/10 group-hover:text-primary transition-colors flex-shrink-0">
+                  {session.source === 'instagram' ? <Instagram className="w-5 h-5" /> : <Mail className="w-5 h-5" />}
                 </div>
-
-                <div className="flex items-center justify-end">
-                   <button className="flex items-center text-sm font-medium text-muted-foreground group-hover:text-primary transition-colors">
-                      View Results <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
-                   </button>
+                <div>
+                  <h4 className="font-medium text-sm group-hover:text-primary transition-colors line-clamp-1">
+                    {session.query}
+                  </h4>
+                  <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                    <div className="flex items-center gap-1">
+                      <Calendar className="w-3 h-3" />
+                      <span>{session.date.toLocaleDateString('en-US', { day: '2-digit', month: '2-digit', year: 'numeric' })} {session.date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <User className="w-3 h-3" />
+                      <span>{session.resultsCount} creators found</span>
+                    </div>
+                  </div>
                 </div>
-             </div>
+              </div>
+              <button className="flex items-center text-xs font-medium text-muted-foreground group-hover:text-primary transition-colors ml-auto">
+                View Results <ArrowRight className="w-3.5 h-3.5 ml-1 group-hover:translate-x-0.5 transition-transform" />
+              </button>
+            </div>
           ))}
-       </div>
+        </div>
+      )}
     </div>
   );
 }

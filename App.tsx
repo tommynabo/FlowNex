@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Header } from './components/Header';
 import { SearchConfig } from './components/SearchConfig';
-import { SearchCriteriaModal } from './components/SearchCriteriaModal';
 import { AgentTerminal } from './components/AgentTerminal';
 import { LeadsTable } from './components/LeadsTable';
 import { MessageModal } from './components/MessageModal';
@@ -46,8 +45,7 @@ function App() {
   // VSL Stats State
   const [vslStats, setVslStats] = useState({ emailsDelivered: 0, vslClicks: 0, conversions: 0 });
 
-  // Modal State
-  const [isCriteriaModalOpen, setIsCriteriaModalOpen] = useState(false);
+
 
   // Sound Effect
   const playGlassSound = () => {
@@ -367,19 +365,6 @@ addLog(`[DB] Search registered (ID: ${searchId})`);
     setConfig(prev => ({ ...prev, ...updates }));
   };
 
-  const handleOpenCriteria = () => {
-    setIsCriteriaModalOpen(true);
-  };
-
-  const handleSaveCriteria = (newQuery: string, filters?: any) => {
-    setConfig(prev => ({
-      ...prev,
-      query: newQuery,
-      advancedFilters: filters
-    }));
-    setIsCriteriaModalOpen(false);
-  };
-
   const handleViewSessionResults = (session: SearchSession) => {
     setSelectedHistorySession(session);
   };
@@ -425,14 +410,17 @@ addLog(`[DB] Search registered (ID: ${searchId})`);
                 <p className="text-3xl font-bold text-primary">{vslStats.conversions}</p>
               </div>
             </div>
+          </div>
+        )}
 
+        {currentPage === 'campaigns' && (
+          <div className="animate-[fadeIn_0.3s_ease-out] space-y-6">
             <SearchConfig
               config={config}
               onChange={handleConfigChange}
               onSearch={handleSearch}
               onStop={handleStop}
               isSearching={isSearching}
-              onOpenCriteria={handleOpenCriteria}
               totalLeadsGenerated={totalLeadsGenerated}
             />
 
@@ -447,25 +435,15 @@ addLog(`[DB] Search registered (ID: ${searchId})`);
               leads={leads}
               onViewMessage={setSelectedLead}
             />
+
+            <CampaignsView
+              history={history}
+              onSelectSession={handleViewSessionResults}
+            />
           </div>
         )}
 
-        {currentPage === 'campaigns' && (
-          <CampaignsView
-            history={history}
-            onSelectSession={handleViewSessionResults}
-          />
-        )}
-
       </main>
-
-      {/* Search Criteria Modal */}
-      <SearchCriteriaModal
-        isOpen={isCriteriaModalOpen}
-        onClose={() => setIsCriteriaModalOpen(false)}
-        currentQuery={config.query}
-        onSave={handleSaveCriteria}
-      />
 
       {/* Message Draft Modal */}
       {selectedLead && (

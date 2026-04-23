@@ -5,6 +5,8 @@ import { PROJECT_CONFIG } from '../../config/project';
 export type LogCallback = (message: string) => void;
 export type ResultCallback = (leads: Lead[]) => void;
 
+// Two-step scraping: hashtag posts → unique usernames → full profiles
+const INSTAGRAM_HASHTAG_SCRAPER = 'apify~instagram-hashtag-scraper';
 const INSTAGRAM_PROFILE_SCRAPER = 'apify~instagram-profile-scraper';
 
 export class SearchService {
@@ -142,9 +144,13 @@ export class SearchService {
         } catch (e: any) { throw new Error('Network error: ' + e.message); }
 
         if (!startResponse.ok) {
-            await startResponse.text();
-            onLog('[APIFY] HTTP ' + startResponse.status);
-            throw new Error('Actor error HTTP ' + startResponse.status);
+            let errBody = '';
+            try { errBody = await startResponse.text(); } catch (_) {}
+            const errSnippet = errBody.substring(0, 300);
+            onLog('[APIFY] ❌ HTTP ' + startResponse.status + ' launching ' + actorId.split('~').pop());
+            onLog('[APIFY] Error body: ' + (errSnippet || '(empty)'));
+            console.error('[APIFY] Full error body:', errBody);
+            throw new Error('Actor error HTTP ' + startResponse.status + ': ' + errSnippet);
         }
 
         const startData = await startResponse.json();
@@ -215,56 +221,136 @@ export class SearchService {
         onLog: LogCallback,
         onComplete: ResultCallback
     ) {
+        const icpFilters = config.icpFilters;
+        const minFollowers = icpFilters?.minFollowers ?? 0;
+        const maxFollowers = icpFilters?.maxFollowers ?? 99_000_000;
+        const targetRegions = icpFilters?.regions ?? [];
+        const targetContentTypes = icpFilters?.contentTypes ?? [];
         const targetCount = Math.max(1, config.maxResults);
         const hashtags = this.parseHashtagsFromQuery(config.query);
-        onLog('[IG] Hashtags: ' + hashtags.join(', '));
+
+        onLog('[IG] Hashtags to search: ' + hashtags.join(', '));
         onLog('[IG] Target: ' + targetCount + ' creators');
+        if (minFollowers > 0 || maxFollowers < 99_000_000)
+            onLog('[ICP] Follower range: ' + this.formatFollowers(minFollowers) + ' – ' + this.formatFollowers(maxFollowers));
+        if (targetRegions.length > 0)
+            onLog('[ICP] Regions: ' + targetRegions.join(', '));
+        if (targetContentTypes.length > 0)
+            onLog('[ICP] Content types: ' + targetContentTypes.join(', '));
 
         const validLeads: Lead[] = [];
         let attempts = 0;
         const processedHandles = new Set<string>();
 
-        while (validLeads.length < targetCount && this.isRunning && attempts < 8) {
+        while (validLeads.length < targetCount && this.isRunning && attempts < 6) {
             attempts++;
             const needed = targetCount - validLeads.length;
-            const fetchAmount = Math.min(needed * 6, 200);
-            onLog('[ATTEMPT ' + attempts + '] Scraping ' + fetchAmount + ' profiles (need ' + needed + ' more)...');
+            // Fetch enough posts to find good profiles (ICP filters reduce final count)
+            const postFetchLimit = Math.min(needed * 20, 300);
+            onLog('[ATTEMPT ' + attempts + '] Step 1 — scraping ' + postFetchLimit + ' posts by hashtag...');
 
-            let rawProfiles: any[];
+            // ── STEP 1: Get posts from hashtags ──────────────────────────────────
+            let posts: any[];
             try {
-                rawProfiles = await this.callApifyActor(INSTAGRAM_PROFILE_SCRAPER, {
-                    hashtags,
-                    resultsLimit: fetchAmount,
-                    resultsType: 'posts',
+                posts = await this.callApifyActor(INSTAGRAM_HASHTAG_SCRAPER, {
+                    hashtags: hashtags.map(h => h.replace(/^#/, '')), // actor expects no #
+                    resultsLimit: postFetchLimit,
                     proxy: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] }
                 }, onLog);
             } catch (e: any) {
-                onLog('[ATTEMPT ' + attempts + '] Scraper error: ' + e.message);
+                onLog('[ATTEMPT ' + attempts + '] Hashtag scraper error: ' + e.message);
                 break;
             }
 
-            if (rawProfiles.length === 0) {
-                onLog('[ATTEMPT ' + attempts + '] No profiles returned.');
+            if (!posts.length) {
+                onLog('[ATTEMPT ' + attempts + '] No posts returned from hashtag scraper.');
                 break;
             }
 
+            // Extract unique usernames not yet processed or in DB
+            const rawHandles = posts
+                .map(p => (p.ownerUsername || p.owner?.username || p.username || '').toLowerCase().trim())
+                .filter(h => h && !processedHandles.has(h) && !existingIgHandles.has(h));
+            const uniqueHandles = [...new Set(rawHandles)].slice(0, 50);
+
+            onLog('[ATTEMPT ' + attempts + '] ' + posts.length + ' posts → ' + uniqueHandles.length + ' unique new handles');
+
+            if (!uniqueHandles.length) {
+                onLog('[ATTEMPT ' + attempts + '] All handles already processed. Stopping.');
+                break;
+            }
+
+            // ── STEP 2: Scrape full profiles for those handles ───────────────────
+            onLog('[ATTEMPT ' + attempts + '] Step 2 — fetching ' + uniqueHandles.length + ' profiles...');
+            let profiles: any[];
+            try {
+                profiles = await this.callApifyActor(INSTAGRAM_PROFILE_SCRAPER, {
+                    usernames: uniqueHandles
+                }, onLog);
+            } catch (e: any) {
+                onLog('[ATTEMPT ' + attempts + '] Profile scraper error: ' + e.message);
+                break;
+            }
+
+            onLog('[ATTEMPT ' + attempts + '] ' + profiles.length + ' profiles received. Applying ICP filters...');
+
+            // ── STEP 3: Apply ICP filters & build candidates ─────────────────────
             const candidates: Lead[] = [];
-            for (const profile of rawProfiles) {
-                const handle = (profile.username || profile.ownerUsername || '').toLowerCase().trim();
+            for (const profile of profiles) {
+                if (!this.isRunning) break;
+                const handle = (profile.username || '').toLowerCase().trim();
                 if (!handle || processedHandles.has(handle)) continue;
                 processedHandles.add(handle);
+
+                const followers = profile.followersCount || profile.followers || 0;
                 const bio = profile.biography || profile.bio || '';
-                const email = this.extractEmailFromBio(bio);
-                const followerCount = profile.followersCount || profile.followers || 0;
                 const fullName = profile.fullName || profile.name || '';
+                const email = this.extractEmailFromBio(bio);
+                const niche = this.detectNiche(bio, handle, fullName);
+                const region = profile.country || profile.city || '';
+
+                // ICP: follower range
+                if (followers < minFollowers) {
+                    onLog('[ICP] ↓ @' + handle + ' skip: ' + this.formatFollowers(followers) + ' < min ' + this.formatFollowers(minFollowers));
+                    continue;
+                }
+                if (followers > maxFollowers) {
+                    onLog('[ICP] ↑ @' + handle + ' skip: ' + this.formatFollowers(followers) + ' > max ' + this.formatFollowers(maxFollowers));
+                    continue;
+                }
+
+                // ICP: region filter
+                if (targetRegions.length > 0) {
+                    const matchesRegion = targetRegions.some(r =>
+                        region.toLowerCase().includes(r.toLowerCase()) ||
+                        (profile.city || '').toLowerCase().includes(r.toLowerCase())
+                    );
+                    if (!matchesRegion) {
+                        onLog('[ICP] 🌍 @' + handle + ' skip: region "' + region + '" not in [' + targetRegions.join(', ') + ']');
+                        continue;
+                    }
+                }
+
+                // ICP: content type filter
+                if (targetContentTypes.length > 0) {
+                    const matchesContent = targetContentTypes.some(ct =>
+                        niche.toLowerCase().includes(ct.toLowerCase()) ||
+                        ct.toLowerCase().includes(niche.split(' ')[0].toLowerCase())
+                    );
+                    if (!matchesContent) {
+                        onLog('[ICP] 🏷 @' + handle + ' skip: niche "' + niche + '" not in [' + targetContentTypes.join(', ') + ']');
+                        continue;
+                    }
+                }
+
                 candidates.push({
                     id: 'ig-' + handle + '-' + Date.now(),
                     source: 'instagram',
                     ig_handle: handle,
-                    follower_count: followerCount,
-                    niche: this.detectNiche(bio, handle, fullName),
-                    audience_tier: this.detectAudienceTier(followerCount),
-                    location: profile.city || profile.country || '',
+                    follower_count: followers,
+                    niche,
+                    audience_tier: this.detectAudienceTier(followers),
+                    location: region,
                     decisionMaker: {
                         name: fullName || ('@' + handle),
                         role: 'Content Creator',
@@ -283,9 +369,8 @@ export class SearchService {
             }
 
             const uniqueCandidates = deduplicationService.filterUniqueCandidates(candidates, existingIgHandles, existingEmails);
-            if (uniqueCandidates.length < candidates.length) {
-                onLog('[DEDUP] ' + (candidates.length - uniqueCandidates.length) + ' duplicates discarded.');
-            }
+            const deduped = candidates.length - uniqueCandidates.length;
+            if (deduped > 0) onLog('[DEDUP] ' + deduped + ' duplicates discarded.');
 
             const withEmail = uniqueCandidates.filter(l => l.decisionMaker?.email);
             const withoutEmail = uniqueCandidates.filter(l => !l.decisionMaker?.email);
@@ -296,10 +381,7 @@ export class SearchService {
             ];
 
             onLog('[ATTEMPT ' + attempts + '] ' + withEmail.length + ' with email, ' + withoutEmail.length + ' without. Processing ' + toProcess.length + '.');
-            if (toProcess.length === 0) {
-                onLog('[ATTEMPT ' + attempts + '] All already in history.');
-                continue;
-            }
+            if (!toProcess.length) { onLog('[ATTEMPT ' + attempts + '] All already in history.'); continue; }
 
             onLog('[AI] Generating cold emails for ' + toProcess.length + ' creators...');
             const analyzed = (await Promise.all(toProcess.map(async (lead) => {
@@ -307,16 +389,12 @@ export class SearchService {
                 try {
                     const a = await this.generateCreatorAnalysis(lead);
                     lead.aiAnalysis = {
-                        summary: a.summary,
-                        painPoints: [],
+                        summary: a.summary, painPoints: [],
                         generatedIcebreaker: a.vslPitch,
-                        coldEmailSubject: a.coldEmailSubject,
-                        coldEmailBody: a.coldEmailBody,
-                        vslPitch: a.vslPitch,
-                        fullAnalysis: a.psychologicalProfile + ' | ' + a.engagementSignal,
+                        coldEmailSubject: a.coldEmailSubject, coldEmailBody: a.coldEmailBody,
+                        vslPitch: a.vslPitch, fullAnalysis: a.psychologicalProfile + ' | ' + a.engagementSignal,
                         psychologicalProfile: a.psychologicalProfile,
-                        engagementSignal: a.engagementSignal,
-                        salesAngle: a.salesAngle
+                        engagementSignal: a.engagementSignal, salesAngle: a.salesAngle
                     };
                     lead.status = 'ready';
                     return lead;
@@ -329,9 +407,9 @@ export class SearchService {
 
             for (const lead of analyzed) {
                 validLeads.push(lead);
-                onLog('[SUCCESS] ' + validLeads.length + '/' + targetCount + ': @' + lead.ig_handle +
-                    ' (' + this.formatFollowers(lead.follower_count || 0) + ', ' + lead.niche + ')' +
-                    (lead.decisionMaker?.email ? ' [email]' : ''));
+                onLog('[✓] ' + validLeads.length + '/' + targetCount + ': @' + lead.ig_handle +
+                    ' (' + this.formatFollowers(lead.follower_count || 0) + ' | ' + lead.niche + ')' +
+                    (lead.decisionMaker?.email ? ' 📧' : ''));
                 if (validLeads.length >= targetCount) break;
             }
         }

@@ -4,6 +4,26 @@ export type PageView = 'login' | 'dashboard' | 'campaigns';
 export type VslSentStatus = 'pending' | 'sent' | 'opened' | 'clicked' | 'converted';
 export type AudienceTier = 'nano' | 'micro' | 'mid' | 'macro';
 
+export interface IcpFilters {
+  minFollowers: number;        // 0 = no minimum
+  maxFollowers: number;        // 0 = no maximum
+  regions: string[];           // e.g. ['US', 'UK', 'CA']
+  contentTypes: string[];      // e.g. ['Fitness', 'Wellness']
+  campaignName: string;        // optional tag for this search
+}
+
+export interface Campaign {
+  id: string;
+  name: string;
+  description?: string;
+  status: 'active' | 'paused' | 'completed';
+  hashtags: string[];
+  icpFilters: IcpFilters;
+  totalLeads: number;
+  createdAt: Date;
+  userId: string;
+}
+
 export interface FlowNextConfig {
   targetNiches: string[];
   targetHashtags: string[];
@@ -73,6 +93,7 @@ export interface SearchConfigState {
   source: PlatformSource;
   mode: SearchMode;
   maxResults: number;
+  icpFilters?: IcpFilters;
   advancedFilters?: AdvancedFilter;
 }
 

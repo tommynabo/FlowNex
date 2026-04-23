@@ -1,6 +1,6 @@
-import React from 'react';
-import { Play, Square, Hash, Zap } from 'lucide-react';
-import { SearchConfigState } from '../lib/types';
+import React, { useState } from 'react';
+import { Play, Square, Hash, Zap, SlidersHorizontal, ChevronDown, ChevronUp, Users, MapPin, Tag } from 'lucide-react';
+import { SearchConfigState, IcpFilters } from '../lib/types';
 
 interface SearchConfigProps {
   config: SearchConfigState;
@@ -11,6 +11,23 @@ interface SearchConfigProps {
   totalLeadsGenerated: number;
 }
 
+const REGION_OPTIONS = ['US', 'UK', 'CA', 'AU', 'ES', 'MX', 'AR', 'CO', 'DE', 'FR'];
+const CONTENT_TYPE_OPTIONS = ['Fitness', 'Wellness', 'Nutrition', 'Mindset', 'Personal Dev', 'Business', 'Endurance', 'Yoga'];
+
+const FOLLOWER_PRESETS = [
+  { label: 'Nano (10K–50K)', min: 10_000, max: 50_000 },
+  { label: 'Micro (50K–200K)', min: 50_000, max: 200_000 },
+  { label: 'Mid (200K–1M)', min: 200_000, max: 1_000_000 },
+  { label: 'Macro (1M+)', min: 1_000_000, max: 99_000_000 },
+  { label: 'All sizes', min: 0, max: 99_000_000 },
+];
+
+function formatFollowerLabel(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(0) + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(0) + 'K';
+  return n === 0 ? 'Any' : String(n);
+}
+
 export function SearchConfig({
   config,
   onChange,
@@ -19,6 +36,31 @@ export function SearchConfig({
   isSearching,
   totalLeadsGenerated
 }: SearchConfigProps) {
+  const [icpOpen, setIcpOpen] = useState(false);
+
+  const icp = config.icpFilters ?? {
+    minFollowers: 0, maxFollowers: 99_000_000,
+    regions: [], contentTypes: [], campaignName: ''
+  };
+
+  const updateIcp = (updates: Partial<IcpFilters>) => {
+    onChange({ icpFilters: { ...icp, ...updates } });
+  };
+
+  const toggleRegion = (r: string) => {
+    const next = icp.regions.includes(r)
+      ? icp.regions.filter(x => x !== r)
+      : [...icp.regions, r];
+    updateIcp({ regions: next });
+  };
+
+  const toggleContentType = (ct: string) => {
+    const next = icp.contentTypes.includes(ct)
+      ? icp.contentTypes.filter(x => x !== ct)
+      : [...icp.contentTypes, ct];
+    updateIcp({ contentTypes: next });
+  };
+
   const handleNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let val = parseInt(e.target.value);
     if (isNaN(val)) val = 1;
@@ -27,7 +69,11 @@ export function SearchConfig({
     onChange({ maxResults: val });
   };
 
-  const maxAllowed = 20;
+  const activeFilters =
+    (icp.regions.length > 0 ? 1 : 0) +
+    (icp.contentTypes.length > 0 ? 1 : 0) +
+    (icp.minFollowers > 0 || icp.maxFollowers < 99_000_000 ? 1 : 0) +
+    (icp.campaignName ? 1 : 0);
 
   return (
     <div className="bg-card border border-border rounded-xl p-6 shadow-sm relative overflow-hidden hover:border-primary/20 transition-all">
@@ -48,8 +94,8 @@ export function SearchConfig({
         )}
       </div>
 
+      {/* Main row */}
       <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-4 items-end">
-        {/* Hashtag / Query Input */}
         <div className="space-y-2">
           <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
             <Hash className="w-3.5 h-3.5" />
@@ -65,26 +111,18 @@ export function SearchConfig({
           />
         </div>
 
-        {/* Lead Count */}
         <div className="space-y-2">
-          <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-            Count
-          </label>
+          <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Count</label>
           <div className="flex items-center gap-2 h-[42px]">
             <input
-              type="range"
-              min="1"
-              max={maxAllowed}
-              step="1"
+              type="range" min="1" max="20" step="1"
               value={config.maxResults || 1}
               onChange={(e) => onChange({ maxResults: parseInt(e.target.value) })}
               disabled={isSearching}
               className="w-28 h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
             />
             <input
-              type="number"
-              min="1"
-              max={maxAllowed}
+              type="number" min="1" max="20"
               value={config.maxResults}
               onChange={handleNumberChange}
               onClick={(e) => e.currentTarget.select()}
@@ -94,7 +132,6 @@ export function SearchConfig({
           </div>
         </div>
 
-        {/* Action Button */}
         <div className="space-y-2">
           <label className="text-xs font-medium text-transparent uppercase tracking-wider select-none">&nbsp;</label>
           {isSearching ? (
@@ -116,6 +153,132 @@ export function SearchConfig({
             </button>
           )}
         </div>
+      </div>
+
+      {/* ICP Filter Toggle */}
+      <div className="mt-4 border-t border-border pt-4">
+        <button
+          onClick={() => setIcpOpen(o => !o)}
+          className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <SlidersHorizontal className="w-4 h-4" />
+          ICP Filters
+          {activeFilters > 0 && (
+            <span className="bg-primary text-primary-foreground text-xs rounded-full px-2 py-0.5 font-bold">
+              {activeFilters}
+            </span>
+          )}
+          {icpOpen ? <ChevronUp className="w-3.5 h-3.5 ml-1" /> : <ChevronDown className="w-3.5 h-3.5 ml-1" />}
+        </button>
+
+        {icpOpen && (
+          <div className="mt-4 space-y-5">
+
+            {/* Campaign name */}
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                <Tag className="w-3.5 h-3.5" />
+                Campaign Name (optional)
+              </label>
+              <input
+                type="text"
+                value={icp.campaignName}
+                onChange={e => updateIcp({ campaignName: e.target.value })}
+                placeholder="e.g. Fitness Micro-Influencers Q2"
+                disabled={isSearching}
+                className="w-full h-9 px-3 text-sm bg-background border border-input rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all placeholder:text-muted-foreground/50 disabled:opacity-50"
+              />
+            </div>
+
+            {/* Follower range presets */}
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                <Users className="w-3.5 h-3.5" />
+                Follower Range
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {FOLLOWER_PRESETS.map(p => {
+                  const active = icp.minFollowers === p.min && icp.maxFollowers === p.max;
+                  return (
+                    <button
+                      key={p.label}
+                      onClick={() => updateIcp({ minFollowers: p.min, maxFollowers: p.max })}
+                      disabled={isSearching}
+                      className={`text-xs px-3 py-1.5 rounded-full border font-medium transition-all disabled:opacity-50 ${
+                        active
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'bg-background border-border text-muted-foreground hover:border-primary/50 hover:text-foreground'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {(icp.minFollowers > 0 || icp.maxFollowers < 99_000_000) && (
+                <p className="text-xs text-primary font-mono">
+                  Active: {formatFollowerLabel(icp.minFollowers)} – {formatFollowerLabel(icp.maxFollowers)}
+                </p>
+              )}
+            </div>
+
+            {/* Regions */}
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                <MapPin className="w-3.5 h-3.5" />
+                Target Regions
+                {icp.regions.length > 0 && <span className="text-primary">({icp.regions.join(', ')})</span>}
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {REGION_OPTIONS.map(r => {
+                  const active = icp.regions.includes(r);
+                  return (
+                    <button
+                      key={r}
+                      onClick={() => toggleRegion(r)}
+                      disabled={isSearching}
+                      className={`text-xs px-3 py-1.5 rounded-full border font-medium transition-all disabled:opacity-50 ${
+                        active
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'bg-background border-border text-muted-foreground hover:border-primary/50 hover:text-foreground'
+                      }`}
+                    >
+                      {r}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Content types */}
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                <Tag className="w-3.5 h-3.5" />
+                Content Type
+                {icp.contentTypes.length > 0 && <span className="text-primary">({icp.contentTypes.join(', ')})</span>}
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {CONTENT_TYPE_OPTIONS.map(ct => {
+                  const active = icp.contentTypes.includes(ct);
+                  return (
+                    <button
+                      key={ct}
+                      onClick={() => toggleContentType(ct)}
+                      disabled={isSearching}
+                      className={`text-xs px-3 py-1.5 rounded-full border font-medium transition-all disabled:opacity-50 ${
+                        active
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'bg-background border-border text-muted-foreground hover:border-primary/50 hover:text-foreground'
+                      }`}
+                    >
+                      {ct}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

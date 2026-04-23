@@ -6,8 +6,9 @@ import { LeadsTable } from './components/LeadsTable';
 import { MessageModal } from './components/MessageModal';
 import { LoginPage } from './components/LoginPage';
 import { CampaignsView } from './components/CampaignsView';
+import { CampaignCreatorModal } from './components/CampaignCreatorModal';
 import { HistoryModal } from './components/HistoryModal';
-import { Lead, SearchConfigState, PageView, SearchSession } from './lib/types';
+import { Lead, SearchConfigState, PageView, SearchSession, Campaign } from './lib/types';
 import { PROJECT_CONFIG } from './config/project';
 import { searchService } from './services/search/SearchService';
 import { supabase } from './lib/supabase';
@@ -38,6 +39,10 @@ function App() {
   const [history, setHistory] = useState<SearchSession[]>([]);
   const [selectedHistorySession, setSelectedHistorySession] = useState<SearchSession | null>(null);
   const [totalLeadsGenerated, setTotalLeadsGenerated] = useState(0);
+
+  // Campaigns State
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [showCampaignCreator, setShowCampaignCreator] = useState(false);
 
 
 
@@ -81,6 +86,7 @@ function App() {
         setCurrentPage('dashboard');
         loadProfile(session.user.id);
         loadHistory(session.user.id);
+        loadCampaigns(session.user.id);
       }
     });
 
@@ -210,6 +216,38 @@ function App() {
     }
   };
 
+  const loadCampaigns = async (uid: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('campaigns')
+        .select('*')
+        .eq('user_id', uid)
+        .order('created_at', { ascending: false });
+      if (error) { console.warn('[CAMPAIGNS] Load error:', error.message); return; }
+      if (data) {
+        setCampaigns(data.map(r => ({
+          id: r.id,
+          name: r.name,
+          description: r.description,
+          status: r.status,
+          hashtags: r.hashtags ?? [],
+          icpFilters: {
+            minFollowers: r.icp_min_followers ?? 0,
+            maxFollowers: r.icp_max_followers ?? 99_000_000,
+            regions: r.icp_regions ?? [],
+            contentTypes: r.icp_content_types ?? [],
+            campaignName: r.name,
+          },
+          totalLeads: r.total_leads ?? 0,
+          createdAt: new Date(r.created_at),
+          userId: r.user_id,
+        })));
+      }
+    } catch (e) {
+      console.error('[CAMPAIGNS] Exception:', e);
+    }
+  };
+
   // Auth Handlers
   const handleLogin = () => {
     // Called after successful Supabase login
@@ -220,6 +258,7 @@ function App() {
         setUserId(session.user.id);
         loadProfile(session.user.id);
         loadHistory(session.user.id);
+        loadCampaigns(session.user.id);
       }
     });
   };
@@ -438,7 +477,9 @@ addLog(`[DB] Search registered (ID: ${searchId})`);
 
             <CampaignsView
               history={history}
+              campaigns={campaigns}
               onSelectSession={handleViewSessionResults}
+              onCreateCampaign={() => setShowCampaignCreator(true)}
             />
           </div>
         )}
@@ -459,6 +500,18 @@ addLog(`[DB] Search registered (ID: ${searchId})`);
           session={selectedHistorySession}
           onClose={() => setSelectedHistorySession(null)}
           onViewMessage={setSelectedLead}
+        />
+      )}
+
+      {/* Campaign Creator Modal */}
+      {showCampaignCreator && userId && (
+        <CampaignCreatorModal
+          userId={userId}
+          onClose={() => setShowCampaignCreator(false)}
+          onCreated={(campaign) => {
+            setCampaigns(prev => [campaign, ...prev]);
+            setShowCampaignCreator(false);
+          }}
         />
       )}
     </div>

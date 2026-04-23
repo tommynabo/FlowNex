@@ -3,6 +3,54 @@
 -- Run this in Supabase SQL Editor
 -- ============================================================
 
+-- ── 0. ENSURE PROFILES TABLE EXISTS ──────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.profiles (
+  id          UUID REFERENCES auth.users NOT NULL PRIMARY KEY,
+  full_name   TEXT,
+  email       TEXT,
+  company_name TEXT,
+  target_icp  TEXT,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE tablename = 'profiles' AND policyname = 'Users can view own profile'
+  ) THEN
+    CREATE POLICY "Users can view own profile" ON public.profiles FOR SELECT USING (auth.uid() = id);
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE tablename = 'profiles' AND policyname = 'Users can update own profile'
+  ) THEN
+    CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE tablename = 'profiles' AND policyname = 'Users can insert own profile'
+  ) THEN
+    CREATE POLICY "Users can insert own profile" ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
+  END IF;
+END $$;
+
+-- Trigger: auto-create profile on signup
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.profiles (id, full_name, email)
+  VALUES (NEW.id, NEW.raw_user_meta_data->>'full_name', NEW.email)
+  ON CONFLICT (id) DO NOTHING;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+
 -- ── 1. CAMPAIGNS TABLE ────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS campaigns (
   id              UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -55,6 +103,46 @@ CREATE TRIGGER campaigns_updated_at
 
 
 -- ── 2. ENHANCE EXISTING LEADS TABLE ─────────────────────────────────────────
+-- Create leads table if it doesn't exist yet
+CREATE TABLE IF NOT EXISTS leads (
+  id              UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id         UUID        REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  search_id       UUID,
+  name            TEXT        NOT NULL DEFAULT '',
+  job_title       TEXT,
+  email           TEXT        DEFAULT '',
+  phone           TEXT,
+  location        TEXT,
+  ig_handle       TEXT,
+  follower_count  INTEGER     DEFAULT 0,
+  niche           TEXT,
+  audience_tier   TEXT        DEFAULT 'nano',
+  ai_summary      TEXT,
+  ai_pain_points  TEXT[]      DEFAULT '{}',
+  cold_email_subject TEXT,
+  cold_email_body TEXT,
+  vsl_pitch       TEXT,
+  vsl_sent_status TEXT        DEFAULT 'pending',
+  email_status    TEXT        DEFAULT 'pending',
+  status          TEXT        DEFAULT 'scraped',
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'leads' AND policyname = 'leads_select') THEN
+    CREATE POLICY "leads_select" ON leads FOR SELECT USING (auth.uid() = user_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'leads' AND policyname = 'leads_insert') THEN
+    CREATE POLICY "leads_insert" ON leads FOR INSERT WITH CHECK (auth.uid() = user_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'leads' AND policyname = 'leads_update') THEN
+    CREATE POLICY "leads_update" ON leads FOR UPDATE USING (auth.uid() = user_id);
+  END IF;
+END $$;
+
 -- Link leads to a campaign
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS campaign_id UUID REFERENCES campaigns(id) ON DELETE SET NULL;
 
@@ -79,6 +167,31 @@ CREATE INDEX IF NOT EXISTS leads_created_at_idx      ON leads(created_at DESC);
 
 
 -- ── 3. LINK SEARCH HISTORY TO CAMPAIGNS ──────────────────────────────────────
+-- Create search_history table if it doesn't exist yet
+CREATE TABLE IF NOT EXISTS search_history (
+  id              UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id         UUID        REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  search_query    TEXT        NOT NULL DEFAULT '',
+  source          TEXT        DEFAULT 'instagram',
+  mode            TEXT        DEFAULT 'fast',
+  total_results   INTEGER     DEFAULT 0,
+  results_extracted INTEGER   DEFAULT 0,
+  status          TEXT        DEFAULT 'completed',
+  executed_at     TIMESTAMPTZ DEFAULT NOW(),
+  completed_at    TIMESTAMPTZ
+);
+
+ALTER TABLE search_history ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'search_history' AND policyname = 'search_history_select') THEN
+    CREATE POLICY "search_history_select" ON search_history FOR SELECT USING (auth.uid() = user_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'search_history' AND policyname = 'search_history_insert') THEN
+    CREATE POLICY "search_history_insert" ON search_history FOR INSERT WITH CHECK (auth.uid() = user_id);
+  END IF;
+END $$;
+
 ALTER TABLE search_history ADD COLUMN IF NOT EXISTS campaign_id   UUID REFERENCES campaigns(id) ON DELETE SET NULL;
 ALTER TABLE search_history ADD COLUMN IF NOT EXISTS campaign_name TEXT;
 ALTER TABLE search_history ADD COLUMN IF NOT EXISTS icp_snapshot  JSONB DEFAULT '{}';

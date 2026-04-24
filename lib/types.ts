@@ -56,6 +56,7 @@ export interface Lead {
   niche?: string;
   audience_tier?: AudienceTier;
   location?: string;
+  website?: string;
   decisionMaker?: {
     name: string;
     role: string;

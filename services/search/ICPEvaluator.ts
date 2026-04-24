@@ -11,6 +11,22 @@ const BRAND_KEYWORDS = [
   'gym', 'club', 'agency'
 ];
 
+// Non-gym sports: match in bio/username/name → reject UNLESS gym override also present
+const NON_GYM_SPORT_KEYWORDS = [
+  'cycling', 'cyclist', 'roadcycling', 'mtb', 'velodrome', 'bikerace', 'bikefitness',
+  'marathon', 'runningclub', 'trailrunning', 'trailrun', 'ultramarathon',
+  'triathlon', 'triathlete',
+  'swimmer', 'openwater',
+  'footballplayer', 'soccerplayer', 'basketballplayer', 'tennisplayer',
+  'golfer', 'rugbyplayer', 'surfer', 'kitesurfer', 'skateboarder', 'snowboarder'
+];
+
+// If ANY of these are present alongside a NON_GYM_SPORT_KEYWORD, the profile is kept
+const GYM_FITNESS_OVERRIDE_KEYWORDS = [
+  'gym', 'fitness', 'workout', 'bodybuilding', 'strength', 'crossfit',
+  'coach', 'trainer', 'hiit', 'weightlifting', 'lifting', 'physique', 'muscle'
+];
+
 const ICP_SOFT_FILTER_BATCH_SIZE = 10;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -46,6 +62,8 @@ export class ICPEvaluator {
     for (const profile of profiles) {
       const handle = (profile.username || '').toLowerCase().trim();
       const nameLower = (profile.fullName || '').toLowerCase();
+      const bioLower = (profile.biography || '').toLowerCase();
+      const fullText = `${bioLower} ${nameLower} ${handle}`;
       const followers = profile.followersCount || 0;
 
       // Follower range
@@ -65,6 +83,17 @@ export class ICPEvaluator {
       if (brandKeyword) {
         onLog(`[HARD FILTER] 🏷 @${handle} skip: "${brandKeyword}" brand keyword in name/username`);
         continue;
+      }
+
+      // Non-gym sport check: reject cycling, running, triathlon, etc.
+      // unless they also show gym/fitness/coaching keywords (e.g. a cycling coach who also lifts)
+      const nonGymSport = NON_GYM_SPORT_KEYWORDS.find(kw => fullText.includes(kw));
+      if (nonGymSport) {
+        const hasGymOverride = GYM_FITNESS_OVERRIDE_KEYWORDS.some(kw => fullText.includes(kw));
+        if (!hasGymOverride) {
+          onLog(`[HARD FILTER] 🚴 @${handle} skip: non-gym sport "${nonGymSport}" detected, no fitness override`);
+          continue;
+        }
       }
 
       passed.push(profile);

@@ -2,6 +2,7 @@ import { Lead, SearchConfigState, AudienceTier } from '../../lib/types';
 import { deduplicationService } from '../deduplication/DeduplicationService';
 import { PROJECT_CONFIG } from '../../config/project';
 import { icpEvaluator, RawApifyProfile } from './ICPEvaluator';
+import { emailDiscoveryService } from './EmailDiscoveryService';
 
 export type LogCallback = (message: string) => void;
 export type ResultCallback = (leads: Lead[]) => void;
@@ -310,7 +311,11 @@ export class SearchService {
                 const followers = profile.followersCount || profile.followers || 0;
                 const bio = profile.biography || profile.bio || '';
                 const fullName = profile.fullName || profile.name || '';
-                const email = this.extractEmailFromBio(bio);
+                // Stage 1 email: bio regex first, then Apify native business/public email fields
+                const emailFromBio = this.extractEmailFromBio(bio);
+                const emailFromApify = (profile.publicEmail as string || profile.businessEmail as string || profile.email as string || profile.contactEmail as string || '').toLowerCase().trim();
+                const email = emailFromBio || emailFromApify;
+                const website = (profile.externalUrl as string || profile.website as string || '').trim();
                 const niche = this.detectNiche(bio, handle, fullName);
                 const region = profile.country || profile.city || '';
 
@@ -356,6 +361,7 @@ export class SearchService {
                     niche,
                     audience_tier: this.detectAudienceTier(followers),
                     location: region,
+                    website,
                     decisionMaker: {
                         name: fullName || ('@' + handle),
                         role: 'Content Creator',
@@ -390,6 +396,24 @@ export class SearchService {
 
             // ── STEP 4b: Soft Filter — AI human creator evaluation ────────────────
             const softFiltered = await icpEvaluator.applySoftFilter(toProcess, onLog);
+
+            // ── STEP 4c: Email Discovery — 3-stage pipeline for leads missing email ─
+            onLog('[EMAIL] Running 3-stage email discovery for ' + softFiltered.length + ' leads...');
+            await Promise.all(softFiltered.map(async (lead) => {
+                if (!this.isRunning) return;
+                const currentEmail = lead.decisionMaker?.email || '';
+                const discoveredEmail = await emailDiscoveryService.discoverEmail(
+                    currentEmail,
+                    lead.website || '',
+                    lead.ig_handle || '',
+                    onLog
+                );
+                if (discoveredEmail && lead.decisionMaker) {
+                    lead.decisionMaker.email = discoveredEmail;
+                }
+            }));
+            const withEmailAfterDiscovery = softFiltered.filter(l => l.decisionMaker?.email).length;
+            onLog('[EMAIL] Discovery complete: ' + withEmailAfterDiscovery + '/' + softFiltered.length + ' leads have email');
 
             onLog('[AI] Generating cold emails for ' + softFiltered.length + ' creators...');
             const analyzed = (await Promise.all(softFiltered.map(async (lead) => {

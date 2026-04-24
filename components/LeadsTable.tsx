@@ -25,7 +25,7 @@ function VslStatusBadge({ status }: { status?: string }) {
 }
 
 const exportToCSV = (leads: Lead[]) => {
-  const headers = ['Creator Name', 'IG Handle', 'Followers', 'Niche', 'Audience Tier', 'Email', 'VSL Status', 'Cold Email Subject', 'Cold Email Body', 'VSL Pitch'];
+  const headers = ['Creator Name', 'IG Handle', 'Followers', 'Niche', 'Audience Tier', 'Email', 'ICP Verified', 'VSL Status', 'Cold Email Subject', 'Cold Email Body', 'VSL Pitch'];
   const escapeCSV = (value: string | undefined) => {
     if (!value) return '';
     const escaped = value.replace(/"/g, '""').replace(/\n/g, ' ').replace(/\r/g, '');
@@ -39,6 +39,7 @@ const exportToCSV = (leads: Lead[]) => {
     escapeCSV(l.niche),
     escapeCSV(l.audience_tier),
     escapeCSV(l.decisionMaker?.email),
+    escapeCSV(l.icp_verified ? 'Yes' : 'No'),
     escapeCSV(l.vsl_sent_status),
     escapeCSV(l.aiAnalysis?.coldEmailSubject),
     escapeCSV(l.aiAnalysis?.coldEmailBody),
@@ -93,7 +94,14 @@ export function LeadsTable({ leads, onViewMessage, onMarkContacted, onMarkDiscar
               <tr key={lead.id} className="group hover:bg-secondary/20 transition-colors">
                 <td className="px-5 py-4 align-top">
                   <div className="flex flex-col">
-                    <span className="font-medium text-foreground">{lead.decisionMaker?.name || ('@' + lead.ig_handle)}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-medium text-foreground">{lead.decisionMaker?.name || ('@' + lead.ig_handle)}</span>
+                      {lead.icp_verified && (
+                        <span className="inline-flex items-center gap-1 bg-green-500/15 text-green-400 text-[10px] px-1.5 py-0.5 rounded-full font-medium border border-green-500/20 whitespace-nowrap">
+                          ✓ ICP Verified
+                        </span>
+                      )}
+                    </div>
                     {lead.ig_handle && (
                       <a href={'https://instagram.com/' + lead.ig_handle} target="_blank" rel="noreferrer"
                         className="flex items-center gap-1 text-xs text-primary hover:underline mt-0.5">

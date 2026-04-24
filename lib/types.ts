@@ -78,6 +78,7 @@ export interface Lead {
   vsl_sent_status?: VslSentStatus;
   email_status?: 'pending' | 'sent' | 'bounced' | 'replied';
   status: 'scraped' | 'enriched' | 'ready' | 'contacted' | 'replied' | 'discarded';
+  icp_verified?: boolean;
 }
 
 export interface AdvancedFilter {

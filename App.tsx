@@ -362,7 +362,8 @@ addLog(`[DB] Search registered (ID: ${searchId})`);
               vsl_pitch: lead.aiAnalysis?.vslPitch || '',
               vsl_sent_status: lead.vsl_sent_status || 'pending',
               email_status: lead.email_status || 'pending',
-              status: 'scraped'
+              status: 'scraped',
+              icp_verified: lead.icp_verified ?? false
             }));
 
             const { error: leadsError } = await supabase

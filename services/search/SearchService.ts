@@ -1,6 +1,7 @@
 import { Lead, SearchConfigState, AudienceTier } from '../../lib/types';
 import { deduplicationService } from '../deduplication/DeduplicationService';
 import { PROJECT_CONFIG } from '../../config/project';
+import { icpEvaluator, RawApifyProfile } from './ICPEvaluator';
 
 export type LogCallback = (message: string) => void;
 export type ResultCallback = (leads: Lead[]) => void;
@@ -294,9 +295,13 @@ export class SearchService {
 
             onLog('[ATTEMPT ' + attempts + '] ' + profiles.length + ' profiles received. Applying ICP filters...');
 
+            // ── STEP 2b: Hard Filter — follower range + brand keywords ────────────
+            const hardFiltered = icpEvaluator.applyHardFilter(profiles as RawApifyProfile[], onLog);
+            onLog('[HARD FILTER] ' + profiles.length + ' → ' + hardFiltered.length + ' profiles after brand/follower filter');
+
             // ── STEP 3: Apply ICP filters & build candidates ─────────────────────
             const candidates: Lead[] = [];
-            for (const profile of profiles) {
+            for (const profile of hardFiltered) {
                 if (!this.isRunning) break;
                 const handle = (profile.username || '').toLowerCase().trim();
                 if (!handle || processedHandles.has(handle)) continue;
@@ -383,8 +388,11 @@ export class SearchService {
             onLog('[ATTEMPT ' + attempts + '] ' + withEmail.length + ' with email, ' + withoutEmail.length + ' without. Processing ' + toProcess.length + '.');
             if (!toProcess.length) { onLog('[ATTEMPT ' + attempts + '] All already in history.'); continue; }
 
-            onLog('[AI] Generating cold emails for ' + toProcess.length + ' creators...');
-            const analyzed = (await Promise.all(toProcess.map(async (lead) => {
+            // ── STEP 4b: Soft Filter — AI human creator evaluation ────────────────
+            const softFiltered = await icpEvaluator.applySoftFilter(toProcess, onLog);
+
+            onLog('[AI] Generating cold emails for ' + softFiltered.length + ' creators...');
+            const analyzed = (await Promise.all(softFiltered.map(async (lead) => {
                 if (!this.isRunning) return null;
                 try {
                     const a = await this.generateCreatorAnalysis(lead);

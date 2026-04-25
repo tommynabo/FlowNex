@@ -8,8 +8,7 @@ interface LoginPageProps {
 }
 
 export function LoginPage({ onLogin }: LoginPageProps) {
-  const [isRegistering, setIsRegistering] = useState(false);
-  const [email, setEmail] = useState('');
+    const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -20,32 +19,21 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     setError('');
 
     try {
-      if (isRegistering) {
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-        });
-        if (error) throw error;
-        // Proceed implicitly if signup succeeds depending on Auth settings, or maybe auto-login
-        onLogin();
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-        if (error) throw error;
-        onLogin();
-      }
+      if (error) throw error;
+      onLogin();
     } catch (err: any) {
       console.error(err);
-      setError(err.message || (isRegistering ? 'Error creating account. Check your details.' : 'Login failed. Check your credentials.'));
+      setError(err.message || 'Login failed. Check your credentials.');
     } finally {
       setLoading(false);
     }
-  };
+  };  return (
 
-  return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4 relative overflow-hidden">
       {/* Background Gradients */}
       <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-primary/5 rounded-full blur-[100px] pointer-events-none" />
@@ -113,23 +101,13 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                 <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
               ) : (
                 <>
-                  {isRegistering ? 'Create Account' : 'Sign In'} <ArrowRight className="ml-2 w-4 h-4" />
+                  Sign In <ArrowRight className="ml-2 w-4 h-4" />
                 </>
               )}
             </button>
           </form>
 
-          <div className="mt-6 text-center text-sm">
-            <button
-              onClick={() => {
-                setIsRegistering(!isRegistering);
-                setError('');
-              }}
-              className="text-primary hover:underline"
-            >
-              {isRegistering ? 'Already have an account? Sign In' : "Don't have an account? Create one"}
-            </button>
-          </div>
+          
 
         </div>
       </div>

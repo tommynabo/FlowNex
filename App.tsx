@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Header } from './components/Header';
 import { SearchConfig } from './components/SearchConfig';
 import { AgentTerminal } from './components/AgentTerminal';
@@ -17,10 +18,11 @@ import { supabase } from './lib/supabase';
 
 function App() {
   // Navigation & Auth State
+
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [userName, setUserName] = useState<string>('');
-  const [currentPage, setCurrentPage] = useState<PageView>('login');
+  // Routing logic replaces currentPage state
 
   // Search State
   const [config, setConfig] = useState<SearchConfigState>({
@@ -44,13 +46,42 @@ function App() {
 
   // Campaigns State
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [activeCampaign, setActiveCampaign] = useState<Campaign | null>(null);
+  // activeCampaign derived from URL
   const [showCampaignCreator, setShowCampaignCreator] = useState(false);
 
   // AI Setter State
   const [setterLogs, setSetterLogs] = useState<string[]>([]);
   const [setterTerminalVisible, setSetterTerminalVisible] = useState(false);
   const [setterTerminalExpanded, setSetterTerminalExpanded] = useState(true);
+
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  let currentPage: PageView = 'login';
+  if (location.pathname === '/' && isAuthenticated) currentPage = 'dashboard';
+  else if (location.pathname === '/login') currentPage = 'login';
+  else if (location.pathname.startsWith('/campa')) currentPage = 'campaigns';
+  else if (location.pathname.startsWith('/setter')) currentPage = 'setter';
+
+  const activeCampaignName = location.pathname.startsWith('/campa') ? decodeURIComponent(location.pathname.split('/')[2] || '') : null;
+  const activeCampaign = activeCampaignName ? campaigns.find(c => c.name === activeCampaignName) || null : null;
+
+  const handleNavigate = (page: PageView) => {
+    switch (page) {
+      case 'dashboard': navigate('/'); break;
+      case 'campaigns': navigate('/campa\u00f1as'); break;
+      case 'setter': navigate('/setter'); break;
+      case 'login': navigate('/login'); break;
+    }
+  };
+
+  const handleSelectCampaign = (c: Campaign | null) => {
+    if (c) {
+      navigate('/campa\u00f1as/' + encodeURIComponent(c.name));
+    } else {
+      navigate('/campa\u00f1as');
+    }
+  };
 
   const addSetterLog = (message: string) => {
     setSetterLogs(prev => [...prev, message]);
@@ -96,7 +127,7 @@ function App() {
       if (session) {
         setIsAuthenticated(true);
         setUserId(session.user.id);
-        setCurrentPage('dashboard');
+        handleNavigate('dashboard');
         loadProfile(session.user.id);
         loadHistory(session.user.id);
         loadCampaigns(session.user.id);
@@ -265,7 +296,7 @@ function App() {
   const handleLogin = () => {
     // Called after successful Supabase login
     setIsAuthenticated(true);
-    setCurrentPage('dashboard');
+    handleNavigate('dashboard');
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) {
         setUserId(session.user.id);
@@ -281,7 +312,7 @@ function App() {
     setIsAuthenticated(false);
     setUserId(null);
     setUserName('');
-    setCurrentPage('login');
+    handleNavigate('login');
     setLogs([]);
     setLeads([]);
     setTerminalVisible(false);
@@ -432,7 +463,7 @@ addLog(`[DB] Search registered (ID: ${searchId})`);
     <div className="min-h-screen bg-background text-foreground font-sans selection:bg-primary/30">
       <Header
         currentPage={currentPage}
-        onNavigate={setCurrentPage}
+        onNavigate={handleNavigate}
         onLogout={handleLogout}
         userName={userName}
       />
@@ -477,7 +508,7 @@ addLog(`[DB] Search registered (ID: ${searchId})`);
               {activeCampaign ? (
                 <CampaignDetailsView 
                   campaign={activeCampaign}
-                  onBack={() => setActiveCampaign(null)}
+                  onBack={() => handleSelectCampaign(null)}
                   config={config}
                   onChangeConfig={handleConfigChange}
                   onSearch={handleSearch}
@@ -494,7 +525,7 @@ addLog(`[DB] Search registered (ID: ${searchId})`);
               ) : (
                 <CampaignsView
                   campaigns={campaigns}
-                  onSelectCampaign={setActiveCampaign}
+                  onSelectCampaign={handleSelectCampaign}
                   onCreateCampaign={() => setShowCampaignCreator(true)}
                 />
               )}

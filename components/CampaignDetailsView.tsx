@@ -50,10 +50,10 @@ export function CampaignDetailsView({
   // Basic CSV Export
     let filteredLeads = leads;
     if (startDate) {
-      filteredLeads = filteredLeads.filter(l => new Date(l.date || Date.now()) >= new Date(startDate));
+      filteredLeads = filteredLeads.filter(l => new Date((l as any).date || Date.now()) >= new Date(startDate));
     }
     if (endDate) {
-      filteredLeads = filteredLeads.filter(l => new Date(l.date || Date.now()) <= new Date(endDate));
+      filteredLeads = filteredLeads.filter(l => new Date((l as any).date || Date.now()) <= new Date(endDate));
     }
     if (filteredLeads.length === 0) {
       alert('No leads found in this date range.');
@@ -154,7 +154,7 @@ export function CampaignDetailsView({
                 type="date" 
                 value={startDate} 
                 onChange={e => setStartDate(e.target.value)} 
-                className="bg-secondary text-sm px-3 py-2 rounded-lg border border-border focus:border-primary outline-none"
+                className="bg-white text-black text-sm px-3 py-2 rounded-lg border border-border focus:border-primary outline-none [color-scheme:light]"
                 title="Start Date"
               />
               <span className="text-muted-foreground text-sm">to</span>
@@ -162,7 +162,7 @@ export function CampaignDetailsView({
                 type="date" 
                 value={endDate} 
                 onChange={e => setEndDate(e.target.value)}
-                className="bg-secondary text-sm px-3 py-2 rounded-lg border border-border focus:border-primary outline-none"
+                className="bg-white text-black text-sm px-3 py-2 rounded-lg border border-border focus:border-primary outline-none [color-scheme:light]"
                 title="End Date"
               />
               <button 

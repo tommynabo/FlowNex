@@ -11,6 +11,20 @@ export type ResultCallback = (leads: Lead[]) => void;
 const INSTAGRAM_HASHTAG_SCRAPER = 'apify~instagram-hashtag-scraper';
 const INSTAGRAM_PROFILE_SCRAPER = 'apify~instagram-profile-scraper';
 
+// Maps campaign region codes to patterns found in Apify's country/city/location fields
+const REGION_MAP: Record<string, string[]> = {
+  US: ['united states', 'usa', 'u.s.a', 'u.s.', 'america', 'new york', 'los angeles', 'chicago', 'houston', 'phoenix', 'miami', 'dallas', 'seattle', 'denver', 'atlanta', 'boston', 'us'],
+  UK: ['united kingdom', 'england', 'britain', 'uk', 'u.k.', 'london', 'manchester', 'birmingham', 'glasgow', 'liverpool'],
+  CA: ['canada', 'toronto', 'vancouver', 'montreal', 'calgary', 'ottawa', 'ca'],
+  AU: ['australia', 'sydney', 'melbourne', 'brisbane', 'perth', 'adelaide', 'au'],
+  ES: ['spain', 'españa', 'espana', 'madrid', 'barcelona', 'valencia', 'sevilla', 'es'],
+  MX: ['mexico', 'méxico', 'cdmx', 'guadalajara', 'monterrey', 'mx'],
+  AR: ['argentina', 'buenos aires', 'córdoba', 'rosario', 'ar'],
+  CO: ['colombia', 'bogotá', 'bogota', 'medellín', 'medellin', 'cali', 'co'],
+  DE: ['germany', 'deutschland', 'berlin', 'hamburg', 'munich', 'münchen', 'de'],
+  FR: ['france', 'paris', 'lyon', 'marseille', 'toulouse', 'fr'],
+};
+
 export class SearchService {
     private isRunning = false;
     private apiKey: string = '';
@@ -331,16 +345,25 @@ export class SearchService {
                     continue;
                 }
 
-                // ICP: region filter
+                // ICP: region filter — only reject if location is known AND contradicts the filter
                 if (targetRegions.length > 0) {
-                    const matchesRegion = targetRegions.some(r =>
-                        region.toLowerCase().includes(r.toLowerCase()) ||
-                        (profile.city || '').toLowerCase().includes(r.toLowerCase())
-                    );
-                    if (!matchesRegion) {
-                        onLog('[ICP] 🌍 @' + handle + ' skip: region "' + region + '" not in [' + targetRegions.join(', ') + ']');
-                        continue;
+                    const locationFields = [
+                        profile.country, profile.city, profile.region,
+                        profile.countryCode, profile.locationName
+                    ].map(v => (v as string || '').toLowerCase()).join(' ');
+
+                    if (locationFields.trim()) {
+                        // We have location data — check if it matches any target region
+                        const matchesRegion = targetRegions.some(r => {
+                            const patterns = REGION_MAP[r] ?? [r.toLowerCase()];
+                            return patterns.some(p => locationFields.includes(p));
+                        });
+                        if (!matchesRegion) {
+                            onLog('[ICP] 🌍 @' + handle + ' skip: location "' + (profile.country || profile.city || '') + '" not in [' + targetRegions.join(', ') + ']');
+                            continue;
+                        }
                     }
+                    // No location data — allow through (can’t confirm but can’t reject)
                 }
 
                 // ICP: content type filter
@@ -371,7 +394,7 @@ export class SearchService {
                         instagram: 'https://instagram.com/' + handle
                     },
                     aiAnalysis: {
-                        summary: '', painPoints: [], generatedIcebreaker: '',
+                        summary: bio, painPoints: [], generatedIcebreaker: '',
                         coldEmailSubject: '', coldEmailBody: '', vslPitch: '',
                         fullAnalysis: '', psychologicalProfile: '', engagementSignal: '', salesAngle: ''
                     },

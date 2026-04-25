@@ -27,14 +27,22 @@ const GYM_FITNESS_OVERRIDE_KEYWORDS = [
   'coach', 'trainer', 'hiit', 'weightlifting', 'lifting', 'physique', 'muscle'
 ];
 
-// At least ONE of these must appear in bio/username/name — profiles with none are rejected
+// At least ONE strictly physical fitness keyword must be present — broad terms like coach/health excluded
 const FITNESS_REQUIRED_KEYWORDS = [
-  'fitness', 'gym', 'workout', 'training', 'trainer', 'coach',
-  'crossfit', 'hiit', 'bodybuilding', 'weightlifting', 'lifting',
-  'physique', 'muscle', 'strength', 'pilates', 'fitspo', 'fitlife',
-  'nutrition', 'diet', 'healthylifestyle', 'weightloss', 'wellness',
-  'mindset', 'personaldevelopment', 'lifecoach', 'selfimprovement',
-  'yoga', 'meditation', 'health', 'athletic', 'athlete', 'sport'
+  'fitness', 'gym', 'workout', 'training', 'crossfit', 'hiit',
+  'bodybuilding', 'weightlifting', 'lifting', 'physique', 'muscle',
+  'strength', 'pilates', 'fitspo', 'fitlife', 'gymlife', 'gymrat',
+  'fitnesscoach', 'personaltrainer', 'gains', 'shredded', 'bulk',
+  'macros', 'gymtok', 'fitnessmotivation', 'gymmotivation',
+  'nutrition', 'diet', 'weightloss'
+];
+
+// Profiles containing ANY of these are rejected — even if they also have fitness keywords
+const MENTAL_COACH_REJECT_KEYWORDS = [
+  'psychologist', 'psychology', 'therapist', 'therapy', 'mentalhealth',
+  'psychiatric', 'psychiatrist', 'counselor', 'counselling', 'counseling',
+  'mindcoach', 'spiritualcoach', 'energyhealer', 'healer', 'spirituality',
+  'manifestation', 'lawofattraction'
 ];
 
 const ICP_SOFT_FILTER_BATCH_SIZE = 10;
@@ -95,10 +103,17 @@ export class ICPEvaluator {
         continue;
       }
 
-      // Positive fitness check — reject if NO fitness/wellness/mindset keyword is present
+      // Positive fitness check — reject if NO physical fitness keyword is present
       const hasFitnessKeyword = FITNESS_REQUIRED_KEYWORDS.some(kw => fullText.includes(kw));
       if (!hasFitnessKeyword) {
-        onLog(`[HARD FILTER] 🚫 @${handle} skip: no fitness/wellness keyword in bio/name`);
+        onLog(`[HARD FILTER] 🚫 @${handle} skip: no physical fitness keyword in bio/name`);
+        continue;
+      }
+
+      // Mental/spiritual coach rejection — even if they mention fitness occasionally
+      const mentalKeyword = MENTAL_COACH_REJECT_KEYWORDS.find(kw => fullText.includes(kw));
+      if (mentalKeyword) {
+        onLog(`[HARD FILTER] 🧠 @${handle} skip: mental/spiritual keyword "${mentalKeyword}" found`);
         continue;
       }
 
@@ -132,20 +147,25 @@ export class ICPEvaluator {
 
     onLog(`[ICP SOFT] Evaluating ${leads.length} profiles with AI (batches of ${ICP_SOFT_FILTER_BATCH_SIZE})...`);
 
-    const SYSTEM_PROMPT = `You are an expert Talent Scout for a creator agency. Your job is to analyze Instagram profile metadata and determine if the account belongs to an INDIVIDUAL HUMAN CREATOR or a COMPANY/THEME PAGE.
+    const SYSTEM_PROMPT = `You are an expert talent scout for a fitness creator outreach agency. Analyze each Instagram profile and determine if it belongs to a PHYSICAL FITNESS CREATOR — someone whose PRIMARY content is gym training, bodybuilding, weightlifting, nutrition, or physical exercise.
 
-Criteria for HUMAN CREATOR (Pass):
-- The name sounds like a real person.
-- The bio talks in first person ('I', 'my journey', 'coach').
-- They offer personal coaching or document their own life/fitness journey.
+Criteria to PASS (is_physical_fitness_creator = true):
+- The person clearly documents their own gym workouts, lifting sessions, body transformation, or nutrition.
+- Bio mentions gym, workout routines, personal training, bodybuilding, crossfit, HIIT, or similar physical exercise.
+- They are a personal trainer or fitness coach whose content is about PHYSICAL exercise (not mental/life coaching).
+- Nutrition coaches focused on sports/bodybuilding diet.
 
-Criteria for COMPANY/THEME PAGE (Fail):
-- The name sounds like a brand or business.
-- It's a faceless motivation page.
-- They sell physical products as their main identity.
+Criteria to FAIL (is_physical_fitness_creator = false):
+- Mental health coaches, psychologists, therapists, life coaches, motivational speakers.
+- Models or influencers who occasionally post gym photos but whose main content is lifestyle/fashion/travel.
+- Yoga/meditation/spirituality focused accounts (unless they also do heavy strength training).
+- Faceless motivation pages or brand accounts.
+- Anyone whose main identity is NOT physical gym-based fitness.
 
-Reply ONLY with a valid JSON array matching the input order. Format:
-[ { "username": "user1", "is_human_creator": true, "confidence": 95, "reason": "Real name, bio mentions personal coaching" }, ... ]`;
+Be STRICT. When in doubt, mark false. A person who goes to the gym occasionally is NOT a fitness creator.
+
+Reply ONLY with a valid JSON array matching the input order:
+[ { "username": "user1", "is_physical_fitness_creator": true, "confidence": 92, "reason": "Personal trainer, bio shows gym workouts and lifting progress" }, ... ]`;
 
     // Chunk into batches
     const batches: Lead[][] = [];
@@ -161,7 +181,7 @@ Reply ONLY with a valid JSON array matching the input order. Format:
       const profilesPayload = batch.map(lead => ({
         username: lead.ig_handle || '',
         fullName: lead.decisionMaker?.name || '',
-        biography: lead.aiAnalysis?.summary || '',   // best bio we have at this point
+        biography: (lead as any)._rawBio || lead.aiAnalysis?.summary || '',
         followersCount: lead.follower_count || 0
       }));
 
@@ -205,13 +225,14 @@ Reply ONLY with a valid JSON array matching the input order. Format:
             !result.username ||
             result.username.toLowerCase() === (lead.ig_handle || '').toLowerCase();
 
-          if (usernameMatch && result.is_human_creator === true && result.confidence > 80) {
+          const passes = (result as any).is_physical_fitness_creator ?? result.is_human_creator;
+          if (usernameMatch && passes === true && result.confidence >= 85) {
             lead.icp_verified = true;
             verifiedCount++;
-            onLog(`[ICP SOFT] ✓ @${lead.ig_handle} → Human Creator (${result.confidence}% confidence)`);
+            onLog(`[ICP SOFT] ✓ @${lead.ig_handle} → Physical Fitness Creator (${result.confidence}% confidence)`);
           } else {
             lead.icp_verified = false;
-            onLog(`[ICP SOFT] ✗ @${lead.ig_handle} → ${result.is_human_creator ? `Low confidence (${result.confidence}%)` : `Brand/Page`}: ${result.reason || 'no reason given'}`);
+            onLog(`[ICP SOFT] ✗ @${lead.ig_handle} → ${passes ? `Low confidence (${result.confidence}%)` : `Not fitness creator`}: ${result.reason || 'no reason given'}`);
           }
         }
 

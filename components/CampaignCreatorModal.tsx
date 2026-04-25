@@ -10,7 +10,7 @@ interface CampaignCreatorModalProps {
 }
 
 const REGION_OPTIONS = ['US', 'UK', 'CA', 'AU', 'ES', 'MX', 'AR', 'CO', 'DE', 'FR'];
-const CONTENT_TYPE_OPTIONS = ['Fitness', 'Wellness', 'Nutrition', 'Mindset', 'Personal Dev', 'Business', 'Endurance', 'Yoga'];
+const CONTENT_TYPE_OPTIONS = ['Fitness', 'Nutrition'];
 const FOLLOWER_PRESETS = [
   { label: 'Nano (10K–50K)', min: 10_000, max: 50_000 },
   { label: 'Micro (50K–200K)', min: 50_000, max: 200_000 },

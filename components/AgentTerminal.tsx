@@ -39,7 +39,7 @@ export function AgentTerminal({ logs, isVisible, isExpanded, onToggleExpand }: A
 
       {/* Terminal Content */}
       <div className={`transition-all duration-300 ${isExpanded ? 'h-64' : 'h-0'}`}>
-        <div className="h-full overflow-y-auto p-4 font-mono text-xs md:text-sm space-y-1.5 scrollbar-hide">
+        <div className="h-full overflow-y-auto p-4 font-mono text-xs md:text-sm space-y-1.5 scrollbar-hide" style={{ color: '#e4e4e7' }}>
           {logs.map((log, index) => {
             const isError = log.includes('Error') || log.includes('ERROR') || log.includes('FATAL');
             const isSuccess = log.includes('SUCCESS') || log.includes('[email]') || log.includes('Complete') || log.includes('creators found');

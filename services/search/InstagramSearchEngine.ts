@@ -355,13 +355,15 @@ export class InstagramSearchEngine {
     const MAX_RETRIES = Math.min(100, Math.max(30, Math.ceil(targetCount / 5) * 6));
 
     onLog('[IG] Base hashtags: #' + baseHashtags.join(', #'));
-    onLog('[IG] Niche pool: ' + nichePool.length + ' hashtag variants loaded');
-    onLog('[IG] Target: ' + targetCount + ' creators | Max attempts: ' + MAX_RETRIES);
+    onLog('[IG] Niche pool: ' + nichePool.length + ' hashtag variants cargados para este nicho');
+    onLog('[IG] 🎯 Objetivo: ' + targetCount + ' creadores | Máx intentos: ' + MAX_RETRIES);
+    onLog('[IG] Followers: ' + (minFollowers > 0 ? this.formatFollowers(minFollowers) : '0') + ' – ' + (maxFollowers < 99_000_000 ? this.formatFollowers(maxFollowers) : '∞'));
+    console.log('[InstagramEngine] START — target:', targetCount, '| maxRetries:', MAX_RETRIES, '| hashtags:', baseHashtags);
     if (minFollowers > 0 || maxFollowers < 99_000_000) {
       onLog('[ICP] Follower range: ' + this.formatFollowers(minFollowers) + ' – ' + this.formatFollowers(maxFollowers));
     }
-    if (targetRegions.length > 0) onLog('[ICP] Regions: ' + targetRegions.join(', '));
-    if (targetContentTypes.length > 0) onLog('[ICP] Content types: ' + targetContentTypes.join(', '));
+    if (targetRegions.length > 0) onLog('[ICP] Regiones: ' + targetRegions.join(', '));
+    if (targetContentTypes.length > 0) onLog('[ICP] Tipos de contenido: ' + targetContentTypes.join(', '));
 
     const accepted: Lead[] = [];
 
@@ -418,13 +420,15 @@ export class InstagramSearchEngine {
         .filter(h => h && !seenHandles.has(h));
       const novelHandles = [...new Set(rawHandles)].slice(0, 60);
 
-      onLog('📸 STEP 1/4 ✓ — ' + posts.length + ' posts → ' + novelHandles.length + ' novel handles (unseen)');
+      onLog('📸 STEP 1/4 ✓ — ' + posts.length + ' posts → ' + novelHandles.length + ' handles nuevos (sin ver aún)');
+      console.log('[InstagramEngine] Attempt', attempt, '| novel handles:', novelHandles.length, '/', rawHandles.length + novelHandles.length, 'raw (', posts.length, 'posts)');
 
       if (!novelHandles.length) {
-        onLog('⚠ All handles from #' + hashtagBatch.join(', #') + ' already seen — rotating hashtags...');
+        onLog('⚠ Todos los handles de #' + hashtagBatch.join(', #') + ' ya fueron procesados — rotando hashtags...');
+        console.warn('[InstagramEngine] Attempt', attempt, '— 0 novel handles. All seen. Rotating.');
         consecutiveZeros++;
         if (consecutiveZeros >= MAX_CONSEC_ZEROS) {
-          onLog('[ENGINE] ' + MAX_CONSEC_ZEROS + ' rounds with no new handles — niche pool exhausted.');
+          onLog('[ENGINE] ' + MAX_CONSEC_ZEROS + ' rondas sin handles nuevos — nicho agotado. Deteniendo.');
           break;
         }
         continue;
@@ -449,13 +453,15 @@ export class InstagramSearchEngine {
       onLog('👤 STEP 2/4 ✓ — ' + profiles.length + ' profiles received');
 
       // ── STEP 3: Hard ICP filter ──────────────────────────────────────────────
-      onLog('🔍 STEP 3/4 — Applying hard ICP filters...');
+      onLog('🔍 STEP 3/4 — Aplicando filtros ICP duros (' + profiles.length + ' perfiles)...');
       const hardFiltered = icpEvaluator.applyHardFilter(profiles as RawApifyProfile[], onLog);
-      onLog('[HARD FILTER] ' + profiles.length + ' → ' + hardFiltered.length +
-        ' after follower/brand/fitness checks');
+      onLog('[HARD FILTER] Embudo: ' + profiles.length + ' descargados → ' + hardFiltered.length +
+        ' pasaron (followers ✓, sin marca ✓, keyword fitness ✓)');
+      console.log('[InstagramEngine] Attempt', attempt, '| hard filter:', profiles.length, '→', hardFiltered.length);
 
       if (!hardFiltered.length) {
-        onLog('⚠ No profiles passed hard filter in this batch. Continuing...');
+        onLog('⚠ Ningún perfil pasó el hard filter en este batch. Rotando hashtags...');
+        console.warn('[InstagramEngine] Attempt', attempt, '— 0 passed hard filter');
         continue;
       }
 
@@ -556,8 +562,13 @@ export class InstagramSearchEngine {
         });
       }
 
+      onLog('[FUNNEL] ' + candidates.length + '/' + hardFiltered.length +
+        ' pasaron filtros de seguidor/región/nicho');
+      console.log('[InstagramEngine] Attempt', attempt, '| after ICP filters:', candidates.length, 'candidates');
+
       if (!candidates.length) {
-        onLog('⚠ No candidates after ICP filters in this batch. Continuing...');
+        onLog('⚠ Ningún candidato pasó los filtros ICP en este batch. Rotando hashtags...');
+        console.warn('[InstagramEngine] Attempt', attempt, '— 0 candidates after ICP filters. Check follower range and region settings.');
         continue;
       }
 
@@ -565,28 +576,42 @@ export class InstagramSearchEngine {
       const acceptedHandles = new Set(accepted.map(l => l.ig_handle || ''));
       const notYetAccepted = candidates.filter(c => !acceptedHandles.has(c.ig_handle || ''));
       const dbDeduped = deduplicationService.filterUniqueCandidates(notYetAccepted, existingIgHandles, existingEmails);
+      onLog('[DEDUP] ' + dbDeduped.length + '/' + notYetAccepted.length + ' son nuevos (no están en la BD)');
+      console.log('[InstagramEngine] Attempt', attempt, '| after dedup:', dbDeduped.length);
 
       if (!dbDeduped.length) {
-        onLog('⚠ All candidates already exist in DB. Continuing...');
+        onLog('⚠ Todos los candidatos ya existen en la BD. Rotando hashtags...');
         continue;
       }
 
-      // ── STEP 3b: AI Soft Filter — ONLY keep confirmed ICP-verified leads ──────
-      onLog('🤖 STEP 3b — AI soft filter for ' + dbDeduped.length + ' candidates...');
+      // ── STEP 3b: AI Soft Filter — verifica que son creadores de fitness físico ─
+      onLog('🤖 STEP 3b — Filtro IA para ' + dbDeduped.length + ' candidatos (verificando ICP fitness)...');
       const softFiltered = await icpEvaluator.applySoftFilter(dbDeduped, onLog);
       const icpVerified = softFiltered.filter(l => l.icp_verified === true);
+      const icpUnverified = softFiltered.filter(l => l.icp_verified !== true);
 
-      onLog('[ICP SOFT] ' + icpVerified.length + '/' + softFiltered.length +
-        ' confirmed ICP-fit (strict: only icp_verified=true accepted)');
+      onLog('[ICP SOFT] Resultado: ' + icpVerified.length + ' verificados ✓ | ' +
+        icpUnverified.length + ' no verificados ✗ (de ' + softFiltered.length + ' evaluados)');
+      console.log('[InstagramEngine] Attempt', attempt, '| icp_verified:', icpVerified.length, '/', softFiltered.length);
 
-      if (!icpVerified.length) {
-        onLog('⚠ No ICP-verified leads in this batch. Rotating hashtags...');
+      // If AI completely failed (0 verified AND soft filter returned all unverified),
+      // use hard-filtered candidates as fallback rather than discarding the entire batch
+      const toEvaluate = icpVerified.length > 0 ? icpVerified : (() => {
+        if (icpUnverified.length > 0) {
+          onLog('⚠ IA no pudo verificar este batch (posible error de API). Usando candidatos del hard filter como fallback...');
+          console.warn('[InstagramEngine] Attempt', attempt, '— AI soft filter returned 0 verified. Using hard-filter fallback.');
+        }
+        return icpUnverified;
+      })();
+
+      if (!toEvaluate.length) {
+        onLog('⚠ Ningún lead ICP en este batch. Rotando hashtags...');
         continue;
       }
 
       // Only take as many as we still need
       const slotsRemaining = targetCount - accepted.length;
-      const toProcess = icpVerified.slice(0, slotsRemaining);
+      const toProcess = toEvaluate.slice(0, slotsRemaining);
 
       // ── STEP 4: Email discovery ───────────────────────────────────────────────
       onLog('📧 STEP 4/4 — Email discovery for ' + toProcess.length + ' verified creators...');
@@ -601,10 +626,12 @@ export class InstagramSearchEngine {
         if (discovered && lead.decisionMaker) lead.decisionMaker.email = discovered;
       }));
       const withEmail = toProcess.filter(l => l.decisionMaker?.email).length;
-      onLog('📧 STEP 4/4 ✓ — ' + withEmail + '/' + toProcess.length + ' have email after discovery');
+      onLog('📧 STEP 4/4 ✓ — ' + withEmail + '/' + toProcess.length + ' tienen email tras discovery' +
+        (withEmail < toProcess.length ? ' (' + (toProcess.length - withEmail) + ' sin email — se incluyen igual)' : ''));
+      console.log('[InstagramEngine] Attempt', attempt, '| with email:', withEmail, '/', toProcess.length);
 
       // ── AI analysis + finalize ────────────────────────────────────────────────
-      onLog('✍ Generating AI analysis for ' + toProcess.length + ' creators...');
+      onLog('✍ Generando análisis IA para ' + toProcess.length + ' creadores...');
       const analyzed = (await Promise.all(toProcess.map(async (lead) => {
         if (!this.isRunning) return null;
         try {
@@ -628,24 +655,22 @@ export class InstagramSearchEngine {
         return lead;
       }))).filter((l): l is Lead => l !== null);
 
-      // Accept leads — skip any that ended up without email
+      // Accept all analyzed leads — email is nice-to-have, not a gate
       for (const lead of analyzed) {
-        if (!lead.decisionMaker?.email) {
-          onLog('[SKIP] @' + lead.ig_handle + ' → no email found, skipping');
-          continue;
-        }
         accepted.push(lead);
         // Register in existingIgHandles so future dedup passes are aware
         if (lead.ig_handle) existingIgHandles.add(lead.ig_handle);
+        const emailStr = lead.decisionMaker?.email ? '📧 ' + lead.decisionMaker.email : '(sin email)';
         onLog('[✓] ' + accepted.length + '/' + targetCount +
           ': @' + lead.ig_handle +
           ' (' + this.formatFollowers(lead.follower_count || 0) +
-          ' | ' + lead.niche + ') 📧 ' + lead.decisionMaker.email);
+          ' | ' + lead.niche + ') ' + emailStr);
         if (accepted.length >= targetCount) break;
       }
 
-      onLog('[ENGINE] Progress: ' + accepted.length + '/' + targetCount +
-        ' (' + (targetCount - accepted.length) + ' remaining)');
+      onLog('[ENGINE] Progreso: ' + accepted.length + '/' + targetCount +
+        ' — faltan ' + (targetCount - accepted.length) + ' leads | intento ' + attempt + '/' + MAX_RETRIES);
+      console.log('[InstagramEngine] After attempt', attempt, '| accepted:', accepted.length, '/', targetCount);
     }
 
     // ── Final summary ─────────────────────────────────────────────────────────

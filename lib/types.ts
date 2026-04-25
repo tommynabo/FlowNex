@@ -1,8 +1,42 @@
 export type PlatformSource = 'gmail' | 'instagram' | 'tiktok';
 export type SearchMode = 'fast' | 'deep';
-export type PageView = 'login' | 'dashboard' | 'generator' | 'campaigns' | 'history';
+export type PageView = 'login' | 'dashboard' | 'generator' | 'campaigns' | 'history' | 'setter';
 export type VslSentStatus = 'pending' | 'sent' | 'opened' | 'clicked' | 'converted';
 export type AudienceTier = 'nano' | 'micro' | 'mid' | 'macro';
+
+// ── AI Setter Module ────────────────────────────────────────────────────────
+export type SetterStatus = 'pending_review' | 'approved' | 'rejected' | 'corrected' | 'sent';
+export type IntentType = 'interested' | 'objection' | 'question' | 'not_interested' | 'unsubscribe' | 'unknown';
+
+export interface LeadConversation {
+  id: string;
+  userId: string;
+  workspaceId?: string;
+  campaignId: string;
+  campaignName?: string;
+  leadEmail: string;
+  emailId: string;          // reply_to_uuid from Instantly — used to send reply via Unibox API
+  replySubject?: string;
+  replyText: string;
+  aiDraft?: string;
+  intentClassification?: IntentType;
+  confidenceScore?: number;
+  status: SetterStatus;
+  createdAt: string;
+  processedAt?: string;
+}
+
+export interface SetterFeedback {
+  id: string;
+  conversationId: string;
+  userId: string;
+  decision: 'approved' | 'rejected' | 'corrected';
+  originalDraft: string;
+  correctedDraft?: string;
+  reason: string;
+  createdAt: string;
+}
+// ────────────────────────────────────────────────────────────────────────────
 
 export interface IcpFilters {
   minFollowers: number;        // 0 = no minimum

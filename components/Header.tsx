@@ -1,5 +1,5 @@
 import React from 'react';
-import { Instagram, LogOut, Zap } from 'lucide-react';
+import { LogOut, Zap, Bot } from 'lucide-react';
 import { PageView } from '../lib/types';
 
 interface HeaderProps {
@@ -37,6 +37,10 @@ export function Header({ currentPage, onNavigate, onLogout, userName }: HeaderPr
           <a onClick={() => onNavigate('generator')} className={getLinkClass('generator')}>Search Leads</a>
           <a onClick={() => onNavigate('campaigns')} className={getLinkClass('campaigns')}>Campaigns</a>
           <a onClick={() => onNavigate('history')} className={getLinkClass('history')}>History</a>
+          <a onClick={() => onNavigate('setter')} className={`${getLinkClass('setter')} flex items-center gap-1.5`}>
+            <Bot className="w-3.5 h-3.5" />
+            AI Setter
+          </a>
         </nav>
 
         <div className="flex items-center gap-4">

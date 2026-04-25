@@ -8,6 +8,7 @@ import { LoginPage } from './components/LoginPage';
 import { CampaignsView } from './components/CampaignsView';
 import { CampaignCreatorModal } from './components/CampaignCreatorModal';
 import { HistoryModal } from './components/HistoryModal';
+import { SetterDashboard } from './components/SetterDashboard';
 import { Lead, SearchConfigState, PageView, SearchSession, Campaign } from './lib/types';
 import { PROJECT_CONFIG } from './config/project';
 import { searchService } from './services/search/SearchService';
@@ -43,6 +44,16 @@ function App() {
   // Campaigns State
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [showCampaignCreator, setShowCampaignCreator] = useState(false);
+
+  // AI Setter State
+  const [setterLogs, setSetterLogs] = useState<string[]>([]);
+  const [setterTerminalVisible, setSetterTerminalVisible] = useState(false);
+  const [setterTerminalExpanded, setSetterTerminalExpanded] = useState(true);
+
+  const addSetterLog = (message: string) => {
+    setSetterLogs(prev => [...prev, message]);
+    setSetterTerminalVisible(true);
+  };
 
 
 
@@ -503,6 +514,21 @@ addLog(`[DB] Search registered (ID: ${searchId})`);
                 onCreateCampaign={() => setShowCampaignCreator(true)}
               />
             </div>
+          </div>
+        )}
+
+        {currentPage === 'setter' && userId && (
+          <div className="animate-[fadeIn_0.3s_ease-out] space-y-6">
+            <SetterDashboard
+              userId={userId}
+              onLog={addSetterLog}
+            />
+            <AgentTerminal
+              logs={setterLogs}
+              isVisible={setterTerminalVisible}
+              isExpanded={setterTerminalExpanded}
+              onToggleExpand={() => setSetterTerminalExpanded(!setterTerminalExpanded)}
+            />
           </div>
         )}
 

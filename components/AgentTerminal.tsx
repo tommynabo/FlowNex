@@ -43,7 +43,8 @@ export function AgentTerminal({ logs, isVisible, isExpanded, onToggleExpand }: A
           {logs.map((log, index) => {
             const isError = log.includes('Error') || log.includes('ERROR') || log.includes('FATAL');
             const isSuccess = log.includes('SUCCESS') || log.includes('[email]') || log.includes('Complete') || log.includes('creators found');
-            const isSystem = log.includes('[INIT]') || log.includes('[DEDUP]') || log.includes('[APIFY]') || log.includes('[AUTOPILOT]');
+            const isSystem = log.includes('[INIT]') || log.includes('[DEDUP]') || log.includes('[APIFY]') || log.includes('[AUTOPILOT]') || log.includes('[SETTER]');
+            const isIncoming = log.includes('Entrante:');
             
             return (
               <div key={index} className="flex gap-3 opacity-0 animate-[fadeIn_0.3s_ease-out_forwards]">
@@ -53,6 +54,7 @@ export function AgentTerminal({ logs, isVisible, isExpanded, onToggleExpand }: A
                 <span className={
                   isError ? 'text-destructive' :
                   isSuccess ? 'text-green-400' :
+                  isIncoming ? 'text-purple-400' :
                   isSystem ? 'text-primary' : 'text-zinc-300'
                 }>
                   {log}

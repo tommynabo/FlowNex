@@ -1,10 +1,6 @@
 {
     "rewrites": [
         {
-            "source": "/api/apify/(.*)",
-            "destination": "https://api.apify.com/v2/$1"
-        },
-        {
             "source": "/(.*)",
             "destination": "/index.html"
         }

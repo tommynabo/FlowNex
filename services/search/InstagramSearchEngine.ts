@@ -723,32 +723,46 @@ export class InstagramSearchEngine {
 
   /**
    * Extracts search keywords from the user's query string.
-   * Returns plain keywords (not hashtags) that will be wrapped in quotes
-   * and composed into `site:instagram.com` Google Search queries.
+   * Handles:
+   *   - Hashtag-only queries (#fitnesscoach OR #gymlife) → detects niche, returns phrases
+   *   - Plain keyword queries (fitness coach, yoga) → returns as-is
+   *   - Boolean queries ("coach" OR "trainer") → strips operators, returns phrases
    */
   private parseKeywordsFromQuery(query: string): string[] {
     const defaults = ['fitness coach', 'personal trainer'];
-
     if (!query) return defaults;
 
     const lower = query.toLowerCase().trim();
 
-    // If user typed explicit keywords (not hashtags), use them directly
-    const withoutHashtags = lower.replace(/#[a-zA-Z0-9_]+/g, '').trim();
-    if (withoutHashtags.length > 2) {
-      // Split on common separators, keep meaningful phrases
-      const parts = withoutHashtags.split(/[,|;]+/).map(s => s.trim()).filter(s => s.length > 1);
+    // Niche auto-detection (works on hashtags AND plain keywords)
+    const tags: string[] = [];
+    if (/fitness|gym|workout|training|bodybuilding|strength|fitnesscoach|personaltrainer|gymlife|gymrat|fitspo/.test(lower))
+      tags.push('fitness coach', 'personal trainer');
+    if (/yoga|wellness|mindfulness|breathwork/.test(lower))
+      tags.push('wellness coach', 'mindfulness coach');
+    if (/mindset|personal.?dev|selfimprovement|motivation|lifecoach/.test(lower))
+      tags.push('mindset coach', 'personal development');
+    if (/nutrition|diet|mealprep|macro|weightloss/.test(lower))
+      tags.push('nutrition coach', 'diet coach');
+    if (/business|entrepreneur|ecommerce|startup/.test(lower))
+      tags.push('online coach', 'business coach');
+
+    if (tags.length > 0) return tags.slice(0, 3);
+
+    // Fallback: strip hashtags + boolean operators, split on separators
+    const cleaned = lower
+      .replace(/#[a-zA-Z0-9_]+/g, ' ')
+      .replace(/\b(or|and|not)\b/g, ' ')
+      .replace(/[()'"\/|;]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (cleaned.length > 2) {
+      const parts = cleaned.split(/,+/).map(s => s.trim()).filter(s => s.length > 2);
       if (parts.length > 0) return parts.slice(0, 3);
     }
 
-    // Auto-detect niche from hashtags or keywords in query
-    const tags: string[] = [];
-    if (/fitness|gym|workout|training|bodybuilding/.test(lower)) tags.push('fitness coach', 'personal trainer');
-    if (/yoga|wellness|mindfulness/.test(lower)) tags.push('wellness coach', 'mindfulness coach');
-    if (/personal.?dev|mindset|selfimprovement|motivation/.test(lower)) tags.push('mindset coach', 'personal development');
-    if (/nutrition|diet|health/.test(lower)) tags.push('nutrition coach', 'diet coach');
-    if (/business|entrepreneur/.test(lower)) tags.push('online coach', 'business coach');
-    return tags.length > 0 ? tags.slice(0, 3) : defaults;
+    return defaults;
   }
 }
 

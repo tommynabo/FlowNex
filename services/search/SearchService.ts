@@ -3,6 +3,7 @@ import { deduplicationService } from '../deduplication/DeduplicationService';
 import { PROJECT_CONFIG } from '../../config/project';
 import { icpEvaluator, RawApifyProfile } from './ICPEvaluator';
 import { emailDiscoveryService } from './EmailDiscoveryService';
+import { instagramSearchEngine } from './InstagramSearchEngine';
 
 export type LogCallback = (message: string) => void;
 export type ResultCallback = (leads: Lead[]) => void;
@@ -30,7 +31,11 @@ export class SearchService {
     private apiKey: string = '';
     private userId: string | null = null;
 
-    public stop() { this.isRunning = false; }
+    public stop() {
+        this.isRunning = false;
+        // Also stop the Instagram engine if it's running
+        instagramSearchEngine.stop();
+    }
 
     private extractEmailFromBio(bio: string): string {
         if (!bio) return '';
@@ -211,6 +216,13 @@ export class SearchService {
         this.isRunning = true;
         this.userId = userId || null;
         try {
+            // Instagram searches are handled by InstagramSearchEngine
+            // which implements the "keep going until N" loop with hashtag rotation
+            if (config.source === 'instagram') {
+                await instagramSearchEngine.startSearch(config, onLog, onComplete, userId);
+                return;
+            }
+
             this.apiKey = import.meta.env.VITE_APIFY_API_TOKEN || '';
             onLog('[INIT] Apify key: ' + (this.apiKey ? 'present (' + this.apiKey.substring(0, 12) + '...)' : 'MISSING'));
             onLog('[INIT] AI: /api/openai available');

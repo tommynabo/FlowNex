@@ -47,7 +47,7 @@ export function AgentTerminal({ logs, isVisible, isExpanded, onToggleExpand }: A
             const isIncoming = log.includes('Entrante:');
             
             return (
-              <div key={index} className="flex gap-3 opacity-0 animate-[fadeIn_0.3s_ease-out_forwards]">
+              <div key={index} className="flex gap-3">
                 <span className="text-muted-foreground min-w-[80px]">
                   {new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                 </span>

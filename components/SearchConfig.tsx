@@ -9,6 +9,7 @@ interface SearchConfigProps {
   onStop: () => void;
   isSearching: boolean;
   totalLeadsGenerated: number;
+  readOnly?: boolean;
 }
 
 const REGION_OPTIONS = ['US', 'UK', 'CA', 'AU', 'ES', 'MX', 'AR', 'CO', 'DE', 'FR'];
@@ -34,7 +35,8 @@ export function SearchConfig({
   onSearch,
   onStop,
   isSearching,
-  totalLeadsGenerated
+  totalLeadsGenerated,
+  readOnly = false
 }: SearchConfigProps) {
   const [icpOpen, setIcpOpen] = useState(false);
 
@@ -84,8 +86,8 @@ export function SearchConfig({
           <Zap className="w-5 h-5 text-primary" />
         </div>
         <div>
-          <h3 className="font-semibold text-lg text-foreground">New Campaign</h3>
-          <p className="text-sm text-muted-foreground">Search Instagram creators by hashtag</p>
+          <h3 className="font-semibold text-lg text-foreground">{readOnly ? 'Generador' : 'New Campaign'}</h3>
+          <p className="text-sm text-muted-foreground">{readOnly ? 'Ejecuta una búsqueda con los filtros de esta campaña' : 'Search Instagram creators by hashtag'}</p>
         </div>
         {totalLeadsGenerated > 0 && (
           <div className="ml-auto bg-primary/10 border border-primary/20 rounded-lg px-3 py-1">
@@ -99,16 +101,26 @@ export function SearchConfig({
         <div className="space-y-2">
           <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
             <Hash className="w-3.5 h-3.5" />
-            Hashtags or keywords
+            Hashtags
           </label>
-          <input
-            type="text"
-            value={config.query}
-            onChange={(e) => onChange({ query: e.target.value })}
-            disabled={isSearching}
-            placeholder="#fitnesscoach OR #mindset OR #personaldevelopment"
-            className="w-full h-[42px] px-4 text-sm bg-background border border-input rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all placeholder:text-muted-foreground/50 disabled:opacity-50"
-          />
+          {readOnly ? (
+            <div className="flex flex-wrap gap-1.5 min-h-[42px] items-center py-1">
+              {config.query.match(/#[a-zA-Z0-9_]+/g)?.map(tag => (
+                <span key={tag} className="text-xs bg-primary/10 text-primary border border-primary/20 rounded-lg px-2.5 py-1 font-medium">
+                  {tag}
+                </span>
+              )) || <span className="text-sm text-muted-foreground">{config.query}</span>}
+            </div>
+          ) : (
+            <input
+              type="text"
+              value={config.query}
+              onChange={(e) => onChange({ query: e.target.value })}
+              disabled={isSearching}
+              placeholder="#fitnesscoach OR #mindset OR #personaldevelopment"
+              className="w-full h-[42px] px-4 text-sm bg-background border border-input rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all placeholder:text-muted-foreground/50 disabled:opacity-50"
+            />
+          )}
         </div>
 
         <div className="space-y-2">
@@ -155,7 +167,8 @@ export function SearchConfig({
         </div>
       </div>
 
-      {/* ICP Filter Toggle */}
+      {/* ICP Filter Toggle — hidden in read-only (campaign) mode */}
+      {!readOnly && (
       <div className="mt-4 border-t border-border pt-4">
         <button
           onClick={() => setIcpOpen(o => !o)}
@@ -280,6 +293,7 @@ export function SearchConfig({
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Campaign, SearchConfigState, Lead } from '../lib/types';
 import { ArrowLeft, Search, Table, Download } from 'lucide-react';
 import { SearchConfig } from './SearchConfig';
@@ -43,6 +43,15 @@ export function CampaignDetailsView({
 
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
+
+  // Auto-switch to Results tab when search finishes
+  const prevIsSearching = useRef(false);
+  useEffect(() => {
+    if (prevIsSearching.current && !isSearching) {
+      setActiveTab('results');
+    }
+    prevIsSearching.current = isSearching;
+  }, [isSearching]);
 
   const exportCSV = () => {
     if (leads.length === 0) return;
@@ -134,6 +143,7 @@ export function CampaignDetailsView({
             onStop={onStop}
             isSearching={isSearching}
             totalLeadsGenerated={totalLeadsGenerated}
+            readOnly={true}
           />
 
           <AgentTerminal

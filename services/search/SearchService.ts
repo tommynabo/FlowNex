@@ -45,7 +45,7 @@ export class SearchService {
         if (/mindset|personaldevelopment|selfimprovement|motivation|lifecoach/.test(text)) return 'Personal Dev';
         if (/entrepreneur|business|startup|marketing|sales/.test(text)) return 'Business';
         if (/running|marathon|triathlon|cycling|endurance/.test(text)) return 'Endurance';
-        return 'Health & Fitness';
+        return 'Other';
     }
 
     private async generateCreatorAnalysis(lead: Lead): Promise<{
@@ -249,7 +249,8 @@ export class SearchService {
             const needed = targetCount - validLeads.length;
             // Fetch enough posts to find good profiles (ICP filters reduce final count)
             const postFetchLimit = Math.min(needed * 20, 300);
-            onLog('[ATTEMPT ' + attempts + '] Step 1 — scraping ' + postFetchLimit + ' posts by hashtag...');
+            onLog('━━━ CICLO ' + attempts + ' ━━━  Buscando ' + needed + ' lead(s) más...');
+            onLog('📸 PASO 1/4 — Scrapeando ' + postFetchLimit + ' posts de hashtags...');
 
             // ── STEP 1: Get posts from hashtags ──────────────────────────────────
             let posts: any[];
@@ -265,7 +266,7 @@ export class SearchService {
             }
 
             if (!posts.length) {
-                onLog('[ATTEMPT ' + attempts + '] No posts returned from hashtag scraper.');
+                onLog('📸 PASO 1/4 — Sin posts devueltos por el hashtag scraper.');
                 break;
             }
 
@@ -275,30 +276,31 @@ export class SearchService {
                 .filter(h => h && !processedHandles.has(h) && !existingIgHandles.has(h));
             const uniqueHandles = [...new Set(rawHandles)].slice(0, 50);
 
-            onLog('[ATTEMPT ' + attempts + '] ' + posts.length + ' posts → ' + uniqueHandles.length + ' unique new handles');
+            onLog('📸 PASO 1/4 ✓ — ' + posts.length + ' posts → ' + uniqueHandles.length + ' handles únicos nuevos');
 
             if (!uniqueHandles.length) {
-                onLog('[ATTEMPT ' + attempts + '] All handles already processed. Stopping.');
+                onLog('⚠ Todos los handles ya procesados. Deteniendo ciclo.');
                 break;
             }
 
             // ── STEP 2: Scrape full profiles for those handles ───────────────────
-            onLog('[ATTEMPT ' + attempts + '] Step 2 — fetching ' + uniqueHandles.length + ' profiles...');
+            onLog('👤 PASO 2/4 — Descargando ' + uniqueHandles.length + ' perfiles completos de Instagram...');
             let profiles: any[];
             try {
                 profiles = await this.callApifyActor(INSTAGRAM_PROFILE_SCRAPER, {
                     usernames: uniqueHandles
                 }, onLog);
             } catch (e: any) {
-                onLog('[ATTEMPT ' + attempts + '] Profile scraper error: ' + e.message);
+                onLog('👤 PASO 2/4 ✗ Error en profile scraper: ' + e.message);
                 break;
             }
 
-            onLog('[ATTEMPT ' + attempts + '] ' + profiles.length + ' profiles received. Applying ICP filters...');
+            onLog('👤 PASO 2/4 ✓ — ' + profiles.length + ' perfiles recibidos');
+            onLog('🔍 PASO 3/4 — Aplicando filtros ICP...');
 
             // ── STEP 2b: Hard Filter — follower range + brand keywords ────────────
             const hardFiltered = icpEvaluator.applyHardFilter(profiles as RawApifyProfile[], onLog);
-            onLog('[HARD FILTER] ' + profiles.length + ' → ' + hardFiltered.length + ' profiles after brand/follower filter');
+            onLog('[HARD FILTER] ' + profiles.length + ' → ' + hardFiltered.length + ' perfiles tras filtro de followers/marca/fitness');
 
             // ── STEP 3: Apply ICP filters & build candidates ─────────────────────
             const candidates: Lead[] = [];
@@ -391,14 +393,14 @@ export class SearchService {
                 ...(withEmail.length < slotsRemaining ? withoutEmail.slice(0, slotsRemaining - withEmail.length) : [])
             ];
 
-            onLog('[ATTEMPT ' + attempts + '] ' + withEmail.length + ' with email, ' + withoutEmail.length + ' without. Processing ' + toProcess.length + '.');
-            if (!toProcess.length) { onLog('[ATTEMPT ' + attempts + '] All already in history.'); continue; }
+            onLog('🔍 PASO 3/4 ✓ — ' + withEmail.length + ' con email, ' + withoutEmail.length + ' sin email. Procesando ' + toProcess.length + ' candidatos.');
+            if (!toProcess.length) { onLog('⚠ Todos ya en historial. Siguiente ciclo...'); continue; }
 
             // ── STEP 4b: Soft Filter — AI human creator evaluation ────────────────
             const softFiltered = await icpEvaluator.applySoftFilter(toProcess, onLog);
 
             // ── STEP 4c: Email Discovery — 3-stage pipeline for leads missing email ─
-            onLog('[EMAIL] Running 3-stage email discovery for ' + softFiltered.length + ' leads...');
+            onLog('📧 PASO 4/4 — Descubrimiento de email (3 etapas) para ' + softFiltered.length + ' candidatos...');
             await Promise.all(softFiltered.map(async (lead) => {
                 if (!this.isRunning) return;
                 const currentEmail = lead.decisionMaker?.email || '';
@@ -413,9 +415,9 @@ export class SearchService {
                 }
             }));
             const withEmailAfterDiscovery = softFiltered.filter(l => l.decisionMaker?.email).length;
-            onLog('[EMAIL] Discovery complete: ' + withEmailAfterDiscovery + '/' + softFiltered.length + ' leads have email');
+            onLog('📧 PASO 4/4 ✓ — ' + withEmailAfterDiscovery + '/' + softFiltered.length + ' leads tienen email');
 
-            onLog('[AI] Generating cold emails for ' + softFiltered.length + ' creators...');
+            onLog('🤖 Generando análisis IA para ' + softFiltered.length + ' creadores...');
             const analyzed = (await Promise.all(softFiltered.map(async (lead) => {
                 if (!this.isRunning) return null;
                 try {
@@ -438,10 +440,13 @@ export class SearchService {
             }))).filter(Boolean) as Lead[];
 
             for (const lead of analyzed) {
+                if (!lead.decisionMaker?.email) {
+                    onLog('[SKIP] @' + lead.ig_handle + ' → sin email encontrado, descartado');
+                    continue;
+                }
                 validLeads.push(lead);
                 onLog('[✓] ' + validLeads.length + '/' + targetCount + ': @' + lead.ig_handle +
-                    ' (' + this.formatFollowers(lead.follower_count || 0) + ' | ' + lead.niche + ')' +
-                    (lead.decisionMaker?.email ? ' 📧' : ''));
+                    ' (' + this.formatFollowers(lead.follower_count || 0) + ' | ' + lead.niche + ') 📧 ' + lead.decisionMaker.email);
                 if (validLeads.length >= targetCount) break;
             }
         }

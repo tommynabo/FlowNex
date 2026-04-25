@@ -27,6 +27,16 @@ const GYM_FITNESS_OVERRIDE_KEYWORDS = [
   'coach', 'trainer', 'hiit', 'weightlifting', 'lifting', 'physique', 'muscle'
 ];
 
+// At least ONE of these must appear in bio/username/name — profiles with none are rejected
+const FITNESS_REQUIRED_KEYWORDS = [
+  'fitness', 'gym', 'workout', 'training', 'trainer', 'coach',
+  'crossfit', 'hiit', 'bodybuilding', 'weightlifting', 'lifting',
+  'physique', 'muscle', 'strength', 'pilates', 'fitspo', 'fitlife',
+  'nutrition', 'diet', 'healthylifestyle', 'weightloss', 'wellness',
+  'mindset', 'personaldevelopment', 'lifecoach', 'selfimprovement',
+  'yoga', 'meditation', 'health', 'athletic', 'athlete', 'sport'
+];
+
 const ICP_SOFT_FILTER_BATCH_SIZE = 10;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -82,6 +92,13 @@ export class ICPEvaluator {
       );
       if (brandKeyword) {
         onLog(`[HARD FILTER] 🏷 @${handle} skip: "${brandKeyword}" brand keyword in name/username`);
+        continue;
+      }
+
+      // Positive fitness check — reject if NO fitness/wellness/mindset keyword is present
+      const hasFitnessKeyword = FITNESS_REQUIRED_KEYWORDS.some(kw => fullText.includes(kw));
+      if (!hasFitnessKeyword) {
+        onLog(`[HARD FILTER] 🚫 @${handle} skip: no fitness/wellness keyword in bio/name`);
         continue;
       }
 

@@ -48,6 +48,7 @@ function App() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   // activeCampaign derived from URL
   const [showCampaignCreator, setShowCampaignCreator] = useState(false);
+  const [campaignLeads, setCampaignLeads] = useState<Lead[]>([]);
 
   // AI Setter State
   const [setterLogs, setSetterLogs] = useState<string[]>([]);
@@ -138,6 +139,21 @@ function App() {
       searchService.stop();
     };
   }, []);
+
+  // Sync config and load leads when entering a campaign
+  useEffect(() => {
+    if (activeCampaign) {
+      const hashtags = activeCampaign.hashtags.map(h => `#${h}`).join(' OR ');
+      setConfig(prev => ({
+        ...prev,
+        query: hashtags || prev.query,
+        icpFilters: activeCampaign.icpFilters
+      }));
+      if (userId) loadCampaignLeads(activeCampaign.id);
+    } else {
+      setCampaignLeads([]);
+    }
+  }, [activeCampaign?.id]);
 
   const loadProfile = async (uid: string) => {
     try {
@@ -292,6 +308,54 @@ function App() {
     }
   };
 
+  const loadCampaignLeads = async (campaignId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('leads')
+        .select('*')
+        .eq('campaign_id', campaignId)
+        .order('created_at', { ascending: false });
+      if (error) { console.warn('[CAMPAIGN_LEADS] Load error:', error.message); return; }
+      if (data) {
+        const mapped: Lead[] = data.map(l => ({
+          id: l.id,
+          source: 'instagram' as const,
+          ig_handle: l.ig_handle || '',
+          follower_count: l.follower_count || 0,
+          niche: l.niche || '',
+          audience_tier: (l.audience_tier || 'nano') as any,
+          vsl_sent_status: (l.vsl_sent_status || 'pending') as any,
+          email_status: (l.email_status || 'pending') as any,
+          location: l.location,
+          website: l.website || '',
+          decisionMaker: {
+            name: l.name || '',
+            role: l.job_title || 'Content Creator',
+            email: l.email || '',
+            instagram: l.ig_handle ? 'https://instagram.com/' + l.ig_handle : ''
+          },
+          aiAnalysis: {
+            summary: l.ai_summary || '',
+            painPoints: l.ai_pain_points || [],
+            generatedIcebreaker: '',
+            coldEmailSubject: l.cold_email_subject || '',
+            coldEmailBody: l.cold_email_body || '',
+            vslPitch: l.vsl_pitch || '',
+            fullAnalysis: l.ai_summary || '',
+            psychologicalProfile: '',
+            engagementSignal: '',
+            salesAngle: ''
+          },
+          status: (l.status || 'scraped') as any,
+          icp_verified: l.icp_verified ?? false
+        }));
+        setCampaignLeads(mapped);
+      }
+    } catch (e) {
+      console.error('[CAMPAIGN_LEADS] Exception:', e);
+    }
+  };
+
   // Auth Handlers
   const handleLogin = () => {
     // Called after successful Supabase login
@@ -369,7 +433,8 @@ function App() {
                 results_extracted: results.length,
                 status: 'completed',
                 executed_at: new Date().toISOString(),
-                completed_at: new Date().toISOString()
+                completed_at: new Date().toISOString(),
+                ...(activeCampaign ? { campaign_id: activeCampaign.id } : {})
               })
               .select();
 
@@ -391,6 +456,7 @@ addLog(`[DB] Search registered (ID: ${searchId})`);
             const leadsToInsert = results.map(lead => ({
               user_id: userId,
               search_id: searchId,
+              ...(activeCampaign ? { campaign_id: activeCampaign.id } : {}),
               name: lead.decisionMaker?.name || ('@' + lead.ig_handle) || '',
               ig_handle: lead.ig_handle || '',
               follower_count: lead.follower_count || 0,
@@ -419,6 +485,10 @@ addLog(`[DB] Search registered (ID: ${searchId})`);
               addLog(`[DB] Error saving ${results.length} leads: ${leadsError.message}`);
             } else {
               addLog(`[DB] ${results.length} creators saved.`);
+              if (activeCampaign) {
+                loadCampaignLeads(activeCampaign.id);
+                loadCampaigns(userId);
+              }
             }
           } catch (err) {
             console.error('Failed to save results to DB', err);
@@ -519,7 +589,11 @@ addLog(`[DB] Search registered (ID: ${searchId})`);
                   terminalExpanded={terminalExpanded}
                   onToggleTerminal={() => setTerminalExpanded(!terminalExpanded)}
                   logs={logs}
-                  leads={leads}
+                  leads={(() => {
+                    const sessionHandles = new Set(leads.map(l => l.ig_handle));
+                    const historical = campaignLeads.filter(cl => !sessionHandles.has(cl.ig_handle));
+                    return [...leads, ...historical];
+                  })()}
                   onViewMessage={setSelectedLead}
                 />
               ) : (

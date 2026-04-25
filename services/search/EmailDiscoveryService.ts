@@ -1,4 +1,3 @@
-import { enrichLeadWithEmail } from '../../lib/emailScraper';
 import type { LogCallback } from './SearchService';
 
 // ── Linktree URL patterns ─────────────────────────────────────────────────────
@@ -42,22 +41,20 @@ export class EmailDiscoveryService {
           return directEmail;
         }
 
-        // Extract linked URLs from Linktree and scrape each
+        // Extract linked URLs from Linktree and scrape each (server-side to avoid CORS)
         const linkedUrls = this.extractLinktreeUrls(html);
         for (const linkedUrl of linkedUrls.slice(0, 4)) {
-          try {
-            const linkedEmail = await enrichLeadWithEmail(linkedUrl);
-            if (linkedEmail) {
-              onLog(`[EMAIL] @${handle} → found on Linktree-linked site: ${linkedUrl}`);
-              return linkedEmail;
-            }
-          } catch { /* skip failed linked page */ }
+          const linkedEmail = await this.scrapeEmailServerSide(linkedUrl, onLog);
+          if (linkedEmail) {
+            onLog(`[EMAIL] @${handle} → found on Linktree-linked site: ${linkedUrl}`);
+            return linkedEmail;
+          }
         }
         return '';
       }
 
-      // Regular website: use existing emailScraper
-      const found = await enrichLeadWithEmail(url);
+      // Regular website: server-side scraper to avoid CORS
+      const found = await this.scrapeEmailServerSide(url, onLog);
       if (found) {
         onLog(`[EMAIL] @${handle} → found on website ${url}`);
         return found;
@@ -172,6 +169,24 @@ export class EmailDiscoveryService {
       }
     }
     return [...new Set(urls)];
+  }
+
+  /**
+   * Server-side email scraper — proxied through /api/scrape-email to avoid CORS.
+   */
+  private async scrapeEmailServerSide(url: string, _onLog: LogCallback): Promise<string> {
+    try {
+      const response = await fetch('/api/scrape-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+      });
+      if (!response.ok) return '';
+      const data = await response.json();
+      return (data.email || '').toLowerCase().trim();
+    } catch {
+      return '';
+    }
   }
 }
 

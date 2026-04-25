@@ -6,10 +6,8 @@ import {
 } from 'lucide-react';
 
 interface CampaignsViewProps {
-  viewType: 'campaigns' | 'history';
-  history: SearchSession[];
   campaigns: Campaign[];
-  onSelectSession: (session: SearchSession) => void;
+  onSelectCampaign: (campaign: Campaign) => void;
   onCreateCampaign: () => void;
 }
 
@@ -19,11 +17,10 @@ function fmt(n: number) {
   return n === 0 ? 'Any' : String(n);
 }
 
-export function CampaignsView({ viewType, history, campaigns, onSelectSession, onCreateCampaign }: CampaignsViewProps) {
+export function CampaignsView({ campaigns, onSelectCampaign, onCreateCampaign }: CampaignsViewProps) {
   return (
     <div className="space-y-6">
 
-      {viewType === 'campaigns' && (
       <div className="space-y-4">
         {/* ── Campaigns section ── */}
         <div className="flex items-center justify-between border-b border-border pb-4">
@@ -59,7 +56,7 @@ export function CampaignsView({ viewType, history, campaigns, onSelectSession, o
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-2">
             {campaigns.map(c => (
-              <div key={c.id} className="bg-card border border-border shadow-sm rounded-xl p-5 hover:border-primary/30 hover:shadow-md transition-all relative overflow-hidden group">
+              <div key={c.id} onClick={() => onSelectCampaign(c)} className="cursor-pointer bg-card border border-border shadow-sm rounded-xl p-5 hover:border-primary/30 hover:shadow-md transition-all relative overflow-hidden group">
                 <div className="absolute top-0 left-0 w-1 h-full bg-primary/20 group-hover:bg-primary transition-colors" />
                 <div className="flex items-start justify-between gap-2 mb-4">
                   <div>
@@ -129,63 +126,6 @@ export function CampaignsView({ viewType, history, campaigns, onSelectSession, o
           </div>
         )}
       </div>
-      )}
-
-      {viewType === 'history' && (
-      <div className="space-y-4">
-        {/* ── Past search sessions ── */}
-        <div className="flex items-center gap-3 border-b border-border pb-4">
-          <History className="w-5 h-5 text-muted-foreground" />
-          <h3 className="text-lg font-bold text-foreground tracking-tight">Search History</h3>
-          {history.length > 0 && (
-            <span className="text-xs bg-secondary rounded-full px-2.5 py-0.5 font-medium text-muted-foreground">{history.length}</span>
-          )}
-        </div>
-
-        {history.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 border border-dashed border-border rounded-xl bg-card">
-            <Search className="w-12 h-12 mb-4 opacity-20" />
-            <h4 className="text-lg font-medium text-foreground mb-1">No history yet</h4>
-            <p className="text-sm text-muted-foreground">Your past searches will appear here. Go to the Generator to start extracting leads.</p>
-          </div>
-        ) : (
-          <div className="grid gap-3">
-            {history.map((session) => (
-              <div
-                key={session.id}
-                onClick={() => onSelectSession(session)}
-                className="bg-card border border-border rounded-xl p-4 hover:border-primary/50 transition-all cursor-pointer group flex flex-col md:flex-row md:items-center justify-between gap-4"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-secondary rounded-xl flex items-center justify-center border border-border group-hover:bg-primary/10 group-hover:border-primary/30 transition-colors flex-shrink-0">
-                    {session.source === 'instagram' ? <Instagram className="w-6 h-6 text-foreground group-hover:text-primary transition-colors" /> : <Mail className="w-6 h-6 text-foreground group-hover:text-primary transition-colors" />}
-                  </div>
-                  <div>
-                    <h4 className="font-semibold text-base text-foreground group-hover:text-primary transition-colors mb-1">
-                      {session.query}
-                    </h4>
-                    <div className="flex items-center gap-4 text-xs font-medium text-muted-foreground">
-                      <div className="flex items-center gap-1.5">
-                        <Calendar className="w-3.5 h-3.5 text-muted-foreground/70" />
-                        <span>{session.date.toLocaleDateString('en-US', { day: '2-digit', month: '2-digit', year: 'numeric' })} at {session.date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 bg-secondary px-2 py-0.5 rounded-md text-foreground">
-                        <User className="w-3.5 h-3.5 text-primary" />
-                        <span>{session.resultsCount} extracted</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <button className="hidden md:flex items-center text-sm font-semibold text-primary/80 group-hover:text-primary transition-colors bg-primary/5 hover:bg-primary/10 px-4 py-2 rounded-lg border border-transparent group-hover:border-primary/20">
-                  View Results <ArrowRight className="w-4 h-4 ml-1.5 group-hover:translate-x-1 transition-transform" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-      )}
     </div>
   );
 }
-

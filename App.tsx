@@ -6,6 +6,7 @@ import { LeadsTable } from './components/LeadsTable';
 import { MessageModal } from './components/MessageModal';
 import { LoginPage } from './components/LoginPage';
 import { CampaignsView } from './components/CampaignsView';
+import { CampaignDetailsView } from './components/CampaignDetailsView';
 import { CampaignCreatorModal } from './components/CampaignCreatorModal';
 import { HistoryModal } from './components/HistoryModal';
 import { SetterDashboard } from './components/SetterDashboard';
@@ -43,6 +44,7 @@ function App() {
 
   // Campaigns State
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [activeCampaign, setActiveCampaign] = useState<Campaign | null>(null);
   const [showCampaignCreator, setShowCampaignCreator] = useState(false);
 
   // AI Setter State
@@ -446,76 +448,61 @@ addLog(`[DB] Search registered (ID: ${searchId})`);
               <p className="text-muted-foreground text-sm">Find. Connect. Convert.</p>
             </div>
 
-            {/* VSL Stats Widget */}
-            <div className="grid grid-cols-3 gap-4 mb-8">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
               <div className="glass-card border border-border rounded-xl p-4 text-center">
-                <p className="text-xs text-muted-foreground mb-1">Emails Delivered</p>
+                <p className="text-xs text-muted-foreground mb-1">Mails Mandados</p>
                 <p className="text-3xl font-bold text-primary">{vslStats.emailsDelivered}</p>
               </div>
               <div className="glass-card border border-border rounded-xl p-4 text-center">
-                <p className="text-xs text-muted-foreground mb-1">VSL Clicks</p>
-                <p className="text-3xl font-bold" style={{ color: '#7c3aed' }}>{vslStats.vslClicks}</p>
+                <p className="text-xs text-muted-foreground mb-1">Leads Encontrados</p>
+                <p className="text-3xl font-bold" style={{ color: '#7c3aed' }}>{totalLeadsGenerated}</p>
               </div>
               <div className="glass-card border border-border rounded-xl p-4 text-center">
-                <p className="text-xs text-muted-foreground mb-1">Conversions</p>
+                <p className="text-xs text-muted-foreground mb-1">Respondidos</p>
                 <p className="text-3xl font-bold text-primary">{vslStats.conversions}</p>
+              </div>
+              <div className="glass-card border border-border rounded-xl p-4 text-center">
+                <p className="text-xs text-muted-foreground mb-1">Total Campañas</p>
+                <p className="text-3xl font-bold" style={{ color: '#10b981' }}>{campaigns.length}</p>
               </div>
             </div>
           </div>
         )}
 
-        {currentPage === 'generator' && (
-          <div className="animate-[fadeIn_0.3s_ease-out] space-y-6">
-            <SearchConfig
-              config={config}
-              onChange={handleConfigChange}
-              onSearch={handleSearch}
-              onStop={handleStop}
-              isSearching={isSearching}
-              totalLeadsGenerated={totalLeadsGenerated}
-            />
 
-            <AgentTerminal
-              logs={logs}
-              isVisible={terminalVisible}
-              isExpanded={terminalExpanded}
-              onToggleExpand={() => setTerminalExpanded(!terminalExpanded)}
-            />
-
-            <LeadsTable
-              leads={leads}
-              onViewMessage={setSelectedLead}
-            />
-          </div>
-        )}
 
         {currentPage === 'campaigns' && (
           <div className="animate-[fadeIn_0.3s_ease-out] space-y-6">
             <div className="bg-card border border-border rounded-xl p-6">
-              <CampaignsView
-                viewType="campaigns"
-                history={history}
-                campaigns={campaigns}
-                onSelectSession={handleViewSessionResults}
-                onCreateCampaign={() => setShowCampaignCreator(true)}
-              />
+              {activeCampaign ? (
+                <CampaignDetailsView 
+                  campaign={activeCampaign}
+                  onBack={() => setActiveCampaign(null)}
+                  config={config}
+                  onChangeConfig={handleConfigChange}
+                  onSearch={handleSearch}
+                  onStop={handleStop}
+                  isSearching={isSearching}
+                  totalLeadsGenerated={totalLeadsGenerated}
+                  terminalVisible={terminalVisible}
+                  terminalExpanded={terminalExpanded}
+                  onToggleTerminal={() => setTerminalExpanded(!terminalExpanded)}
+                  logs={logs}
+                  leads={leads}
+                  onViewMessage={setSelectedLead}
+                />
+              ) : (
+                <CampaignsView
+                  campaigns={campaigns}
+                  onSelectCampaign={setActiveCampaign}
+                  onCreateCampaign={() => setShowCampaignCreator(true)}
+                />
+              )}
             </div>
           </div>
         )}
 
-        {currentPage === 'history' && (
-          <div className="animate-[fadeIn_0.3s_ease-out] space-y-6">
-            <div className="bg-card border border-border rounded-xl p-6">
-              <CampaignsView
-                viewType="history"
-                history={history}
-                campaigns={campaigns}
-                onSelectSession={handleViewSessionResults}
-                onCreateCampaign={() => setShowCampaignCreator(true)}
-              />
-            </div>
-          </div>
-        )}
+
 
         {currentPage === 'setter' && userId && (
           <div className="animate-[fadeIn_0.3s_ease-out] space-y-6">

@@ -1,6 +1,6 @@
 export type PlatformSource = 'gmail' | 'instagram' | 'tiktok';
 export type SearchMode = 'fast' | 'deep';
-export type PageView = 'login' | 'dashboard' | 'generator' | 'campaigns' | 'history' | 'setter';
+export type PageView = 'login' | 'dashboard' | 'campaigns' | 'setter'; // 'generator' and 'history' are removed, 'campaigns' will handle details internally if needed, or we can use another state in App.
 export type VslSentStatus = 'pending' | 'sent' | 'opened' | 'clicked' | 'converted';
 export type AudienceTier = 'nano' | 'micro' | 'mid' | 'macro';
 

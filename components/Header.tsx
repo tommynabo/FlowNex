@@ -34,9 +34,7 @@ export function Header({ currentPage, onNavigate, onLogout, userName }: HeaderPr
 
         <nav className="hidden md:flex items-center gap-8 text-sm font-medium">
           <a onClick={() => onNavigate('dashboard')} className={getLinkClass('dashboard')}>Dashboard</a>
-          <a onClick={() => onNavigate('generator')} className={getLinkClass('generator')}>Search Leads</a>
           <a onClick={() => onNavigate('campaigns')} className={getLinkClass('campaigns')}>Campaigns</a>
-          <a onClick={() => onNavigate('history')} className={getLinkClass('history')}>History</a>
           <a onClick={() => onNavigate('setter')} className={`${getLinkClass('setter')} flex items-center gap-1.5`}>
             <Bot className="w-3.5 h-3.5" />
             AI Setter

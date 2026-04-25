@@ -126,9 +126,11 @@ export class InstagramSearchEngine {
   // ── Apify calls ──────────────────────────────────────────────────────────────
 
   private async callApifyActor(actorId: string, input: unknown, onLog: LogCallback): Promise<unknown[]> {
-    const baseUrl = 'https://api.apify.com/v2';
+    // Use the /api/apify proxy (vite.config.ts dev + vercel.json prod)
+    // Direct browser calls to api.apify.com return 403 — always go through proxy
+    const baseUrl = '/api/apify';
     const startUrl = `${baseUrl}/acts/${actorId}/runs?token=${this.apiKey}`;
-    onLog('[APIFY] Launching ' + actorId.split('~').pop() + '...');
+    onLog('[APIFY] Lanzando ' + actorId.split('~').pop() + '...');
 
     let startResponse: Response;
     try {

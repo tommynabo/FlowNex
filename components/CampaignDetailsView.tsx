@@ -23,6 +23,7 @@ interface CampaignDetailsViewProps {
   logs: string[];
   leads: Lead[];
   onViewMessage: (lead: Lead) => void;
+  lastSearchCount: number;
 }
 
 export function CampaignDetailsView({
@@ -39,8 +40,7 @@ export function CampaignDetailsView({
   onToggleTerminal,
   logs,
   leads,
-  onViewMessage
-}: CampaignDetailsViewProps) {
+  onViewMessage  lastSearchCount,}: CampaignDetailsViewProps) {
   const [activeTab, setActiveTab] = useState<'generator' | 'results'>('generator');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
@@ -49,14 +49,14 @@ export function CampaignDetailsView({
   // Reset pagination when leads change
   useEffect(() => { setPage(1); }, [leads.length]);
 
-  // Auto-switch to Results tab when search finishes
+  // Auto-switch to Results tab only when search finishes WITH new leads
   const prevIsSearching = useRef(false);
   useEffect(() => {
-    if (prevIsSearching.current && !isSearching) {
+    if (prevIsSearching.current && !isSearching && lastSearchCount > 0) {
       setActiveTab('results');
     }
     prevIsSearching.current = isSearching;
-  }, [isSearching]);
+  }, [isSearching, lastSearchCount]);
 
   const exportCSV = () => {
     if (leads.length === 0) return;

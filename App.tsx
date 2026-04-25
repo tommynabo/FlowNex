@@ -49,6 +49,7 @@ function App() {
   // activeCampaign derived from URL
   const [showCampaignCreator, setShowCampaignCreator] = useState(false);
   const [campaignLeads, setCampaignLeads] = useState<Lead[]>([]);
+  const [lastSearchCount, setLastSearchCount] = useState(0);
 
   // AI Setter State
   const [setterLogs, setSetterLogs] = useState<string[]>([]);
@@ -405,6 +406,7 @@ function App() {
       async (results) => {
         setIsSearching(false);
         setLeads(results);
+        setLastSearchCount(results.length);
 
         // Add to history (Local)
         const newSession: SearchSession = {
@@ -595,6 +597,7 @@ addLog(`[DB] Search registered (ID: ${searchId})`);
                     return [...leads, ...historical];
                   })()}
                   onViewMessage={setSelectedLead}
+                  lastSearchCount={lastSearchCount}
                 />
               ) : (
                 <CampaignsView

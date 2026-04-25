@@ -40,7 +40,9 @@ export function CampaignDetailsView({
   onToggleTerminal,
   logs,
   leads,
-  onViewMessage  lastSearchCount,}: CampaignDetailsViewProps) {
+  onViewMessage,
+  lastSearchCount,
+}: CampaignDetailsViewProps) {
   const [activeTab, setActiveTab] = useState<'generator' | 'results'>('generator');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');

@@ -17,42 +17,73 @@ import { icpEvaluator, RawApifyProfile } from './ICPEvaluator';
 import { emailDiscoveryService } from './EmailDiscoveryService';
 import type { LogCallback, ResultCallback } from './SearchService';
 
-// ── Hashtag pools by niche ─────────────────────────────────────────────────────
-// 20-30 variants per niche; rotated across attempts so Instagram sees fresh content
+// ── Keyword pools by niche ──────────────────────────────────────────────────────
+// Used to build Google Search queries: site:instagram.com "keyword1" "keyword2" [location]
+// Each inner array is one query variant for a single search attempt.
 
-const HASHTAG_POOLS: Record<string, string[]> = {
+const KEYWORD_POOLS: Record<string, string[][]> = {
   fitness: [
-    'fitnesscoach', 'personaltrainer', 'gymlife', 'workout', 'bodybuilding',
-    'strengthtraining', 'fitnessmotivation', 'gymrat', 'fitlife', 'gains',
-    'crossfit', 'hiit', 'physique', 'musclebuilding', 'weightlifting',
-    'powerlifting', 'bulking', 'shredded', 'fitspo', 'gymmotivation',
-    'gymcoach', 'fitnessmodel', 'bodybuilder', 'trainhard', 'homeworkout',
-    'calisthenics', 'aesthetics', 'liftingweights', 'fitnessgirl', 'fitnessguy',
+    ['"fitness coach"', '"personal trainer"'],
+    ['"gym coach"', '"bodybuilding coach"'],
+    ['"strength coach"', '"workout coach"'],
+    ['"crossfit coach"', '"hiit coach"'],
+    ['"physique coach"', '"muscle building"'],
+    ['"fitness content creator"', '"gym influencer"'],
+    ['"fitspo"', '"gymlife"'],
+    ['"gymrat"', '"gains"'],
+    ['"calisthenics"', '"weightlifting coach"'],
+    ['"home workout"', '"fitness tips"'],
+    ['"personal trainer online"', '"online fitness coach"'],
+    ['"body transformation"', '"fat loss coach"'],
   ],
   nutrition: [
-    'nutritioncoach', 'mealprep', 'cleaneating', 'macros', 'weightloss',
-    'healthyfood', 'dietitian', 'proteinrich', 'healthyeating', 'fitfood',
-    'eatclean', 'iifym', 'caloriecounting', 'nutritiontips', 'sportnutrition',
-    'healthylifestyle', 'musclediet', 'bulkingdiet', 'cuttingdiet', 'nutritionadvice',
+    ['"nutrition coach"', '"diet coach"'],
+    ['"meal prep"', '"macro counting"'],
+    ['"weight loss coach"', '"healthy eating"'],
+    ['"clean eating"', '"sports nutrition"'],
+    ['"dietitian"', '"nutritionist"'],
+    ['"iifym"', '"calorie counting"'],
+    ['"bulking diet"', '"cutting diet"'],
   ],
   wellness: [
-    'wellnesscoach', 'mindset', 'personaldevelopment', 'selfimprovement',
-    'motivation', 'lifecoach', 'mindfulness', 'positivity', 'growthmindset',
-    'successmindset', 'selfcare', 'wellbeing', 'healthymind', 'dailymotivation',
+    ['"wellness coach"', '"mindset coach"'],
+    ['"life coach"', '"personal development"'],
+    ['"mindfulness coach"', '"meditation coach"'],
+    ['"self improvement"', '"growth mindset"'],
+    ['"daily motivation"', '"success mindset"'],
   ],
   general: [
-    'fitnesscoach', 'personaltrainer', 'gymlife', 'workout', 'healthylifestyle',
-    'fitnessmotivation', 'bodybuilding', 'strengthtraining', 'nutritioncoach', 'mealprep',
-    'gains', 'crossfit', 'physique', 'fitspo', 'gymrat',
-    'hiit', 'weightlifting', 'fitlife', 'gymmotivation', 'cleaneating',
+    ['"fitness coach"', '"personal trainer"'],
+    ['"gym coach"', '"nutrition coach"'],
+    ['"wellness coach"', '"life coach"'],
+    ['"bodybuilding"', '"strength training"'],
+    ['"fitness content creator"', '"gym influencer"'],
+    ['"workout routine"', '"fitness tips"'],
+    ['"physique"', '"muscle"'],
+    ['"online coach"', '"fitness motivation"'],
   ],
 };
 
-// Number of hashtags per Apify call
-const HASHTAGS_PER_BATCH = 5;
+// Location suffixes — rotate through these to diversify search results
+const LOCATION_SUFFIXES = [
+  '',            // first pass — no location
+  'USA',
+  'UK',
+  'Canada',
+  'Australia',
+  'Spain',
+  'Mexico',
+  'Colombia',
+  'Argentina',
+  'Germany',
+  'France',
+  'Brazil',
+  'Italy',
+  'Netherlands',
+];
 
-// After this many consecutive attempts yielding 0 novel handles → niche is exhausted
-const MAX_CONSEC_ZEROS = 4;
+// After this many consecutive attempts yielding 0 novel handles → rotate query harder
+const MAX_CONSEC_ZEROS = 3;
 
 // Region patterns (same as SearchService)
 const REGION_MAP: Record<string, string[]> = {
@@ -68,7 +99,8 @@ const REGION_MAP: Record<string, string[]> = {
   FR: ['france', 'paris', 'lyon', 'marseille', 'toulouse', 'fr'],
 };
 
-const INSTAGRAM_HASHTAG_SCRAPER = 'apify~instagram-hashtag-scraper';
+// Google Search Scraper — queries `site:instagram.com [keywords]`, extracts handles from URLs
+const GOOGLE_SEARCH_SCRAPER = 'nFJndFXA5zjCTuudP';
 const INSTAGRAM_PROFILE_SCRAPER = 'apify~instagram-profile-scraper';
 
 // ── Engine ─────────────────────────────────────────────────────────────────────
@@ -81,45 +113,44 @@ export class InstagramSearchEngine {
     this.isRunning = false;
   }
 
-  // ── Hashtag rotation ─────────────────────────────────────────────────────────
+  // ── Keyword / query rotation ─────────────────────────────────────────────────
 
-  /** Detect which niche pool to use based on the user's base hashtags */
-  private detectNichePool(baseHashtags: string[]): string[] {
-    const joined = baseHashtags.join(' ').toLowerCase();
-    if (/nutrition|diet|meal|macro|calori/.test(joined)) return HASHTAG_POOLS.nutrition;
-    if (/wellness|mindset|lifecoach|personal.?dev/.test(joined)) return HASHTAG_POOLS.wellness;
-    if (/fitness|gym|workout|training|bodybuilding|strength/.test(joined)) return HASHTAG_POOLS.fitness;
-    return HASHTAG_POOLS.general;
+  /** Detect which niche keyword pool to use based on the user's query */
+  private detectKeywordPool(baseKeywords: string[]): string[][] {
+    const joined = baseKeywords.join(' ').toLowerCase();
+    if (/nutrition|diet|meal|macro|calori/.test(joined)) return KEYWORD_POOLS.nutrition;
+    if (/wellness|mindset|lifecoach|personal.?dev/.test(joined)) return KEYWORD_POOLS.wellness;
+    if (/fitness|gym|workout|training|bodybuilding|strength/.test(joined)) return KEYWORD_POOLS.fitness;
+    return KEYWORD_POOLS.general;
   }
 
   /**
-   * Returns a distinct batch of hashtags for each attempt:
-   *   attempt 1 → user-provided base hashtags
-   *   attempt 2+ → slide a window through the niche pool
+   * Builds a Google Search query for a given attempt.
+   *   attempt 1  → user's own keywords, no location
+   *   attempt 2+ → rotate through keyword pool variants + location suffixes
    *
-   * The first element of baseHashtags is added as an anchor to each rotation
-   * batch so Apify stays in the right content universe.
+   * Result: `site:instagram.com "keyword1" "keyword2" Location`
    */
-  private getHashtagBatch(baseHashtags: string[], attempt: number, nichePool: string[]): string[] {
-    if (attempt === 1) return baseHashtags.slice(0, HASHTAGS_PER_BATCH);
+  private buildSearchQuery(
+    baseKeywords: string[],
+    attempt: number,
+    keywordPool: string[][],
+  ): string {
+    let keywords: string[];
+    let location: string;
 
-    const totalWindows = Math.ceil(nichePool.length / HASHTAGS_PER_BATCH);
-    const windowIdx = (attempt - 2) % totalWindows;
-    const start = windowIdx * HASHTAGS_PER_BATCH;
-    const batch = nichePool.slice(start, start + HASHTAGS_PER_BATCH);
-
-    // Pad if last window is short
-    if (batch.length < HASHTAGS_PER_BATCH && nichePool.length >= HASHTAGS_PER_BATCH) {
-      batch.push(...nichePool.slice(0, HASHTAGS_PER_BATCH - batch.length));
+    if (attempt === 1) {
+      keywords = baseKeywords.slice(0, 2).map(k => k.includes('"') ? k : `"${k}"`);
+      location = '';
+    } else {
+      const poolIdx = (attempt - 2) % keywordPool.length;
+      const locIdx  = Math.floor((attempt - 2) / keywordPool.length) % LOCATION_SUFFIXES.length;
+      keywords = keywordPool[poolIdx];
+      location = LOCATION_SUFFIXES[locIdx];
     }
 
-    // Anchor: inject first user hashtag unless it's already there
-    const anchor = baseHashtags[0]?.replace(/^#/, '');
-    if (anchor && !batch.includes(anchor)) {
-      batch.splice(0, 1, anchor);
-    }
-
-    return batch;
+    const kw = keywords.join(' ');
+    return location ? `site:instagram.com ${kw} ${location}` : `site:instagram.com ${kw}`;
   }
 
   // ── Apify calls ──────────────────────────────────────────────────────────────
@@ -342,17 +373,17 @@ export class InstagramSearchEngine {
     const targetRegions = icpFilters?.regions ?? [];
     const targetContentTypes = icpFilters?.contentTypes ?? [];
     const targetCount = Math.max(1, config.maxResults);
-    const baseHashtags = this.parseHashtagsFromQuery(config.query);
-    const nichePool = this.detectNichePool(baseHashtags);
+    const baseKeywords = this.parseKeywordsFromQuery(config.query);
+    const keywordPool  = this.detectKeywordPool(baseKeywords);
 
     // MAX_RETRIES scales with target size — never gives up too early
     const MAX_RETRIES = Math.min(100, Math.max(30, Math.ceil(targetCount / 5) * 6));
 
-    onLog('[IG] Base hashtags: #' + baseHashtags.join(', #'));
-    onLog('[IG] Niche pool: ' + nichePool.length + ' hashtag variants cargados para este nicho');
+    onLog('[IG] Keywords base: ' + baseKeywords.join(', '));
+    onLog('[IG] Keyword pool: ' + keywordPool.length + ' variantes de búsqueda (Google site:instagram.com)');
     onLog('[IG] 🎯 Objetivo: ' + targetCount + ' creadores | Máx intentos: ' + MAX_RETRIES);
     onLog('[IG] Followers: ' + (minFollowers > 0 ? this.formatFollowers(minFollowers) : '0') + ' – ' + (maxFollowers < 99_000_000 ? this.formatFollowers(maxFollowers) : '∞'));
-    console.log('[InstagramEngine] START — target:', targetCount, '| maxRetries:', MAX_RETRIES, '| hashtags:', baseHashtags);
+    console.log('[InstagramEngine] START — target:', targetCount, '| maxRetries:', MAX_RETRIES, '| keywords:', baseKeywords);
     if (minFollowers > 0 || maxFollowers < 99_000_000) {
       onLog('[ICP] Follower range: ' + this.formatFollowers(minFollowers) + ' – ' + this.formatFollowers(maxFollowers));
     }
@@ -368,28 +399,30 @@ export class InstagramSearchEngine {
     let attempt = 0;
     let consecutiveZeros = 0;
 
+    // Handles to skip — Instagram system/non-user paths
+    const SKIP_HANDLES = new Set(['p', 'reel', 'reels', 'explore', 'stories',
+      'accounts', 'tv', 'direct', 'hashtag', 'tagged', 'about', 'directory']);
+
     while (accepted.length < targetCount && this.isRunning && attempt < MAX_RETRIES) {
       attempt++;
       const needed = targetCount - accepted.length;
-      const hashtagBatch = this.getHashtagBatch(baseHashtags, attempt, nichePool);
-      // Over-fetch: request many more posts than needed to absorb filter losses
-      const postFetchLimit = Math.min(needed * 25, 500);
+      const searchQuery = this.buildSearchQuery(baseKeywords, attempt, keywordPool);
 
       onLog('');
       onLog('━━━ ATTEMPT ' + attempt + '/' + MAX_RETRIES + ' ━━━  ' +
-        needed + ' lead(s) still needed | #' + hashtagBatch.join(', #'));
+        needed + ' lead(s) still needed');
+      onLog('🔎 STEP 1/4 — Google Search: ' + searchQuery);
 
-      // ── STEP 1: Hashtag posts → novel handles ─────────────────────────────────
-      onLog('📸 STEP 1/4 — Scraping up to ' + postFetchLimit + ' posts...');
-      let posts: unknown[];
+      // ── STEP 1: Google Search site:instagram.com → novel handles ────────────
+      let searchResults: unknown[];
       try {
-        posts = await this.callApifyActor(INSTAGRAM_HASHTAG_SCRAPER, {
-          hashtags: hashtagBatch.map(h => h.replace(/^#/, '')),
-          resultsLimit: postFetchLimit,
-          proxy: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] },
+        searchResults = await this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
+          queries: [searchQuery],
+          maxPagesPerQuery: 3,
+          resultsPerPage: 10,
         }, onLog);
       } catch (e: unknown) {
-        onLog('[STEP 1] Scraper error: ' + (e instanceof Error ? e.message : String(e)));
+        onLog('[STEP 1] Google Search error: ' + (e instanceof Error ? e.message : String(e)));
         consecutiveZeros++;
         if (consecutiveZeros >= MAX_CONSEC_ZEROS) {
           onLog('[ENGINE] ' + consecutiveZeros + ' consecutive failures — aborting.');
@@ -398,31 +431,36 @@ export class InstagramSearchEngine {
         continue;
       }
 
-      if (!posts.length) {
-        onLog('📸 No posts returned for: #' + hashtagBatch.join(', #'));
+      if (!searchResults.length) {
+        onLog('🔎 No results for: ' + searchQuery);
         consecutiveZeros++;
         if (consecutiveZeros >= MAX_CONSEC_ZEROS) {
-          onLog('[ENGINE] ' + MAX_CONSEC_ZEROS + ' empty rounds — niche exhausted. Stopping.');
+          onLog('[ENGINE] ' + MAX_CONSEC_ZEROS + ' empty rounds — rotando queries. Deteniendo.');
           break;
         }
         continue;
       }
 
-      // Filter to handles we've never seen in this session or in the DB
-      const rawHandles = (posts as Record<string, unknown>[])
-        .map(p => (((p.ownerUsername ?? (p.owner as Record<string, unknown>)?.username ?? p.username) as string) || '').toLowerCase().trim())
-        .filter(h => h && !seenHandles.has(h));
-      const novelHandles = [...new Set(rawHandles)].slice(0, 60);
+      // Extract IG handles from Google result URLs
+      // Result URLs look like: https://www.instagram.com/username/ or /username
+      const rawHandles = (searchResults as Record<string, unknown>[])
+        .map(item => {
+          const url = ((item.url as string) || (item.link as string) || '').toLowerCase();
+          const match = url.match(/instagram\.com\/([^/?#\s]+)/);
+          return match ? match[1].trim() : '';
+        })
+        .filter(h => h && !SKIP_HANDLES.has(h) && !seenHandles.has(h));
+      const novelHandles = [...new Set(rawHandles)].slice(0, 30);
 
-      onLog('📸 STEP 1/4 ✓ — ' + posts.length + ' posts → ' + novelHandles.length + ' handles nuevos (sin ver aún)');
-      console.log('[InstagramEngine] Attempt', attempt, '| novel handles:', novelHandles.length, '/', rawHandles.length + novelHandles.length, 'raw (', posts.length, 'posts)');
+      onLog('🔎 STEP 1/4 ✓ — ' + searchResults.length + ' resultados → ' + novelHandles.length + ' handles nuevos');
+      console.log('[InstagramEngine] Attempt', attempt, '| novel handles:', novelHandles.length, 'from', searchResults.length, 'results');
 
       if (!novelHandles.length) {
-        onLog('⚠ Todos los handles de #' + hashtagBatch.join(', #') + ' ya fueron procesados — rotando hashtags...');
-        console.warn('[InstagramEngine] Attempt', attempt, '— 0 novel handles. All seen. Rotating.');
+        onLog('⚠ Sin handles nuevos en esta query — rotando...');
+        console.warn('[InstagramEngine] Attempt', attempt, '— 0 novel handles. Rotating.');
         consecutiveZeros++;
         if (consecutiveZeros >= MAX_CONSEC_ZEROS) {
-          onLog('[ENGINE] ' + MAX_CONSEC_ZEROS + ' rondas sin handles nuevos — nicho agotado. Deteniendo.');
+          onLog('[ENGINE] ' + MAX_CONSEC_ZEROS + ' rondas sin handles nuevos. Deteniendo.');
           break;
         }
         continue;
@@ -454,7 +492,7 @@ export class InstagramSearchEngine {
       console.log('[InstagramEngine] Attempt', attempt, '| hard filter:', profiles.length, '→', hardFiltered.length);
 
       if (!hardFiltered.length) {
-        onLog('⚠ Ningún perfil pasó el hard filter en este batch. Rotando hashtags...');
+        onLog('⚠ Ningún perfil pasó el hard filter en este batch. Rotando query...');
         console.warn('[InstagramEngine] Attempt', attempt, '— 0 passed hard filter');
         continue;
       }
@@ -561,7 +599,7 @@ export class InstagramSearchEngine {
       console.log('[InstagramEngine] Attempt', attempt, '| after ICP filters:', candidates.length, 'candidates');
 
       if (!candidates.length) {
-        onLog('⚠ Ningún candidato pasó los filtros ICP en este batch. Rotando hashtags...');
+        onLog('⚠ Ningún candidato pasó los filtros ICP en este batch. Rotando query...');
         console.warn('[InstagramEngine] Attempt', attempt, '— 0 candidates after ICP filters. Check follower range and region settings.');
         continue;
       }
@@ -574,7 +612,7 @@ export class InstagramSearchEngine {
       console.log('[InstagramEngine] Attempt', attempt, '| after dedup:', dbDeduped.length);
 
       if (!dbDeduped.length) {
-        onLog('⚠ Todos los candidatos ya existen en la BD. Rotando hashtags...');
+        onLog('⚠ Todos los candidatos ya existen en la BD. Rotando query...');
         continue;
       }
 
@@ -674,33 +712,43 @@ export class InstagramSearchEngine {
     } else if (accepted.length >= targetCount) {
       onLog('[ENGINE] ✅ Target reached: ' + accepted.length + '/' + targetCount + ' creators found in ' + attempt + ' attempts.');
     } else {
-      onLog('[ENGINE] ⚠ Max attempts (' + MAX_RETRIES + ') reached. Found ' + accepted.length + '/' + targetCount +
-        '. Try broader hashtags or relax ICP filters.');
+      onLog('[ENGINE] ⚠ Máx intentos (' + MAX_RETRIES + ') alcanzado. Encontrados ' + accepted.length + '/' + targetCount +
+        '. Prueba keywords más amplias o relaja filtros ICP.');
     }
 
     onComplete(accepted);
   }
 
-  // ── Hashtag query parser ──────────────────────────────────────────────────────
+  // ── Keyword parser ────────────────────────────────────────────────────────────
 
-  private parseHashtagsFromQuery(query: string): string[] {
-    const defaults = (PROJECT_CONFIG.flownextConfig?.targetHashtags || [
-      '#fitnesscoach', '#personaldevelopment', '#mindset', '#gymlife', '#workout',
-    ]).map(h => h.replace(/^#/, ''));
+  /**
+   * Extracts search keywords from the user's query string.
+   * Returns plain keywords (not hashtags) that will be wrapped in quotes
+   * and composed into `site:instagram.com` Google Search queries.
+   */
+  private parseKeywordsFromQuery(query: string): string[] {
+    const defaults = ['fitness coach', 'personal trainer'];
 
-    if (!query) return defaults.slice(0, 5);
+    if (!query) return defaults;
 
-    const explicit = query.match(/#[a-zA-Z0-9_]+/g);
-    if (explicit && explicit.length > 0) return explicit.map(h => h.replace(/^#/, '')).slice(0, 10);
+    const lower = query.toLowerCase().trim();
 
-    const lower = query.toLowerCase();
+    // If user typed explicit keywords (not hashtags), use them directly
+    const withoutHashtags = lower.replace(/#[a-zA-Z0-9_]+/g, '').trim();
+    if (withoutHashtags.length > 2) {
+      // Split on common separators, keep meaningful phrases
+      const parts = withoutHashtags.split(/[,|;]+/).map(s => s.trim()).filter(s => s.length > 1);
+      if (parts.length > 0) return parts.slice(0, 3);
+    }
+
+    // Auto-detect niche from hashtags or keywords in query
     const tags: string[] = [];
-    if (/fitness|gym|workout|training/.test(lower)) tags.push('fitnesscoach', 'gymlife', 'workout');
-    if (/yoga|wellness|mindfulness/.test(lower)) tags.push('yoga', 'wellness', 'mindfulness');
-    if (/personal.?dev|mindset|selfimprovement|motivation/.test(lower)) tags.push('personaldevelopment', 'mindset', 'selfimprovement');
-    if (/nutrition|diet|health/.test(lower)) tags.push('nutrition', 'healthylifestyle');
-    if (/business|entrepreneur/.test(lower)) tags.push('entrepreneur', 'businesscoach');
-    return tags.length > 0 ? tags.slice(0, 8) : defaults.slice(0, 5);
+    if (/fitness|gym|workout|training|bodybuilding/.test(lower)) tags.push('fitness coach', 'personal trainer');
+    if (/yoga|wellness|mindfulness/.test(lower)) tags.push('wellness coach', 'mindfulness coach');
+    if (/personal.?dev|mindset|selfimprovement|motivation/.test(lower)) tags.push('mindset coach', 'personal development');
+    if (/nutrition|diet|health/.test(lower)) tags.push('nutrition coach', 'diet coach');
+    if (/business|entrepreneur/.test(lower)) tags.push('online coach', 'business coach');
+    return tags.length > 0 ? tags.slice(0, 3) : defaults;
   }
 }
 

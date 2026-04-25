@@ -75,7 +75,6 @@ const INSTAGRAM_PROFILE_SCRAPER = 'apify~instagram-profile-scraper';
 
 export class InstagramSearchEngine {
   private isRunning = false;
-  private apiKey = '';
   private userId: string | null = null;
 
   public stop() {
@@ -125,50 +124,46 @@ export class InstagramSearchEngine {
 
   // ── Apify calls ──────────────────────────────────────────────────────────────
 
+  /**
+   * All Apify calls go through /api/apify (Vercel serverless function).
+   * The Apify token lives server-side only — never sent to the browser.
+   * Works in dev (Vite dev server runs the api/ functions) AND in prod (Vercel).
+   */
+  private async apifyRequest(path: string, method: 'GET' | 'POST', body?: unknown): Promise<unknown> {
+    const res = await fetch('/api/apify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, method, body }),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`/api/apify ${res.status}: ${err.substring(0, 300)}`);
+    }
+    return res.json();
+  }
+
   private async callApifyActor(actorId: string, input: unknown, onLog: LogCallback): Promise<unknown[]> {
-    // Use the /api/apify proxy (vite.config.ts dev + vercel.json prod)
-    // Direct browser calls to api.apify.com return 403 — always go through proxy
-    const baseUrl = '/api/apify';
-    const startUrl = `${baseUrl}/acts/${actorId}/runs?token=${this.apiKey}`;
     onLog('[APIFY] Lanzando ' + actorId.split('~').pop() + '...');
 
-    let startResponse: Response;
-    try {
-      const controller = new AbortController();
-      const tid = setTimeout(() => controller.abort(), 300_000);
-      startResponse = await fetch(startUrl, {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(input),
-      });
-      clearTimeout(tid);
-    } catch (e: unknown) {
-      throw new Error('Network error: ' + (e instanceof Error ? e.message : String(e)));
-    }
-
-    if (!startResponse.ok) {
-      let errBody = '';
-      try { errBody = await startResponse.text(); } catch (_) {}
-      onLog('[APIFY] ❌ HTTP ' + startResponse.status + ' — ' + actorId.split('~').pop());
-      throw new Error('Actor HTTP ' + startResponse.status + ': ' + errBody.substring(0, 200));
-    }
-
-    const startData = await startResponse.json() as { data?: { id?: string; defaultDatasetId?: string } };
+    // Start the actor run
+    const startData = await this.apifyRequest(`acts/${actorId}/runs`, 'POST', input) as {
+      data?: { id?: string; defaultDatasetId?: string };
+    };
     const runId = startData.data?.id;
     const datasetId = startData.data?.defaultDatasetId;
     if (!runId || !datasetId) throw new Error('Apify: missing runId or datasetId');
-    onLog('[APIFY] Run ' + runId.substring(0, 8) + ' started');
+    onLog('[APIFY] Run ' + runId.substring(0, 8) + ' iniciado');
 
+    // Poll until done
     let done = false;
     let polls = 0;
     while (!done && this.isRunning && polls < 600) {
       await new Promise(r => setTimeout(r, 5000));
       polls++;
       try {
-        const s = await fetch(`${baseUrl}/acts/${actorId}/runs/${runId}?token=${this.apiKey}`);
-        if (!s.ok) continue;
-        const sd = await s.json() as { data?: { status?: string } };
+        const sd = await this.apifyRequest(`acts/${actorId}/runs/${runId}`, 'GET') as {
+          data?: { status?: string };
+        };
         const status = sd.data?.status ?? '';
         if (polls % 3 === 1) onLog('[APIFY] ' + status + ' (' + polls * 5 + 's)');
         if (status === 'SUCCEEDED') done = true;
@@ -182,12 +177,11 @@ export class InstagramSearchEngine {
     if (!done) throw new Error('Apify timeout after ' + polls * 5 + 's');
     if (!this.isRunning) return [];
 
-    onLog('[APIFY] Downloading dataset...');
-    const r = await fetch(`${baseUrl}/datasets/${datasetId}/items?token=${this.apiKey}`);
-    if (!r.ok) throw new Error('Dataset HTTP ' + r.status);
-    const items = await r.json() as unknown[];
+    // Download results
+    onLog('[APIFY] Descargando resultados...');
+    const items = await this.apifyRequest(`datasets/${datasetId}/items`, 'GET') as unknown[];
     if (!Array.isArray(items)) throw new Error('Dataset is not an array');
-    onLog('[APIFY] ' + items.length + ' items retrieved');
+    onLog('[APIFY] ✓ ' + items.length + ' items descargados');
     return items;
   }
 
@@ -314,11 +308,9 @@ export class InstagramSearchEngine {
     this.isRunning = true;
     this.userId = userId ?? null;
     try {
-      this.apiKey = import.meta.env.VITE_APIFY_API_TOKEN || '';
-      onLog('[INIT] Apify key: ' + (this.apiKey ? 'present (' + this.apiKey.substring(0, 12) + '...)' : 'MISSING'));
+      onLog('[INIT] Apify: via /api/apify (serverless proxy)');
       onLog('[INIT] UserId: ' + (this.userId || 'not authenticated'));
       onLog('[INIT] Source: ' + config.source + ' | Query: "' + config.query + '" | Target: ' + config.maxResults);
-      if (!this.apiKey) throw new Error('Missing VITE_APIFY_API_TOKEN');
 
       onLog('[DEDUP] Loading existing leads from database...');
       const { existingIgHandles, existingEmails } = await deduplicationService.fetchExistingLeads(this.userId);

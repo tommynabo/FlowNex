@@ -590,9 +590,36 @@ export class InstagramSearchEngine {
         continue;
       }
 
-      // ── STEP 3b: AI Soft Filter — verifica que son creadores de fitness físico ─
-      onLog('🤖 STEP 3b — Filtro IA para ' + dbDeduped.length + ' candidatos (verificando ICP fitness)...');
-      const softFiltered = await icpEvaluator.applySoftFilter(dbDeduped, onLog);
+      // ── STEP 3b: Email discovery FIRST — no email = skip AI credits ──────────
+      // Rule: discover email before spending OpenAI tokens. Only leads WITH email
+      // proceed to ICP soft filter and AI analysis.
+      const slotsRemaining = targetCount - accepted.length;
+      const toDiscover = dbDeduped.slice(0, Math.max(slotsRemaining * 8, dbDeduped.length));
+      onLog('📧 STEP 3b — Email discovery para ' + toDiscover.length + ' candidatos (antes de gastar IA)...');
+      await Promise.all(toDiscover.map(async (lead) => {
+        if (!this.isRunning) return;
+        const discovered = await emailDiscoveryService.discoverEmail(
+          lead.decisionMaker?.email || '',
+          lead.website || '',
+          lead.ig_handle || '',
+          onLog,
+        );
+        if (discovered && lead.decisionMaker) lead.decisionMaker.email = discovered;
+      }));
+      const withEmail = toDiscover.filter(l => l.decisionMaker?.email);
+      const withoutEmail = toDiscover.filter(l => !l.decisionMaker?.email);
+      onLog('📧 STEP 3b ✓ — ' + withEmail.length + '/' + toDiscover.length + ' tienen email | ' +
+        withoutEmail.length + ' descartados (sin email → sin gasto de IA)');
+      console.log('[InstagramEngine] Attempt', attempt, '| with email:', withEmail.length, '/', toDiscover.length);
+
+      if (!withEmail.length) {
+        onLog('⚠ Ningún candidato tiene email en este batch. Rotando query...');
+        continue;
+      }
+
+      // ── STEP 4: AI Soft Filter — solo para leads CON email ───────────────────
+      onLog('🤖 STEP 4a — Filtro IA para ' + withEmail.length + ' candidatos con email (verificando ICP fitness)...');
+      const softFiltered = await icpEvaluator.applySoftFilter(withEmail, onLog);
       const icpVerified = softFiltered.filter(l => l.icp_verified === true);
       const icpUnverified = softFiltered.filter(l => l.icp_verified !== true);
 
@@ -615,39 +642,17 @@ export class InstagramSearchEngine {
         continue;
       }
 
-      const slotsRemaining = targetCount - accepted.length;
-      // Try email discovery on ALL verified leads in the batch.
-      const emailCandidates = toEvaluate.slice(0, Math.max(slotsRemaining * 8, toEvaluate.length));
-
-      // ── STEP 4: Email discovery ───────────────────────────────────────────────
-      onLog('📧 STEP 4/4 — Email discovery for ' + emailCandidates.length + ' verified creators...');
-      await Promise.all(emailCandidates.map(async (lead) => {
-        if (!this.isRunning) return;
-        const discovered = await emailDiscoveryService.discoverEmail(
-          lead.decisionMaker?.email || '',
-          lead.website || '',
-          lead.ig_handle || '',
-          onLog,
-        );
-        if (discovered && lead.decisionMaker) lead.decisionMaker.email = discovered;
-      }));
-      const leadsWithEmail = emailCandidates.filter(l => l.decisionMaker?.email);
-      const leadsNoEmail = emailCandidates.filter(l => !l.decisionMaker?.email);
-      if (leadsNoEmail.length > 0) {
-        onLog('📧 ' + leadsNoEmail.length + ' lead(s) sin email — se añaden al pipeline sin email (Instantly solo recibe los que sí tienen)');
-      }
-      // Accept ALL verified leads (with or without email) — sendLeadsToInstantly filters by email
-      const toProcess = emailCandidates.slice(0, slotsRemaining);
-      onLog('📧 STEP 4/4 ✓ — ' + leadsWithEmail.length + '/' + emailCandidates.length + ' tienen email | aceptando ' + toProcess.length + ' leads');
-      console.log('[InstagramEngine] Attempt', attempt, '| with email:', leadsWithEmail.length, '/', emailCandidates.length);
+      // Accept only leads that passed ICP (all already have email at this point)
+      const toProcess = toEvaluate.slice(0, slotsRemaining);
+      onLog('📧 STEP 4a ✓ — ' + toProcess.length + ' leads con email + ICP verificado listos para análisis IA');
 
       if (!emailCandidates.length) {
         onLog('⚠ Ningún candidato ICP verificado en este batch. Rotando query...');
         continue;
       }
 
-      // ── AI analysis + finalize ────────────────────────────────────────────────
-      onLog('✍ Generando análisis IA para ' + toProcess.length + ' creadores...');
+      // ── STEP 4b: AI analysis for ICP-verified leads with email ───────────────
+      onLog('✍ STEP 4b — Generando análisis IA para ' + toProcess.length + ' creadores (con email + ICP ✓)...');
       const analyzed = (await Promise.all(toProcess.map(async (lead) => {
         if (!this.isRunning) return null;
         try {

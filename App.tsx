@@ -302,6 +302,7 @@ function App() {
           totalLeads: r.total_leads ?? 0,
           createdAt: new Date(r.created_at),
           userId: r.user_id,
+          instantlyCampaignId: r.instantly_campaign_id ?? undefined,
         })));
       }
     } catch (e) {
@@ -399,7 +400,7 @@ function App() {
     setLeads([]);
 
     searchService.startSearch(
-      config,
+      { ...config, ...(activeCampaign?.instantlyCampaignId ? { instantlyCampaignId: activeCampaign.instantlyCampaignId } : {}) },
       // onLog
       (message) => addLog(message),
       // onComplete

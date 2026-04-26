@@ -488,11 +488,11 @@ export class SearchService {
         }
 
         onLog('[IG] Complete: ' + validLeads.length + '/' + targetCount + ' creators found');
-        await this.sendLeadsToInstantly(validLeads, onLog);
+        await this.sendLeadsToInstantly(validLeads, onLog, config.instantlyCampaignId);
         onComplete(validLeads);
     }
 
-    private async sendLeadsToInstantly(leads: Lead[], onLog: LogCallback): Promise<void> {
+    private async sendLeadsToInstantly(leads: Lead[], onLog: LogCallback, instantlyCampaignId?: string): Promise<void> {
         const leadsWithEmail = leads.filter(l => l.decisionMaker?.email);
         if (!leadsWithEmail.length) {
             onLog('[INSTANTLY] ⚠ Sin leads con email para enviar a Instantly.');
@@ -525,6 +525,7 @@ export class SearchService {
                         aiSummary: lead.aiAnalysis?.summary || '',
                         coldEmailSubject: lead.aiAnalysis?.coldEmailSubject || '',
                         followerCount: lead.follower_count || 0,
+                        ...(instantlyCampaignId ? { campaignId: instantlyCampaignId } : {}),
                     }),
                 });
 

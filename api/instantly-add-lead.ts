@@ -22,6 +22,7 @@ interface AddLeadRequest {
   aiSummary?: string;
   coldEmailSubject?: string;
   followerCount?: number;
+  campaignId?: string;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -52,8 +53,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const lastName = body.lastName || nameParts.slice(1).join(' ') || '';
 
   // ── 4. Build Instantly v2 payload ────────────────────────────────────────
+  const resolvedCampaignId = (body.campaignId && body.campaignId.trim()) ? body.campaignId.trim() : campaignId;
+
   const payload = {
-    campaign_id: campaignId,
+    campaign_id: resolvedCampaignId,
     email: body.email.toLowerCase().trim(),
     first_name: firstName,
     last_name: lastName,

@@ -29,6 +29,7 @@ export function CampaignCreatorModal({ userId, onClose, onCreated }: CampaignCre
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [hashtagsRaw, setHashtagsRaw] = useState('#fitnesscoach #mindset #personaldevelopment');
+  const [instantlyCampaignId, setInstantlyCampaignId] = useState('');
   const [icp, setIcp] = useState<IcpFilters>({
     minFollowers: 0, maxFollowers: 99_000_000,
     regions: [], contentTypes: [], campaignName: ''
@@ -67,6 +68,7 @@ export function CampaignCreatorModal({ userId, onClose, onCreated }: CampaignCre
           icp_content_types: icp.contentTypes,
           total_leads: 0,
           leads_with_email: 0,
+          ...(instantlyCampaignId.trim() ? { instantly_campaign_id: instantlyCampaignId.trim() } : {}),
         })
         .select()
         .single();
@@ -89,6 +91,7 @@ export function CampaignCreatorModal({ userId, onClose, onCreated }: CampaignCre
         totalLeads: 0,
         createdAt: new Date(data.created_at),
         userId,
+        instantlyCampaignId: data.instantly_campaign_id ?? undefined,
       };
       onCreated(campaign);
     } catch (e: any) {
@@ -141,6 +144,19 @@ export function CampaignCreatorModal({ userId, onClose, onCreated }: CampaignCre
               placeholder="Optional notes about this campaign"
               className="w-full px-3 py-2 text-sm bg-background border border-input rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all placeholder:text-muted-foreground/50 resize-none"
             />
+          </div>
+
+          {/* Instantly Campaign ID */}
+          <div className="space-y-2">
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Instantly Campaign ID <span className="font-normal">(optional)</span></label>
+            <input
+              type="text"
+              value={instantlyCampaignId}
+              onChange={e => setInstantlyCampaignId(e.target.value)}
+              placeholder="e.g. f021448d-70d0-413a-82aa-932b54d326df"
+              className="w-full h-10 px-3 text-sm bg-background border border-input rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all placeholder:text-muted-foreground/50 font-mono"
+            />
+            <p className="text-xs text-muted-foreground">Leads from this campaign will be sent to this specific Instantly campaign. Leave blank to use the default.</p>
           </div>
 
           {/* Hashtags */}

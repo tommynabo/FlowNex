@@ -316,7 +316,7 @@ export class InstagramSearchEngine {
       const { existingIgHandles, existingEmails } = await deduplicationService.fetchExistingLeads(this.userId);
       onLog('[DEDUP] Pre-flight: ' + existingIgHandles.size + ' IG handles, ' + existingEmails.size + ' emails already in DB');
 
-      await this.runSearchLoop(config, existingIgHandles, existingEmails, onLog, onComplete);
+      await this.runSearchLoop(config, existingIgHandles, existingEmails, onLog, onComplete, config.instantlyCampaignId);
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error('[InstagramSearchEngine] FATAL:', error);
@@ -335,6 +335,7 @@ export class InstagramSearchEngine {
     existingEmails: Set<string>,
     onLog: LogCallback,
     onComplete: ResultCallback,
+    instantlyCampaignId?: string,
   ): Promise<void> {
     const icpFilters = config.icpFilters;
     const minFollowers = icpFilters?.minFollowers ?? 0;
@@ -702,13 +703,13 @@ export class InstagramSearchEngine {
         '. Prueba keywords más amplias o relaja filtros ICP.');
     }
 
-    await this.sendLeadsToInstantly(accepted, onLog);
+    await this.sendLeadsToInstantly(accepted, onLog, instantlyCampaignId);
     onComplete(accepted);
   }
 
-  // ── Instantly integration ─────────────────────────────────────────────────────
+  // ── Instantly integration ─────────────────────────────────────────────
 
-  private async sendLeadsToInstantly(leads: Lead[], onLog: LogCallback): Promise<void> {
+  private async sendLeadsToInstantly(leads: Lead[], onLog: LogCallback, instantlyCampaignId?: string): Promise<void> {
     const leadsWithEmail = leads.filter(l => l.decisionMaker?.email);
     if (!leadsWithEmail.length) {
       onLog('[INSTANTLY] ⚠ Sin leads con email para enviar a Instantly.');
@@ -741,6 +742,7 @@ export class InstagramSearchEngine {
             aiSummary: lead.aiAnalysis?.summary || '',
             coldEmailSubject: lead.aiAnalysis?.coldEmailSubject || '',
             followerCount: lead.follower_count || 0,
+            ...(instantlyCampaignId ? { campaignId: instantlyCampaignId } : {}),
           }),
         });
 

@@ -56,6 +56,7 @@ export interface Campaign {
   totalLeads: number;
   createdAt: Date;
   userId: string;
+  instantlyCampaignId?: string;
 }
 
 export interface FlowNextConfig {
@@ -131,6 +132,7 @@ export interface SearchConfigState {
   maxResults: number;
   icpFilters?: IcpFilters;
   advancedFilters?: AdvancedFilter;
+  instantlyCampaignId?: string;
 }
 
 export interface SearchSession {

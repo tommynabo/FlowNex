@@ -488,7 +488,65 @@ export class SearchService {
         }
 
         onLog('[IG] Complete: ' + validLeads.length + '/' + targetCount + ' creators found');
+        await this.sendLeadsToInstantly(validLeads, onLog);
         onComplete(validLeads);
+    }
+
+    private async sendLeadsToInstantly(leads: Lead[], onLog: LogCallback): Promise<void> {
+        const leadsWithEmail = leads.filter(l => l.decisionMaker?.email);
+        if (!leadsWithEmail.length) {
+            onLog('[INSTANTLY] ⚠ Sin leads con email para enviar a Instantly.');
+            return;
+        }
+        onLog('[INSTANTLY] 📤 Enviando ' + leadsWithEmail.length + ' lead(s) a campaña de Instantly...');
+
+        let sent = 0;
+        let skipped = 0;
+        let failed = 0;
+
+        for (const lead of leadsWithEmail) {
+            const email = lead.decisionMaker!.email!;
+            const fullName = lead.decisionMaker?.name || '';
+            const nameParts = fullName.split(' ');
+            const firstName = nameParts[0] || '';
+            const lastName = nameParts.slice(1).join(' ') || '';
+
+            try {
+                const response = await fetch('/api/instantly-add-lead', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email,
+                        firstName,
+                        lastName,
+                        companyName: lead.decisionMaker?.name || lead.ig_handle || '',
+                        igHandle: lead.ig_handle || '',
+                        niche: lead.niche || '',
+                        aiSummary: lead.aiAnalysis?.summary || '',
+                        coldEmailSubject: lead.aiAnalysis?.coldEmailSubject || '',
+                        followerCount: lead.follower_count || 0,
+                    }),
+                });
+
+                if (response.ok) {
+                    sent++;
+                    onLog('[INSTANTLY] ✅ ' + email + ' (@' + lead.ig_handle + ') añadido a campaña');
+                } else if (response.status === 409) {
+                    // Lead already exists in the campaign — not an error
+                    skipped++;
+                    onLog('[INSTANTLY] ℹ Ya en campaña: ' + email);
+                } else {
+                    failed++;
+                    const err = await response.json().catch(() => ({})) as { error?: string };
+                    onLog('[INSTANTLY] ❌ Error ' + response.status + ' para ' + email + ': ' + (err.error || 'unknown'));
+                }
+            } catch (e: any) {
+                failed++;
+                onLog('[INSTANTLY] ❌ Error de red para ' + email + ': ' + e.message);
+            }
+        }
+
+        onLog('[INSTANTLY] 📊 ' + sent + ' enviados' + (skipped ? ', ' + skipped + ' ya existían' : '') + (failed ? ', ' + failed + ' errores' : ''));
     }
 
     private parseHashtagsFromQuery(query: string): string[] {

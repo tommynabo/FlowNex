@@ -60,6 +60,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
+    // ── Bio-link pages (Linktree, Beacons, etc.) ──────────────────────────────
+    // These pages aggregate external links; we must follow each link to find email.
+    if (isBioLinkPage(parsedUrl.hostname)) {
+      const html = await fetchRaw(url);
+      if (html) {
+        const directEmail = extractEmail(html);
+        if (directEmail) return res.status(200).json({ email: directEmail });
+
+        const linkedUrls = extractBioLinkUrls(html, parsedUrl.hostname);
+        for (const linkedUrl of linkedUrls.slice(0, 6)) {
+          const linkedEmail = await fetchAndExtract(linkedUrl);
+          if (linkedEmail) return res.status(200).json({ email: linkedEmail });
+        }
+      }
+      return res.status(200).json({ email: null });
+    }
+
+    // ── Regular websites ──────────────────────────────────────────────────────
     const homepageEmail = await fetchAndExtract(url);
     if (homepageEmail) {
       return res.status(200).json({ email: homepageEmail });
@@ -73,6 +91,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.warn('[scrape-email] Failed for', url, err);
     return res.status(200).json({ email: null });
   }
+}
+
+// ── Bio-link page detection & link extraction ─────────────────────────────────
+
+const BIO_LINK_HOSTS = [
+  'linktr.ee', 'linktree.me',
+  'beacons.ai',
+  'bio.site',
+  'allmylinks.com',
+  'tap.bio',
+  'campsite.bio',
+  'carrd.co',
+  'solo.to',
+  'about.me',
+  'contactcard.me',
+];
+
+function isBioLinkPage(hostname: string): boolean {
+  return BIO_LINK_HOSTS.some(h => hostname.includes(h));
+}
+
+const SOCIAL_SKIP_DOMAINS = [
+  'instagram.com', 'facebook.com', 'twitter.com', 'x.com',
+  'tiktok.com', 'youtube.com', 'linkedin.com', 'pinterest.com',
+  'snapchat.com', 'threads.net', 'spotify.com', 'apple.com',
+];
+
+function extractBioLinkUrls(html: string, currentHost: string): string[] {
+  const matches = html.matchAll(/href="(https?:\/\/[^"#?]+)"/g);
+  const urls: string[] = [];
+  for (const m of matches) {
+    const u = m[1];
+    try {
+      const h = new URL(u).hostname.toLowerCase();
+      if (h === currentHost) continue;
+      if (SOCIAL_SKIP_DOMAINS.some(d => h.includes(d))) continue;
+      if (isBioLinkPage(h)) continue; // skip nested bio-link pages
+      urls.push(u);
+    } catch { /* invalid URL */ }
+  }
+  return [...new Set(urls)];
 }
 
 async function fetchAndExtract(url: string): Promise<string | null> {

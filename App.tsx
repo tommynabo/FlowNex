@@ -422,8 +422,10 @@ function App() {
 
         // Save to Supabase (Cloud)
         if (userId) {
+          console.log('[DB] onComplete: saving', results.length, 'leads. userId:', userId);
           try {
             // 1. Insert search record and get ID
+            console.log('[DB] Inserting search_history...');
             const { data, error: searchError } = await supabase
               .from('search_history')
               .insert({
@@ -441,18 +443,20 @@ function App() {
               .select();
 
             if (searchError) {
-              console.error('DB Error saving search_history:', searchError);
+              console.error('[DB] ❌ search_history INSERT failed:', searchError);
               addLog(`[DB] Error saving search: ${searchError.message}`);
               return;
             }
 
             if (!data || data.length === 0) {
+              console.error('[DB] ❌ search_history INSERT returned no data (RLS issue?)');
               addLog('[DB] No search ID returned.');
               return;
             }
 
             const searchId = data[0].id;
-addLog(`[DB] Search registered (ID: ${searchId})`);
+            console.log('[DB] ✅ search_history saved. searchId:', searchId);
+            addLog(`[DB] Search registered (ID: ${searchId})`);
 
             // 2. Save each lead to the leads table with search_id reference
             const leadsToInsert = results.map(lead => ({
@@ -478,14 +482,16 @@ addLog(`[DB] Search registered (ID: ${searchId})`);
               icp_verified: lead.icp_verified ?? false
             }));
 
+            console.log('[DB] Inserting', leadsToInsert.length, 'leads...');
             const { error: leadsError } = await supabase
               .from('leads')
               .insert(leadsToInsert);
 
             if (leadsError) {
-              console.error('DB Error saving leads:', leadsError);
+              console.error('[DB] ❌ leads INSERT failed:', leadsError);
               addLog(`[DB] Error saving ${results.length} leads: ${leadsError.message}`);
             } else {
+              console.log('[DB] ✅ leads saved successfully');
               addLog(`[DB] ${results.length} creators saved.`);
               if (activeCampaign) {
                 loadCampaignLeads(activeCampaign.id);
@@ -497,6 +503,7 @@ addLog(`[DB] Search registered (ID: ${searchId})`);
             addLog(`[ERROR] Excepción al guardar: ${err}`);
           }
         } else {
+          console.warn('[DB] ⚠ userId is null — lead NOT saved to Supabase!');
           addLog('[WARNING] Not saved to cloud (user not authenticated).');
         }
 

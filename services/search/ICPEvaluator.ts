@@ -3,7 +3,7 @@ import type { LogCallback } from './SearchService';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-export const HARD_FILTER_MIN_FOLLOWERS = 3_000;
+export const HARD_FILTER_MIN_FOLLOWERS = 1_000;
 export const HARD_FILTER_MAX_FOLLOWERS = 150_000;
 
 const BRAND_KEYWORDS = [

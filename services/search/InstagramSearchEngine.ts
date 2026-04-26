@@ -56,7 +56,7 @@ const LOCATION_SUFFIXES = [
 ];
 
 // After this many consecutive attempts yielding 0 novel handles → rotate query harder
-const MAX_CONSEC_ZEROS = 3;
+const MAX_CONSEC_ZEROS = 5;
 
 // Region patterns (same as SearchService)
 const REGION_MAP: Record<string, string[]> = {
@@ -345,8 +345,8 @@ export class InstagramSearchEngine {
     const baseKeywords = this.parseKeywordsFromQuery(config.query);
     const keywordPool  = this.detectKeywordPool(baseKeywords);
 
-    // MAX_RETRIES scales with target size — conservative to save Apify credits
-    const MAX_RETRIES = Math.min(15, Math.max(3, targetCount * 2));
+    // MAX_RETRIES scales with target size — always at least 15 so small targets (1-5) never give up early
+    const MAX_RETRIES = Math.min(50, Math.max(15, targetCount * 3));
 
     onLog('[IG] Keywords base: ' + baseKeywords.join(', '));
     onLog('[IG] Keyword pool: ' + keywordPool.length + ' variantes de búsqueda (Google site:instagram.com)');

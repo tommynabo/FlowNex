@@ -64,22 +64,20 @@ const KEYWORD_POOLS: Record<string, string[][]> = {
   ],
 };
 
-// Location suffixes — rotate through these to diversify search results
+// Location suffixes — rotate through US/Canada only (our target market)
 const LOCATION_SUFFIXES = [
-  '',            // first pass — no location
   'USA',
-  'UK',
   'Canada',
-  'Australia',
-  'Spain',
-  'Mexico',
-  'Colombia',
-  'Argentina',
-  'Germany',
-  'France',
-  'Brazil',
-  'Italy',
-  'Netherlands',
+  'United States',
+  'California',
+  'New York',
+  'Texas',
+  'Florida',
+  'Ontario',
+  'British Columbia',
+  'American',
+  'Canadian',
+  'US',
 ];
 
 // After this many consecutive attempts yielding 0 novel handles → rotate query harder
@@ -141,7 +139,7 @@ export class InstagramSearchEngine {
 
     if (attempt === 1) {
       keywords = baseKeywords.slice(0, 2).map(k => k.includes('"') ? k : `"${k}"`);
-      location = '';
+      location = 'USA OR Canada';
     } else {
       const poolIdx = (attempt - 2) % keywordPool.length;
       const locIdx  = Math.floor((attempt - 2) / keywordPool.length) % LOCATION_SUFFIXES.length;
@@ -376,8 +374,8 @@ export class InstagramSearchEngine {
     const baseKeywords = this.parseKeywordsFromQuery(config.query);
     const keywordPool  = this.detectKeywordPool(baseKeywords);
 
-    // MAX_RETRIES scales with target size — never gives up too early
-    const MAX_RETRIES = Math.min(100, Math.max(30, Math.ceil(targetCount / 5) * 6));
+    // MAX_RETRIES scales with target size — conservative to save Apify credits
+    const MAX_RETRIES = Math.min(15, Math.max(3, targetCount * 2));
 
     onLog('[IG] Keywords base: ' + baseKeywords.join(', '));
     onLog('[IG] Keyword pool: ' + keywordPool.length + ' variantes de búsqueda (Google site:instagram.com)');
@@ -418,7 +416,7 @@ export class InstagramSearchEngine {
       try {
         searchResults = await this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
           queries: [searchQuery],
-          maxPagesPerQuery: 3,
+          maxPagesPerQuery: 2,
           resultsPerPage: 10,
         }, onLog);
       } catch (e: unknown) {
@@ -450,7 +448,7 @@ export class InstagramSearchEngine {
           return match ? match[1].trim() : '';
         })
         .filter(h => h && !SKIP_HANDLES.has(h) && !seenHandles.has(h));
-      const novelHandles = [...new Set(rawHandles)].slice(0, 30);
+      const novelHandles = [...new Set(rawHandles)].slice(0, Math.min(30, needed * 4));
 
       onLog('🔎 STEP 1/4 ✓ — ' + searchResults.length + ' resultados → ' + novelHandles.length + ' handles nuevos');
       console.log('[InstagramEngine] Attempt', attempt, '| novel handles:', novelHandles.length, 'from', searchResults.length, 'results');
@@ -530,23 +528,19 @@ export class InstagramSearchEngine {
           continue;
         }
 
-        // Region filter — skip only when location data is present AND contradicts filter
-        if (targetRegions.length > 0) {
-          const locationStr = [p.country, p.city, p.region, p.countryCode, p.locationName]
-            .map(v => ((v as string) || '').toLowerCase())
-            .join(' ');
-          if (locationStr.trim()) {
-            const matchesRegion = targetRegions.some(r => {
-              const patterns = REGION_MAP[r] ?? [r.toLowerCase()];
-              return patterns.some(pat => locationStr.includes(pat));
-            });
-            if (!matchesRegion) {
-              onLog('[ICP] 🌍 @' + handle + ' — "' + (p.country || p.city || '') + '" ∉ [' + targetRegions.join(', ') + ']');
-              continue;
-            }
+        // Region filter — always enforce US/Canada only (target market)
+        const US_CA_PATTERNS = ['united states', 'usa', 'u.s.', 'america', 'us', 'canada', 'canadian', 'alberta', 'ontario', 'british columbia', 'quebec', 'california', 'new york', 'texas', 'florida'];
+        const locationStr = [p.country, p.city, p.region, p.countryCode, p.locationName]
+          .map(v => ((v as string) || '').toLowerCase())
+          .join(' ');
+        if (locationStr.trim()) {
+          const matchesUSCA = US_CA_PATTERNS.some(pat => locationStr.includes(pat));
+          if (!matchesUSCA) {
+            onLog('[ICP] 🌍 @' + handle + ' — "' + (p.country || p.city || '') + '" no es US/Canada — descartado');
+            continue;
           }
-          // No location data → allow through (can't confirm but can't reject)
         }
+        // No location data → allow through (Google Search ya filtra por US/CA)
 
         // Content type filter
         if (targetContentTypes.length > 0) {
@@ -657,14 +651,23 @@ export class InstagramSearchEngine {
         );
         if (discovered && lead.decisionMaker) lead.decisionMaker.email = discovered;
       }));
-      const withEmail = toProcess.filter(l => l.decisionMaker?.email).length;
-      onLog('📧 STEP 4/4 ✓ — ' + withEmail + '/' + toProcess.length + ' tienen email tras discovery' +
-        (withEmail < toProcess.length ? ' (' + (toProcess.length - withEmail) + ' sin email — se incluyen igual)' : ''));
-      console.log('[InstagramEngine] Attempt', attempt, '| with email:', withEmail, '/', toProcess.length);
+      const leadsWithEmail = toProcess.filter(l => l.decisionMaker?.email);
+      const leadsNoEmail = toProcess.filter(l => !l.decisionMaker?.email);
+      if (leadsNoEmail.length > 0) {
+        onLog('📧 ' + leadsNoEmail.length + ' lead(s) sin email — descartados (email obligatorio)');
+        for (const lead of leadsNoEmail) onLog('[EMAIL] ✗ @' + lead.ig_handle + ' — sin email, descartado');
+      }
+      onLog('📧 STEP 4/4 ✓ — ' + leadsWithEmail.length + '/' + toProcess.length + ' tienen email → continúan');
+      console.log('[InstagramEngine] Attempt', attempt, '| with email:', leadsWithEmail.length, '/', toProcess.length);
+
+      if (!leadsWithEmail.length) {
+        onLog('⚠ Ningún lead con email en este batch. Rotando query...');
+        continue;
+      }
 
       // ── AI analysis + finalize ────────────────────────────────────────────────
-      onLog('✍ Generando análisis IA para ' + toProcess.length + ' creadores...');
-      const analyzed = (await Promise.all(toProcess.map(async (lead) => {
+      onLog('✍ Generando análisis IA para ' + leadsWithEmail.length + ' creadores...');
+      const analyzed = (await Promise.all(leadsWithEmail.map(async (lead) => {
         if (!this.isRunning) return null;
         try {
           const a = await this.generateCreatorAnalysis(lead);
@@ -687,7 +690,7 @@ export class InstagramSearchEngine {
         return lead;
       }))).filter((l): l is Lead => l !== null);
 
-      // Accept all analyzed leads — email is nice-to-have, not a gate
+      // Accept all analyzed leads — all have verified email
       for (const lead of analyzed) {
         accepted.push(lead);
         // Register in existingIgHandles so future dedup passes are aware

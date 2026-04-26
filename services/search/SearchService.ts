@@ -148,7 +148,8 @@ export class SearchService {
     }
 
     private async callApifyActor(actorId: string, input: any, onLog: LogCallback): Promise<any[]> {
-        const baseUrl = 'https://api.apify.com/v2';
+        // Use the /api/apify proxy (configured in vite.config.ts and vercel.json)
+        const baseUrl = '/api/apify';
         const startUrl = baseUrl + '/acts/' + actorId + '/runs?token=' + this.apiKey;
         onLog('[APIFY] Launching ' + actorId.split('/').pop() + '...');
 

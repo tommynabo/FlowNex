@@ -147,27 +147,29 @@ export class ICPEvaluator {
 
     onLog(`[ICP SOFT] Evaluating ${leads.length} profiles with AI (batches of ${ICP_SOFT_FILTER_BATCH_SIZE})...`);
 
-    const SYSTEM_PROMPT = `You are a senior talent scout for a premium fitness creator outreach agency. Your job is to decide with absolute certainty whether each Instagram profile belongs to a PHYSICAL FITNESS CREATOR whose PRIMARY content is gym training, bodybuilding, weightlifting, calisthenics, or sports nutrition.
+    const SYSTEM_PROMPT = `You are a talent scout for a fitness creator outreach agency targeting US/Canada Instagram accounts. Your job is to decide whether each profile belongs to a GYM/FITNESS CONTENT CREATOR — this includes both professional coaches AND everyday gym-goers who create content about the gym lifestyle.
 
-Criteria to PASS (is_physical_fitness_creator = true) — ALL of these must be true:
-- The person's BIO explicitly mentions gym, workout, lifting, bodybuilding, crossfit, HIIT, personal training, or physical exercise.
-- They appear to be an INDIVIDUAL (not a brand, gym, supplement company, or agency).
-- Physical fitness is their MAIN identity, not a side interest.
-- Nutrition coaching is acceptable ONLY if bio shows it's sports/bodybuilding nutrition.
+Criteria to PASS (is_physical_fitness_creator = true) — the profile must fit ONE of these:
+- Professional: personal trainer, fitness coach, bodybuilding coach, nutrition coach (sports/gym focused)
+- Gym content creator: posts workout videos, gym day content, exercise tutorials, gym motivation, body transformation content, lifting videos, physique content — even without being a certified coach
+- Gym lifestyle influencer: their account is clearly centered around gym, lifting, working out — even if they also post other content
+
+They must ALSO be:
+- An INDIVIDUAL person (not a brand, gym, supplement company, or agency)
+- Based in US or Canada (or appear to be, based on language/references)
 
 Criteria to FAIL (is_physical_fitness_creator = false) — ANY of these → reject:
-- Bio is vague: only says "coach", "health", "wellness", "lifestyle" with no specific physical exercise mention.
-- Mental health coaches, therapists, psychologists, life coaches, motivational speakers — even if they mention gym occasionally.
-- Models, fashion influencers, or travel bloggers who post gym selfies but that is not their primary identity.
-- Yoga, Pilates, or meditation-only accounts (unless they ALSO clearly do strength training).
-- Brand accounts, gyms, supplement stores, agencies, or faceless motivation pages.
-- Running, cycling, triathlon, or endurance sports ONLY (no gym/weights content).
-- Anyone where you have any reasonable doubt.
+- Mental health coaches, therapists, psychologists, spiritual healers, manifestation coaches, life coaches with no gym content
+- Running, cycling, triathlon, swimming, or endurance sports ONLY (no gym/weights)
+- Models or fashion influencers who occasionally post gym selfies but gym is NOT their main content
+- Yoga or meditation ONLY accounts (no strength training content)
+- Brand accounts, gyms, supplement stores, agencies, or faceless quote/motivation pages
+- Bio is completely vague ("coach", "wellness", "lifestyle") with zero fitness/gym reference
 
-You MUST be STRICT and CONSERVATIVE. It is far better to reject a borderline creator than to accept one who does not fit. If you are not 90% certain they are a physical fitness creator, mark false.
+NOTE: Accept gym content creators who are NOT professional coaches — someone who posts "gym vlogs", "my workout routine", "gym motivation" is a valid target even without coaching credentials.
 
 Reply ONLY with a valid JSON array matching the input order:
-[ { "username": "user1", "is_physical_fitness_creator": true, "confidence": 93, "reason": "Personal trainer, bio explicitly states gym coaching and lifting programs" }, ... ]`;
+[ { "username": "user1", "is_physical_fitness_creator": true, "confidence": 93, "reason": "Posts daily gym workout videos and lifting content, US-based" }, ... ]`;
 
     // Chunk into batches
     const batches: Lead[][] = [];

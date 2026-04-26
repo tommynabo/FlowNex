@@ -646,7 +646,7 @@ export class InstagramSearchEngine {
       const toProcess = toEvaluate.slice(0, slotsRemaining);
       onLog('📧 STEP 4a ✓ — ' + toProcess.length + ' leads con email + ICP verificado listos para análisis IA');
 
-      if (!emailCandidates.length) {
+      if (!toProcess.length) {
         onLog('⚠ Ningún candidato ICP verificado en este batch. Rotando query...');
         continue;
       }

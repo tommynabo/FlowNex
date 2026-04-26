@@ -616,9 +616,7 @@ export class InstagramSearchEngine {
       }
 
       const slotsRemaining = targetCount - accepted.length;
-      // Try email discovery on ALL verified leads in the batch, not just slotsRemaining.
-      // Bug was: with target=1 only 1 lead got email discovery per attempt; if that lead
-      // had no email the whole batch was wasted even though 2-3 verified leads were available.
+      // Try email discovery on ALL verified leads in the batch.
       const emailCandidates = toEvaluate.slice(0, Math.max(slotsRemaining * 8, toEvaluate.length));
 
       // ── STEP 4: Email discovery ───────────────────────────────────────────────
@@ -636,22 +634,21 @@ export class InstagramSearchEngine {
       const leadsWithEmail = emailCandidates.filter(l => l.decisionMaker?.email);
       const leadsNoEmail = emailCandidates.filter(l => !l.decisionMaker?.email);
       if (leadsNoEmail.length > 0) {
-        onLog('📧 ' + leadsNoEmail.length + ' lead(s) sin email — descartados (email obligatorio)');
-        for (const lead of leadsNoEmail) onLog('[EMAIL] ✗ @' + lead.ig_handle + ' — sin email, descartado');
+        onLog('📧 ' + leadsNoEmail.length + ' lead(s) sin email — se añaden al pipeline sin email (Instantly solo recibe los que sí tienen)');
       }
-      // Only accept up to slotsRemaining leads with email
-      const toProcess = leadsWithEmail.slice(0, slotsRemaining);
-      onLog('📧 STEP 4/4 ✓ — ' + leadsWithEmail.length + '/' + emailCandidates.length + ' tienen email → aceptando ' + toProcess.length);
+      // Accept ALL verified leads (with or without email) — sendLeadsToInstantly filters by email
+      const toProcess = emailCandidates.slice(0, slotsRemaining);
+      onLog('📧 STEP 4/4 ✓ — ' + leadsWithEmail.length + '/' + emailCandidates.length + ' tienen email | aceptando ' + toProcess.length + ' leads');
       console.log('[InstagramEngine] Attempt', attempt, '| with email:', leadsWithEmail.length, '/', emailCandidates.length);
 
-      if (!leadsWithEmail.length) {
-        onLog('⚠ Ningún lead con email en este batch. Rotando query...');
+      if (!emailCandidates.length) {
+        onLog('⚠ Ningún candidato ICP verificado en este batch. Rotando query...');
         continue;
       }
 
       // ── AI analysis + finalize ────────────────────────────────────────────────
-      onLog('✍ Generando análisis IA para ' + leadsWithEmail.length + ' creadores...');
-      const analyzed = (await Promise.all(leadsWithEmail.map(async (lead) => {
+      onLog('✍ Generando análisis IA para ' + toProcess.length + ' creadores...');
+      const analyzed = (await Promise.all(toProcess.map(async (lead) => {
         if (!this.isRunning) return null;
         try {
           const a = await this.generateCreatorAnalysis(lead);
@@ -674,12 +671,12 @@ export class InstagramSearchEngine {
         return lead;
       }))).filter((l): l is Lead => l !== null);
 
-      // Accept all analyzed leads — all have verified email
+      // Accept all analyzed leads (with or without email)
       for (const lead of analyzed) {
         accepted.push(lead);
         // Register in existingIgHandles so future dedup passes are aware
         if (lead.ig_handle) existingIgHandles.add(lead.ig_handle);
-        const emailStr = lead.decisionMaker?.email ? '📧 ' + lead.decisionMaker.email : '(sin email)';
+        const emailStr = lead.decisionMaker?.email ? '📧 ' + lead.decisionMaker.email : '(sin email — pendiente enriquecimiento)';
         onLog('[✓] ' + accepted.length + '/' + targetCount +
           ': @' + lead.ig_handle +
           ' (' + this.formatFollowers(lead.follower_count || 0) +

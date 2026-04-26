@@ -614,13 +614,15 @@ export class InstagramSearchEngine {
         continue;
       }
 
-      // Only take as many as we still need
       const slotsRemaining = targetCount - accepted.length;
-      const toProcess = toEvaluate.slice(0, slotsRemaining);
+      // Try email discovery on ALL verified leads in the batch, not just slotsRemaining.
+      // Bug was: with target=1 only 1 lead got email discovery per attempt; if that lead
+      // had no email the whole batch was wasted even though 2-3 verified leads were available.
+      const emailCandidates = toEvaluate.slice(0, Math.max(slotsRemaining * 8, toEvaluate.length));
 
       // ── STEP 4: Email discovery ───────────────────────────────────────────────
-      onLog('📧 STEP 4/4 — Email discovery for ' + toProcess.length + ' verified creators...');
-      await Promise.all(toProcess.map(async (lead) => {
+      onLog('📧 STEP 4/4 — Email discovery for ' + emailCandidates.length + ' verified creators...');
+      await Promise.all(emailCandidates.map(async (lead) => {
         if (!this.isRunning) return;
         const discovered = await emailDiscoveryService.discoverEmail(
           lead.decisionMaker?.email || '',
@@ -630,14 +632,16 @@ export class InstagramSearchEngine {
         );
         if (discovered && lead.decisionMaker) lead.decisionMaker.email = discovered;
       }));
-      const leadsWithEmail = toProcess.filter(l => l.decisionMaker?.email);
-      const leadsNoEmail = toProcess.filter(l => !l.decisionMaker?.email);
+      const leadsWithEmail = emailCandidates.filter(l => l.decisionMaker?.email);
+      const leadsNoEmail = emailCandidates.filter(l => !l.decisionMaker?.email);
       if (leadsNoEmail.length > 0) {
         onLog('📧 ' + leadsNoEmail.length + ' lead(s) sin email — descartados (email obligatorio)');
         for (const lead of leadsNoEmail) onLog('[EMAIL] ✗ @' + lead.ig_handle + ' — sin email, descartado');
       }
-      onLog('📧 STEP 4/4 ✓ — ' + leadsWithEmail.length + '/' + toProcess.length + ' tienen email → continúan');
-      console.log('[InstagramEngine] Attempt', attempt, '| with email:', leadsWithEmail.length, '/', toProcess.length);
+      // Only accept up to slotsRemaining leads with email
+      const toProcess = leadsWithEmail.slice(0, slotsRemaining);
+      onLog('📧 STEP 4/4 ✓ — ' + leadsWithEmail.length + '/' + emailCandidates.length + ' tienen email → aceptando ' + toProcess.length);
+      console.log('[InstagramEngine] Attempt', attempt, '| with email:', leadsWithEmail.length, '/', emailCandidates.length);
 
       if (!leadsWithEmail.length) {
         onLog('⚠ Ningún lead con email en este batch. Rotando query...');

@@ -230,7 +230,7 @@ Reply ONLY with a valid JSON array matching the input order:
             result.username.toLowerCase() === (lead.ig_handle || '').toLowerCase();
 
           const passes = (result as any).is_physical_fitness_creator ?? result.is_human_creator;
-          if (usernameMatch && passes === true && result.confidence >= 90) {
+          if (usernameMatch && passes === true && result.confidence >= 70) {
             lead.icp_verified = true;
             verifiedCount++;
             onLog(`[ICP SOFT] ✓ @${lead.ig_handle} → Physical Fitness Creator (${result.confidence}% confidence)`);

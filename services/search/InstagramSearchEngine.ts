@@ -713,6 +713,7 @@ export class InstagramSearchEngine {
 
   private async sendLeadsToInstantly(leads: Lead[], onLog: LogCallback, instantlyCampaignId?: string): Promise<void> {
     const leadsWithEmail = leads.filter(l => l.decisionMaker?.email);
+    console.log('[INSTANTLY] sendLeadsToInstantly — total accepted:', leads.length, '| with email:', leadsWithEmail.length, '| campaignId:', instantlyCampaignId || '(env default)');
     if (!leadsWithEmail.length) {
       onLog('[INSTANTLY] ⚠ Sin leads con email para enviar a Instantly.');
       return;
@@ -730,6 +731,7 @@ export class InstagramSearchEngine {
       const firstName = nameParts[0] || '';
       const lastName = nameParts.slice(1).join(' ') || '';
 
+      console.log('[INSTANTLY] → Sending:', email, '(@' + lead.ig_handle + ')');
       try {
         const response = await fetch('/api/instantly-add-lead', {
           method: 'POST',
@@ -748,6 +750,9 @@ export class InstagramSearchEngine {
           }),
         });
 
+        const responseData = await response.json().catch(() => ({})) as Record<string, unknown>;
+        console.log('[INSTANTLY] ← Response for', email, '— HTTP', response.status, '| body:', JSON.stringify(responseData).substring(0, 400));
+
         if (response.ok) {
           sent++;
           onLog('[INSTANTLY] ✅ ' + email + ' (@' + lead.ig_handle + ') añadido a campaña');
@@ -756,11 +761,11 @@ export class InstagramSearchEngine {
           onLog('[INSTANTLY] ℹ Ya en campaña: ' + email);
         } else {
           failed++;
-          const err = await response.json().catch(() => ({} as Record<string, unknown>)) as { error?: string };
-          onLog('[INSTANTLY] ❌ Error ' + response.status + ' para ' + email + ': ' + (err.error || 'unknown'));
+          onLog('[INSTANTLY] ❌ Error ' + response.status + ' para ' + email + ': ' + JSON.stringify(responseData).substring(0, 300));
         }
       } catch (e: unknown) {
         failed++;
+        console.error('[INSTANTLY] Network error for', email, e);
         onLog('[INSTANTLY] ❌ Error de red para ' + email + ': ' + (e instanceof Error ? e.message : String(e)));
       }
     }

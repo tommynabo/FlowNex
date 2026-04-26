@@ -415,7 +415,7 @@ export class InstagramSearchEngine {
       let searchResults: unknown[];
       try {
         searchResults = await this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
-          queries: [searchQuery],
+          queries: searchQuery,
           maxPagesPerQuery: 2,
           resultsPerPage: 10,
         }, onLog);

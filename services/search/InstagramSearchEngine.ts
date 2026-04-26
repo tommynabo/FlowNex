@@ -702,7 +702,68 @@ export class InstagramSearchEngine {
         '. Prueba keywords más amplias o relaja filtros ICP.');
     }
 
+    await this.sendLeadsToInstantly(accepted, onLog);
     onComplete(accepted);
+  }
+
+  // ── Instantly integration ─────────────────────────────────────────────────────
+
+  private async sendLeadsToInstantly(leads: Lead[], onLog: LogCallback): Promise<void> {
+    const leadsWithEmail = leads.filter(l => l.decisionMaker?.email);
+    if (!leadsWithEmail.length) {
+      onLog('[INSTANTLY] ⚠ Sin leads con email para enviar a Instantly.');
+      return;
+    }
+    onLog('[INSTANTLY] 📤 Enviando ' + leadsWithEmail.length + ' lead(s) a campaña de Instantly...');
+
+    let sent = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    for (const lead of leadsWithEmail) {
+      const email = lead.decisionMaker!.email!;
+      const fullName = lead.decisionMaker?.name || '';
+      const nameParts = fullName.split(' ');
+      const firstName = nameParts[0] || '';
+      const lastName = nameParts.slice(1).join(' ') || '';
+
+      try {
+        const response = await fetch('/api/instantly-add-lead', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email,
+            firstName,
+            lastName,
+            companyName: lead.decisionMaker?.name || lead.ig_handle || '',
+            igHandle: lead.ig_handle || '',
+            niche: lead.niche || '',
+            aiSummary: lead.aiAnalysis?.summary || '',
+            coldEmailSubject: lead.aiAnalysis?.coldEmailSubject || '',
+            followerCount: lead.follower_count || 0,
+          }),
+        });
+
+        if (response.ok) {
+          sent++;
+          onLog('[INSTANTLY] ✅ ' + email + ' (@' + lead.ig_handle + ') añadido a campaña');
+        } else if (response.status === 409) {
+          skipped++;
+          onLog('[INSTANTLY] ℹ Ya en campaña: ' + email);
+        } else {
+          failed++;
+          const err = await response.json().catch(() => ({} as Record<string, unknown>)) as { error?: string };
+          onLog('[INSTANTLY] ❌ Error ' + response.status + ' para ' + email + ': ' + (err.error || 'unknown'));
+        }
+      } catch (e: unknown) {
+        failed++;
+        onLog('[INSTANTLY] ❌ Error de red para ' + email + ': ' + (e instanceof Error ? e.message : String(e)));
+      }
+    }
+
+    onLog('[INSTANTLY] 📊 ' + sent + ' enviados' +
+      (skipped ? ', ' + skipped + ' ya existían' : '') +
+      (failed ? ', ' + failed + ' errores' : ''));
   }
 
   // ── Keyword parser ────────────────────────────────────────────────────────────

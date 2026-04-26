@@ -17,52 +17,27 @@ import { icpEvaluator, RawApifyProfile } from './ICPEvaluator';
 import { emailDiscoveryService } from './EmailDiscoveryService';
 import type { LogCallback, ResultCallback } from './SearchService';
 
-// ── Keyword pools by niche ──────────────────────────────────────────────────────
-// Used to build Google Search queries: site:instagram.com "keyword1" "keyword2" [location]
-// Each inner array is one query variant for a single search attempt.
-
-const KEYWORD_POOLS: Record<string, string[][]> = {
-  fitness: [
-    ['"fitness coach"', '"personal trainer"'],
-    ['"gym coach"', '"bodybuilding coach"'],
-    ['"strength coach"', '"workout coach"'],
-    ['"crossfit coach"', '"hiit coach"'],
-    ['"physique coach"', '"muscle building"'],
-    ['"fitness content creator"', '"gym influencer"'],
-    ['"fitspo"', '"gymlife"'],
-    ['"gymrat"', '"gains"'],
-    ['"calisthenics"', '"weightlifting coach"'],
-    ['"home workout"', '"fitness tips"'],
-    ['"personal trainer online"', '"online fitness coach"'],
-    ['"body transformation"', '"fat loss coach"'],
-  ],
-  nutrition: [
-    ['"nutrition coach"', '"diet coach"'],
-    ['"meal prep"', '"macro counting"'],
-    ['"weight loss coach"', '"healthy eating"'],
-    ['"clean eating"', '"sports nutrition"'],
-    ['"dietitian"', '"nutritionist"'],
-    ['"iifym"', '"calorie counting"'],
-    ['"bulking diet"', '"cutting diet"'],
-  ],
-  wellness: [
-    ['"wellness coach"', '"mindset coach"'],
-    ['"life coach"', '"personal development"'],
-    ['"mindfulness coach"', '"meditation coach"'],
-    ['"self improvement"', '"growth mindset"'],
-    ['"daily motivation"', '"success mindset"'],
-  ],
-  general: [
-    ['"fitness coach"', '"personal trainer"'],
-    ['"gym coach"', '"nutrition coach"'],
-    ['"wellness coach"', '"life coach"'],
-    ['"bodybuilding"', '"strength training"'],
-    ['"fitness content creator"', '"gym influencer"'],
-    ['"workout routine"', '"fitness tips"'],
-    ['"physique"', '"muscle"'],
-    ['"online coach"', '"fitness motivation"'],
-  ],
-};
+// ── Fitness-only keyword pool ────────────────────────────────────────────────
+// All variants are gym/fitness — no wellness, mindset, or personal development
+// Each inner array is one query variant per search attempt.
+const KEYWORD_POOLS: string[][] = [
+  ['"fitness coach"', '"personal trainer"'],
+  ['"gym coach"', '"bodybuilding coach"'],
+  ['"strength coach"', '"workout coach"'],
+  ['"crossfit coach"', '"hiit coach"'],
+  ['"physique coach"', '"muscle building"'],
+  ['"fitness content creator"', '"gym influencer"'],
+  ['"fitspo"', '"gymlife"'],
+  ['"gymrat"', '"gains"'],
+  ['"calisthenics"', '"weightlifting"'],
+  ['"workout routine"', '"fitness tips"'],
+  ['"personal trainer online"', '"online fitness coach"'],
+  ['"body transformation"', '"fat loss"'],
+  ['"gym vlog"', '"workout video"'],
+  ['"gym motivation"', '"lifting"'],
+  ['"nutrition coach"', '"diet coach"'],
+  ['"meal prep"', '"sports nutrition"'],
+];
 
 // Location suffixes — rotate through US/Canada only (our target market)
 const LOCATION_SUFFIXES = [
@@ -113,13 +88,9 @@ export class InstagramSearchEngine {
 
   // ── Keyword / query rotation ─────────────────────────────────────────────────
 
-  /** Detect which niche keyword pool to use based on the user's query */
-  private detectKeywordPool(baseKeywords: string[]): string[][] {
-    const joined = baseKeywords.join(' ').toLowerCase();
-    if (/nutrition|diet|meal|macro|calori/.test(joined)) return KEYWORD_POOLS.nutrition;
-    if (/wellness|mindset|lifecoach|personal.?dev/.test(joined)) return KEYWORD_POOLS.wellness;
-    if (/fitness|gym|workout|training|bodybuilding|strength/.test(joined)) return KEYWORD_POOLS.fitness;
-    return KEYWORD_POOLS.general;
+  /** Always returns the unified fitness-only keyword pool */
+  private detectKeywordPool(_baseKeywords: string[]): string[][] {
+    return KEYWORD_POOLS;
   }
 
   /**
@@ -439,9 +410,17 @@ export class InstagramSearchEngine {
         continue;
       }
 
-      // Extract IG handles from Google result URLs
-      // Result URLs look like: https://www.instagram.com/username/ or /username
-      const rawHandles = (searchResults as Record<string, unknown>[])
+      // Extract IG handles — actor wraps results inside organicResults[] (same as LinkedIn engine)
+      const allOrganicResults: Record<string, unknown>[] = [];
+      for (const item of searchResults as Record<string, unknown>[]) {
+        const organic = item.organicResults as Record<string, unknown>[] | undefined;
+        if (Array.isArray(organic)) {
+          allOrganicResults.push(...organic);
+        } else if (item.url || item.link) {
+          allOrganicResults.push(item); // fallback: top-level item already has url
+        }
+      }
+      const rawHandles = allOrganicResults
         .map(item => {
           const url = ((item.url as string) || (item.link as string) || '').toLowerCase();
           const match = url.match(/instagram\.com\/([^/?#\s]+)/);
@@ -450,8 +429,8 @@ export class InstagramSearchEngine {
         .filter(h => h && !SKIP_HANDLES.has(h) && !seenHandles.has(h));
       const novelHandles = [...new Set(rawHandles)].slice(0, Math.min(30, needed * 4));
 
-      onLog('🔎 STEP 1/4 ✓ — ' + searchResults.length + ' resultados → ' + novelHandles.length + ' handles nuevos');
-      console.log('[InstagramEngine] Attempt', attempt, '| novel handles:', novelHandles.length, 'from', searchResults.length, 'results');
+      onLog('🔎 STEP 1/4 ✓ — ' + searchResults.length + ' items (' + allOrganicResults.length + ' organic) → ' + novelHandles.length + ' handles nuevos');
+      console.log('[InstagramEngine] Attempt', attempt, '| novel handles:', novelHandles.length, 'from', allOrganicResults.length, 'organic results');
 
       if (!novelHandles.length) {
         onLog('⚠ Sin handles nuevos en esta query — rotando...');
@@ -731,41 +710,10 @@ export class InstagramSearchEngine {
    *   - Plain keyword queries (fitness coach, yoga) → returns as-is
    *   - Boolean queries ("coach" OR "trainer") → strips operators, returns phrases
    */
-  private parseKeywordsFromQuery(query: string): string[] {
-    const defaults = ['fitness coach', 'personal trainer'];
-    if (!query) return defaults;
-
-    const lower = query.toLowerCase().trim();
-
-    // Niche auto-detection (works on hashtags AND plain keywords)
-    const tags: string[] = [];
-    if (/fitness|gym|workout|training|bodybuilding|strength|fitnesscoach|personaltrainer|gymlife|gymrat|fitspo/.test(lower))
-      tags.push('fitness coach', 'personal trainer');
-    if (/yoga|wellness|mindfulness|breathwork/.test(lower))
-      tags.push('wellness coach', 'mindfulness coach');
-    if (/mindset|personal.?dev|selfimprovement|motivation|lifecoach/.test(lower))
-      tags.push('mindset coach', 'personal development');
-    if (/nutrition|diet|mealprep|macro|weightloss/.test(lower))
-      tags.push('nutrition coach', 'diet coach');
-    if (/business|entrepreneur|ecommerce|startup/.test(lower))
-      tags.push('online coach', 'business coach');
-
-    if (tags.length > 0) return tags.slice(0, 3);
-
-    // Fallback: strip hashtags + boolean operators, split on separators
-    const cleaned = lower
-      .replace(/#[a-zA-Z0-9_]+/g, ' ')
-      .replace(/\b(or|and|not)\b/g, ' ')
-      .replace(/[()'"\/|;]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    if (cleaned.length > 2) {
-      const parts = cleaned.split(/,+/).map(s => s.trim()).filter(s => s.length > 2);
-      if (parts.length > 0) return parts.slice(0, 3);
-    }
-
-    return defaults;
+  private parseKeywordsFromQuery(_query: string): string[] {
+    // Always use fitness/gym base keywords — target is gym/fitness creators only
+    // The keyword pool handles all variation via KEYWORD_POOLS rotation
+    return ['fitness coach', 'personal trainer'];
   }
 }
 

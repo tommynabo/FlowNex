@@ -14,16 +14,9 @@ export class DeduplicationService {
         const existingIgHandles = new Set<string>();
         const existingEmails = new Set<string>();
 
-        if (!userId) {
-            console.warn('[DEDUP] No userId provided. Skipping duplicate check.');
-            return { existingIgHandles, existingEmails, totalCount: 0 };
-        }
-
         try {
             const { data, error } = await supabase
-                .from('leads')
-                .select('ig_handle, email')
-                .eq('user_id', userId);
+                .rpc('get_global_existing_leads');
 
             if (error) {
                 console.error('[DEDUP] Error fetching existing leads:', error);

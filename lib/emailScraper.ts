@@ -1,4 +1,5 @@
 import * as cheerio from 'cheerio';
+import { isStrictlyValidEmail } from './emailValidator';
 
 /**
  * Attempts to find a contact email for a given website URL.
@@ -42,26 +43,6 @@ export async function enrichLeadWithEmail(websiteUrl: string): Promise<string | 
     }
 }
 
-/**
- * Returns true if the email looks like a real contact address.
- * Rejects placeholder local parts and known fake/placeholder domains.
- */
-function isRealEmail(email: string): boolean {
-    const lower = email.toLowerCase();
-    const [local, domain] = lower.split('@');
-    if (!local || !domain) return false;
-
-    // Block known placeholder local parts
-    const fakeParts = ['user', 'example', 'yourname', 'email', 'test', 'name'];
-    if (fakeParts.includes(local)) return false;
-
-    // Block known placeholder / framework domains
-    const fakeDomains = ['website.com', 'domain.com', 'example.com', 'wix.com'];
-    if (fakeDomains.some(d => domain.includes(d))) return false;
-
-    return true;
-}
-
 function extractEmailFromHtml(html: string): string | undefined {
     const $ = cheerio.load(html);
     
@@ -69,7 +50,7 @@ function extractEmailFromHtml(html: string): string | undefined {
     const mailto = $('a[href^="mailto:"]').first().attr('href');
     if (mailto) {
         const candidate = mailto.replace('mailto:', '').split('?')[0].trim();
-        return isRealEmail(candidate) ? candidate : undefined;
+        return isStrictlyValidEmail(candidate) ? candidate : undefined;
     }
 
     // Strategy B: Regex search in text (careful with false positives)
@@ -77,7 +58,7 @@ function extractEmailFromHtml(html: string): string | undefined {
     const matches = $.text().match(emailRegex);
     
     if (matches && matches.length > 0) {
-        return matches.find(e => isRealEmail(e)) || undefined;
+        return matches.find(e => isStrictlyValidEmail(e)) || undefined;
     }
 
     return undefined;

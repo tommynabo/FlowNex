@@ -96,6 +96,13 @@ function StatsBar({ total, pendingReview, approvalRate, avgConfidence }: StatsBa
 
 // ── Conversation Row ──────────────────────────────────────────────────────────
 
+// ── Helper ───────────────────────────────────────────────────────────────────
+
+const cleanReplyText = (text: string) =>
+  text.split('\n').filter(line => !line.trim().startsWith('>')).join('\n').trim();
+
+// ── Conversation Row ──────────────────────────────────────────────────────────
+
 interface ConversationRowProps {
   conv: LeadConversation;
   expanded: boolean;
@@ -157,7 +164,7 @@ function ConversationRow({ conv, expanded, onToggleExpand, onOpenModal }: Conver
               Respuesta del Lead
             </p>
             <div className="bg-secondary/30 rounded-lg p-3 text-sm text-zinc-300 whitespace-pre-wrap leading-relaxed">
-              {conv.replyText}
+              {cleanReplyText(conv.replyText)}
             </div>
           </div>
 
@@ -256,7 +263,7 @@ function FeedbackModal({ modal, onClose, onSubmit, isSubmitting }: FeedbackModal
           <div>
             <p className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">Respuesta del Lead</p>
             <div className="bg-secondary/30 rounded-lg p-3 text-xs text-zinc-400 max-h-24 overflow-y-auto">
-              {conversation.replyText}
+              {cleanReplyText(conversation.replyText)}
             </div>
           </div>
 
@@ -268,7 +275,7 @@ function FeedbackModal({ modal, onClose, onSubmit, isSubmitting }: FeedbackModal
                 value={correctedDraft}
                 onChange={e => setCorrectedDraft(e.target.value)}
                 rows={5}
-                className="w-full bg-secondary/30 border border-border rounded-lg px-3 py-2 text-sm text-foreground resize-none focus:outline-none focus:border-purple-500/50 transition-colors"
+                className="w-full bg-zinc-900 border border-border rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-500 resize-none focus:outline-none focus:border-purple-500/50 transition-colors"
                 placeholder="Escribe aquí la versión corregida del mensaje..."
               />
             </div>
@@ -293,7 +300,7 @@ function FeedbackModal({ modal, onClose, onSubmit, isSubmitting }: FeedbackModal
               value={reason}
               onChange={e => setReason(e.target.value)}
               rows={2}
-              className="w-full bg-secondary/30 border border-border rounded-lg px-3 py-2 text-sm text-foreground resize-none focus:outline-none focus:border-primary/50 transition-colors"
+              className="w-full bg-zinc-900 border border-border rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-500 resize-none focus:outline-none focus:border-primary/50 transition-colors"
               placeholder="Ej: Tono perfecto, CTA directo, responde la objeción de precio correctamente..."
             />
             {!reason.trim() && <p className="text-xs text-red-400 mt-1">El motivo es obligatorio para el entrenamiento del bot.</p>}

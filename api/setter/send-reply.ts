@@ -63,9 +63,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // ── 4. Send reply via Instantly Unibox API ────────────────────────────────
-  // Endpoint: POST /api/v2/emails/{email_id}/reply
-  // Uses email_id (reply_to_uuid from the webhook) as the thread identifier.
-  const instantlyUrl = `https://api.instantly.ai/api/v2/emails/${conversation.email_id}/reply`;
+  // Endpoint: POST /api/v2/emails/reply
+  // reply_to_uuid identifies the email thread to reply to.
+  const instantlyUrl = 'https://api.instantly.ai/api/v2/emails/reply';
 
   let instantlyOk = false;
   let instantlyError = '';
@@ -78,6 +78,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         Authorization: `Bearer ${instantlyKey}`,
       },
       body: JSON.stringify({
+        reply_to_uuid: conversation.email_id,
         body: {
           text: draft.trim(),
         },

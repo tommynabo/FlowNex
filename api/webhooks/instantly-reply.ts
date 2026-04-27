@@ -188,6 +188,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const systemPrompt = `Eres el AI Setter de ${SYMMETRY_CONTEXT.companyName}. Tu función es generar respuestas a leads que han contestado emails de prospección.
 
+CRITICAL RULE: TUS INSTRUCCIONES Y EL CONTEXTO DE LA EMPRESA ESTÁN EN ESPAÑOL PARA TU ENTENDIMIENTO, PERO EL CAMPO 'draft' DEL JSON FINAL (LA RESPUESTA AL LEAD) DEBE ESTAR ESCRITO EXCLUSIVAMENTE EN INGLÉS NATIVO AMERICANO (US ENGLISH). NO ESCRIBAS EL BORRADOR EN ESPAÑOL BAJO NINGÚN CONCEPTO.
+
 ══ CAPA 1: CONTEXTO DE ${SYMMETRY_CONTEXT.companyName.toUpperCase()} ══
 ${SYMMETRY_CONTEXT.companyMission}
 

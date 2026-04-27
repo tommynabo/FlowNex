@@ -128,7 +128,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({ skipped: true, reason: `event_type=${payload.event_type}` });
   }
 
-  const { campaign_id, campaign_name, lead_email, email_id, reply_subject, reply_text, workspace } = payload;
+  // Only process the target campaign — skip all others silently
+  const TARGET_CAMPAIGN_ID = 'f021448d-70d0-413a-82aa-932b54d326df';
+  if (payload.campaign_id !== TARGET_CAMPAIGN_ID) {
+    return res.status(200).json({ skipped: true, reason: 'Not the target campaign' });
+  }
+
+  const { campaign_id, campaign_name, lead_email, email_id, reply_subject, reply_text, workspace, email_account } = payload;
 
   if (!lead_email || !email_id || !campaign_id || !reply_text) {
     console.error('[SETTER][WEBHOOK] Missing required fields', { lead_email, email_id, campaign_id });
@@ -301,6 +307,7 @@ El campo "draft" debe estar listo para enviarse tal cual. Sin placeholders, sin 
       campaign_name: campaign_name ?? null,
       lead_email,
       email_id,
+      email_account: email_account ?? null,
       reply_subject: reply_subject ?? null,
       reply_text,
       ai_draft: aiResult.draft || null,

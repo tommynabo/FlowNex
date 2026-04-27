@@ -49,7 +49,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const { data: conversation, error: fetchError } = await supabase
     .from('lead_conversations')
-    .select('id, email_id, lead_email, status')
+    .select('id, email_id, lead_email, status, email_account')
     .eq('id', conversationId)
     .single();
 
@@ -78,6 +78,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         Authorization: `Bearer ${instantlyKey}`,
       },
       body: JSON.stringify({
+        eaccount: conversation.email_account,
         reply_to_uuid: conversation.email_id,
         body: {
           text: draft.trim(),

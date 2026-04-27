@@ -277,7 +277,19 @@ El campo "draft" debe estar listo para enviarse tal cual. Sin placeholders, sin 
     };
   }
 
-  // ── 8. Insert conversation into Supabase ──────────────────────────────────
+  // ── 8. Auto-heal: Ensure user exists in profiles to satisfy FK constraint ──
+  const { error: upsertError } = await supabase
+    .from('profiles')
+    .upsert({
+      id: userId,
+      email: 'setter_bot_auto@flownext.com', // Fallback email to satisfy constraints
+    }, { onConflict: 'id' });
+
+  if (upsertError) {
+    console.warn('[SETTER][WEBHOOK] Warning: Could not auto-heal profile (may cause FK error):', upsertError.message);
+  }
+
+  // ── 9. Insert conversation into Supabase ──────────────────────────────────
   const { data: inserted, error: insertError } = await supabase
     .from('lead_conversations')
     .insert({

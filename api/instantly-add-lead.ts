@@ -56,23 +56,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const resolvedCampaignId = (body.campaignId && body.campaignId.trim()) ? body.campaignId.trim() : campaignId;
 
   const payload: Record<string, unknown> = {
-    campaign_id: resolvedCampaignId,
+    campaign: resolvedCampaignId, // Corregido para API v2
     email: body.email.toLowerCase().trim(),
     first_name: firstName,
     last_name: lastName,
     company_name: body.companyName || '',
+    skip_if_in_workspace: true // Sistema Anti-duplicados activado
   };
 
-  // Only include custom_variables if at least one has a value,
-  // since undefined variables in Instantly silently drop the entire lead.
+  // Only include variables if at least one has a value.
   const customVars: Record<string, string> = {};
   if (body.igHandle) customVars['ig_handle'] = body.igHandle;
   if (body.niche) customVars['niche'] = body.niche;
   if (body.aiSummary) customVars['ai_summary'] = body.aiSummary;
   if (body.coldEmailSubject) customVars['cold_email_subject'] = body.coldEmailSubject;
   if (body.followerCount) customVars['follower_count'] = String(body.followerCount);
+  
   if (Object.keys(customVars).length > 0) {
-    payload['custom_variables'] = customVars;
+    payload['variables'] = customVars; // Corregido para API v2
   }
 
   // ── 5. Call Instantly API ─────────────────────────────────────────────────

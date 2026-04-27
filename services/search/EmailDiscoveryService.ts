@@ -78,7 +78,7 @@ export class EmailDiscoveryService {
     onLog: LogCallback
   ): Promise<string> {
     // Stage 1 result already in hand
-    if (existingEmail) {
+    if (existingEmail && this.isRealEmail(existingEmail)) {
       onLog(`[EMAIL] @${handle} → found in bio/Apify fields`);
       return existingEmail;
     }
@@ -99,11 +99,32 @@ export class EmailDiscoveryService {
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
+  /**
+   * Returns true if the email looks like a real contact address.
+   * Rejects known placeholder local parts and fake/placeholder domains.
+   * info@ is only blocked when the domain is a known placeholder.
+   */
+  private isRealEmail(email: string): boolean {
+    const lower = email.toLowerCase();
+    const [local, domain] = lower.split('@');
+    if (!local || !domain) return false;
+
+    // Block known placeholder local parts (but NOT info@ — real businesses use it)
+    const fakeParts = ['user', 'example', 'yourname', 'email', 'test', 'name'];
+    if (fakeParts.includes(local)) return false;
+
+    // Block known placeholder / framework domains
+    const fakeDomains = ['website.com', 'domain.com', 'example.com', 'wix.com', 'sentry.io'];
+    if (fakeDomains.some(d => domain.includes(d))) return false;
+
+    return true;
+  }
+
   private regexEmail(text: string): string {
     const match = text.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
     if (!match) return '';
     const email = match[0].toLowerCase();
-    if (email.includes('example.com') || email.includes('wix.com') || email.includes('sentry.io')) return '';
+    if (!this.isRealEmail(email)) return '';
     return email;
   }
 

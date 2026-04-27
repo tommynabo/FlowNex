@@ -98,12 +98,17 @@ export class InstagramSearchEngine {
    *   attempt 1  → user's own keywords, no location
    *   attempt 2+ → rotate through keyword pool variants + location suffixes
    *
-   * Result: `site:instagram.com "keyword1" "keyword2" Location`
+   * When `relaxed = true` (triggered after attempt 15), quotes are stripped from
+   * all keyword phrases to widen the Google search funnel automatically.
+   *
+   * Result (strict):  `site:instagram.com "keyword1" "keyword2" Location`
+   * Result (relaxed): `site:instagram.com keyword1 keyword2 Location`
    */
   private buildSearchQuery(
     baseKeywords: string[],
     attempt: number,
     keywordPool: string[][],
+    relaxed: boolean,
   ): string {
     let keywords: string[];
     let location: string;
@@ -116,6 +121,11 @@ export class InstagramSearchEngine {
       const locIdx  = Math.floor((attempt - 2) / keywordPool.length) % LOCATION_SUFFIXES.length;
       keywords = keywordPool[poolIdx];
       location = LOCATION_SUFFIXES[locIdx];
+    }
+
+    // Dynamic relaxation: strip surrounding quotes when the niche is too narrow
+    if (relaxed) {
+      keywords = keywords.map(k => k.replace(/^"|"$/g, ''));
     }
 
     const kw = keywords.join(' ');
@@ -346,8 +356,8 @@ export class InstagramSearchEngine {
     const baseKeywords = this.parseKeywordsFromQuery(config.query);
     const keywordPool  = this.detectKeywordPool(baseKeywords);
 
-    // MAX_RETRIES scales with target size — always at least 15 so small targets (1-5) never give up early
-    const MAX_RETRIES = Math.min(50, Math.max(15, targetCount * 3));
+    // MAX_RETRIES scales with target size — base of 40 so even small targets (1-5) have enough runway
+    const MAX_RETRIES = Math.min(75, Math.max(40, targetCount * 5));
 
     onLog('[IG] Keywords base: ' + baseKeywords.join(', '));
     onLog('[IG] Keyword pool: ' + keywordPool.length + ' variantes de búsqueda (Google site:instagram.com)');
@@ -368,6 +378,7 @@ export class InstagramSearchEngine {
 
     let attempt = 0;
     let consecutiveZeros = 0;
+    let relaxedLogged = false;
 
     // Handles to skip — Instagram system/non-user paths
     const SKIP_HANDLES = new Set(['p', 'reel', 'reels', 'explore', 'stories',
@@ -376,7 +387,15 @@ export class InstagramSearchEngine {
     while (accepted.length < targetCount && this.isRunning && attempt < MAX_RETRIES) {
       attempt++;
       const needed = targetCount - accepted.length;
-      const searchQuery = this.buildSearchQuery(baseKeywords, attempt, keywordPool);
+      const relaxed = attempt > 15;
+
+      if (relaxed && !relaxedLogged) {
+        relaxedLogged = true;
+        onLog(`[ENGINE] 🔓 Query relaxation active (attempt ${attempt}) — switching to broad search`);
+        console.log('[InstagramEngine] Query relaxation activated at attempt', attempt);
+      }
+
+      const searchQuery = this.buildSearchQuery(baseKeywords, attempt, keywordPool, relaxed);
 
       onLog('');
       onLog('━━━ ATTEMPT ' + attempt + '/' + MAX_RETRIES + ' ━━━  ' +

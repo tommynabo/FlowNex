@@ -42,24 +42,42 @@ export async function enrichLeadWithEmail(websiteUrl: string): Promise<string | 
     }
 }
 
+/**
+ * Returns true if the email looks like a real contact address.
+ * Rejects placeholder local parts and known fake/placeholder domains.
+ */
+function isRealEmail(email: string): boolean {
+    const lower = email.toLowerCase();
+    const [local, domain] = lower.split('@');
+    if (!local || !domain) return false;
+
+    // Block known placeholder local parts
+    const fakeParts = ['user', 'example', 'yourname', 'email', 'test', 'name'];
+    if (fakeParts.includes(local)) return false;
+
+    // Block known placeholder / framework domains
+    const fakeDomains = ['website.com', 'domain.com', 'example.com', 'wix.com'];
+    if (fakeDomains.some(d => domain.includes(d))) return false;
+
+    return true;
+}
+
 function extractEmailFromHtml(html: string): string | undefined {
     const $ = cheerio.load(html);
     
     // Strategy A: Look for mailto: links
     const mailto = $('a[href^="mailto:"]').first().attr('href');
     if (mailto) {
-        return mailto.replace('mailto:', '').split('?')[0].trim();
+        const candidate = mailto.replace('mailto:', '').split('?')[0].trim();
+        return isRealEmail(candidate) ? candidate : undefined;
     }
 
     // Strategy B: Regex search in text (careful with false positives)
-    // Simple regex for email extraction
     const emailRegex = /[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+/g;
     const matches = $.text().match(emailRegex);
     
-    // Filter out common false positives like "bootstrap@..." or "example@..." if necessary
-    // taking the first valid-looking one
     if (matches && matches.length > 0) {
-        return matches.find(e => !e.includes('example.com') && !e.includes('wix.com')) || undefined;
+        return matches.find(e => isRealEmail(e)) || undefined;
     }
 
     return undefined;

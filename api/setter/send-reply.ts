@@ -62,6 +62,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(409).json({ error: 'Reply already sent for this conversation' });
   }
 
+  // ── 3b. Resolve email_account — fetch from Instantly if missing in DB ────
+  // Conversations stored before the email_account migration will have null here.
+  // Recover by looking up the original email from Instantly using its UUID.
+  let emailAccount = conversation.email_account as string | null;
+  if (!emailAccount) {
+    console.warn('[SETTER][SEND] email_account missing in DB — fetching from Instantly for email_id:', conversation.email_id);
+    try {
+      const emailLookup = await fetch(`https://api.instantly.ai/api/v2/emails/${conversation.email_id}`, {
+        headers: { Authorization: `Bearer ${instantlyKey}` },
+      });
+      if (emailLookup.ok) {
+        const emailData = await emailLookup.json() as { eaccount?: string };
+        emailAccount = emailData.eaccount ?? null;
+        console.log('[SETTER][SEND] Resolved email_account from Instantly:', emailAccount);
+        // Backfill so future sends don't need the extra lookup
+        await supabase
+          .from('lead_conversations')
+          .update({ email_account: emailAccount })
+          .eq('id', conversationId);
+      } else {
+        const errText = await emailLookup.text();
+        console.error('[SETTER][SEND] Instantly email lookup failed:', emailLookup.status, errText);
+      }
+    } catch (err) {
+      console.error('[SETTER][SEND] Instantly email lookup error:', err);
+    }
+  }
+
+  if (!emailAccount) {
+    console.error('[SETTER][SEND] Cannot determine sending email account for conversationId:', conversationId);
+    return res.status(500).json({ error: 'Cannot determine sending email account' });
+  }
+
   // ── 4. Send reply via Instantly Unibox API ────────────────────────────────
   // Endpoint: POST /api/v2/emails/reply
   // reply_to_uuid identifies the email thread to reply to.
@@ -78,7 +111,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         Authorization: `Bearer ${instantlyKey}`,
       },
       body: JSON.stringify({
-        eaccount: conversation.email_account,
+        eaccount: emailAccount,
         reply_to_uuid: conversation.email_id,
         subject: conversation.reply_subject ?? '',
         body: {

@@ -45,6 +45,7 @@ const KEYWORD_POOLS: string[][] = [
 // clipper pages). Uses engagement patterns to find page-owner profiles.
 // Each inner array is one OR-group per search attempt.
 const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
+  // Core motivation + entrepreneur intent
   ['"link in bio"', '"DM me"', '"mentorship"'],
   ['"wifi money"', '"daily clips"', '"wealth"'],
   ['"motivation"', '"hustle"', '"entrepreneur clips"'],
@@ -53,6 +54,12 @@ const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
   ['"daily motivation"', '"discipline"', '"self improvement"'],
   ['"motivational content"', '"entrepreneur mindset"'],
   ['"money mindset"', '"wealth mindset"', '"hustle culture"'],
+  // CTA & behavior signals — targets accounts that explicitly use these patterns
+  ['"edits"', '"discipline"', '"mindset"'],
+  ['"success"', '"wealth"', '"motivation"'],
+  ['"linktr.ee"', '"DM for collab"', '"link in bio"'],
+  ['"DM for promo"', '"coaching"', '"entrepreneur"'],
+  ['"mindset coach"', '"success mindset"', '"grind"'],
 ];
 
 // Location suffixes — split by region so the engine respects the campaign's targetRegions filter.
@@ -150,15 +157,26 @@ export class InstagramSearchEngine {
     const hasCA = locSuffixes.some(l => l.toLowerCase().includes('canada') || l.toLowerCase().includes('canadian'));
     const firstLoc = hasUS && hasCA ? 'USA OR Canada' : hasUS ? 'USA' : 'Canada';
 
-    // Faceless & Clipper: build OR-group dorks — alternate Instagram / TikTok by attempt parity
+    // Faceless & Clipper: build OR-group dorks — rotate across 3 query modes:
+    //   attempt % 3 === 1  → Instagram-only  (site:instagram.com)
+    //   attempt % 3 === 2  → TikTok-only     (site:tiktok.com)
+    //   attempt % 3 === 0  → Combined        (site:tiktok.com OR site:instagram.com) + CTA group
+    // This gives 3x more surface area than the old binary toggle and captures accounts
+    // that appear in both platforms or that would only surface via combined queries.
     if (icpType === 'faceless_clipper') {
       const poolIdx = attempt <= 1 ? 0 : (attempt - 2) % keywordPool.length;
       const locIdx  = attempt <= 1 ? 0 : Math.floor((attempt - 2) / keywordPool.length) % locSuffixes.length;
       const terms = keywordPool[poolIdx];
       const orGroup = '(' + terms.join(' OR ') + ')';
       const loc = attempt === 1 ? firstLoc : locSuffixes[locIdx];
-      // Odd attempts → Instagram, even → TikTok (multi-platform rotation)
-      if (attempt % 2 !== 0) {
+      // CTA group — injected only on combined-platform queries to narrow intent without
+      // over-restricting single-platform queries that already use behavior keywords
+      const ctaGroup = '("link in bio" OR "DM for promo" OR "linktr.ee" OR "DM me")';
+      const mod = attempt % 3;
+      if (mod === 0) {
+        // Combined: broadest reach, CTA-narrowed to exclude random tagged posts
+        return `(site:tiktok.com OR site:instagram.com) ${orGroup} ${ctaGroup} ${loc} -site:instagram.com/p/ -site:instagram.com/reel/ -site:tiktok.com/tag/`;
+      } else if (mod === 1) {
         return `site:instagram.com ${orGroup} ${loc} -site:instagram.com/p/ -site:instagram.com/reel/`;
       } else {
         return `site:tiktok.com ${orGroup} ${loc} -site:tiktok.com/tag/`;
@@ -366,18 +384,23 @@ export class InstagramSearchEngine {
 
   /**
    * Attempts to extract a follower count from a Google snippet string.
-   * Handles: "12.5K Followers", "2.3M Followers", "150,000 Followers", "850 followers"
+   * Handles: "12.5K Followers", "2.3M Followers", "150,000 Followers", "850 followers",
+   *          "15 K Followers" (space before suffix), "seguidores" (Spanish snippets).
    * Returns the count as a number, or null if the pattern is absent.
    */
   private extractFollowersFromSnippet(text: string): number | null {
     if (!text) return null;
-    const m = text.match(/(\d[\d,.]*)([KkMm])?\s*[Ff]ollower/);
+    // \s* after the number allows "15 K" (space before suffix)
+    // [Bb] covers billions (rare edge case)
+    // followers? covers singular; seguidores? covers Spanish snippets
+    const m = text.match(/(\d[\d,.]*)\s*([KkMmBb])?\s*(?:[Ff]ollowers?|[Ss]eguidores?)/);
     if (!m) return null;
     const raw = parseFloat(m[1].replace(/,/g, ''));
     if (isNaN(raw)) return null;
     const suffix = m[2]?.toLowerCase();
     if (suffix === 'k') return Math.round(raw * 1_000);
     if (suffix === 'm') return Math.round(raw * 1_000_000);
+    if (suffix === 'b') return Math.round(raw * 1_000_000_000);
     return Math.round(raw);
   }
 
@@ -690,7 +713,7 @@ export class InstagramSearchEngine {
       try {
         searchResults = await this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
           queries: searchQuery,
-          maxPagesPerQuery: 1,
+          maxPagesPerQuery: 2,  // 2 pages × 100 = up to 200 organic results per attempt
           resultsPerPage: 100,
         }, onLog);
       } catch (e: unknown) {
@@ -761,7 +784,9 @@ export class InstagramSearchEngine {
       let snippetPassed = 0;
       let snippetUnknown = 0;
       const novelHandles: HandleWithPlatform[] = [];
-      for (const item of uniqueRawHandles.slice(0, Math.min(50, needed * 5))) {
+      // Iterate ALL unique handles — the regex check is free (no API cost), so there
+      // is no reason to cap it. Only survivors reach the expensive profile scraper.
+      for (const item of uniqueRawHandles) {
         const snippet = handleToSnippet.get(item.handle) || '';
         const snippetFollowers = this.extractFollowersFromSnippet(snippet);
         if (snippetFollowers !== null) {
@@ -989,10 +1014,9 @@ export class InstagramSearchEngine {
           ? await this.fetchRecentPosts(igHandlesForPosts, onLog)
           : new Map<string, { caption: string; hashtags: string[]; isVideo: boolean; thumbnailUrl: string }[]>();
 
-        // Analyze IG candidates in chunks of 5 to avoid OpenAI rate limits
+        // Analyze IG candidates in fully parallel chunks of 5 (all chunks fire at once)
         const igVerified: typeof dbDeduped = [];
-        for (const chunk of this.chunkArray(igCandidates, 5)) {
-          if (!this.isRunning) break;
+        await Promise.all(this.chunkArray(igCandidates, 5).map(async (chunk) => {
           await Promise.all(chunk.map(async (lead) => {
             if (!this.isRunning) return;
             const handle = lead.ig_handle || '';
@@ -1005,7 +1029,7 @@ export class InstagramSearchEngine {
               onLog(`[POST VISION] ✗ @${handle} — "${result.reason}"`);
             }
           }));
-        }
+        }));
 
         // TikTok candidates pass through without post-fetch (latestVideos already in profile)
         postVerifiedCandidates = [...igVerified, ...ttCandidates];
@@ -1023,8 +1047,8 @@ export class InstagramSearchEngine {
       const slotsRemaining = targetCount - accepted.length;
       const toDiscover = postVerifiedCandidates.slice(0, Math.max(slotsRemaining * 8, postVerifiedCandidates.length));
       onLog('📧 STEP 3b — Email discovery para ' + toDiscover.length + ' candidatos (antes de gastar IA)...');
-      for (const chunk of this.chunkArray(toDiscover, 8)) {
-        if (!this.isRunning) break;
+      // All chunks fire in parallel — each chunk itself is a Promise.all of 10 concurrent requests
+      await Promise.all(this.chunkArray(toDiscover, 10).map(async (chunk) => {
         await Promise.all(chunk.map(async (lead) => {
           if (!this.isRunning) return;
           const discovered = lead.source === 'tiktok'
@@ -1042,7 +1066,7 @@ export class InstagramSearchEngine {
               );
           if (discovered && lead.decisionMaker) lead.decisionMaker.email = discovered;
         }));
-      }
+      }));
       const withEmail = toDiscover.filter(l => l.decisionMaker?.email);
       const withoutEmail = toDiscover.filter(l => !l.decisionMaker?.email);
       onLog('📧 STEP 3b ✓ — ' + withEmail.length + '/' + toDiscover.length + ' tienen email | ' +
@@ -1090,33 +1114,35 @@ export class InstagramSearchEngine {
 
       // ── STEP 4b: AI analysis for ICP-verified leads with email ───────────────
       onLog('✍ STEP 4b — Generando análisis IA para ' + toProcess.length + ' creadores (con email + ICP ✓)...');
+      // All chunks fire in parallel — 5 concurrent AI calls per chunk, all chunks at once
       const analyzed: Lead[] = [];
-      for (const chunk of this.chunkArray(toProcess, 5)) {
-        if (!this.isRunning) break;
-        const chunkResults = await Promise.all(chunk.map(async (lead) => {
-          if (!this.isRunning) return null;
-          try {
-            const a = await this.generateCreatorAnalysis(lead);
-            lead.aiAnalysis = {
-              summary: a.summary,
-              painPoints: [],
-              generatedIcebreaker: a.vslPitch,
-              coldEmailSubject: a.coldEmailSubject,
-              coldEmailBody: a.coldEmailBody,
-              vslPitch: a.vslPitch,
-              fullAnalysis: a.psychologicalProfile + ' | ' + a.engagementSignal,
-              psychologicalProfile: a.psychologicalProfile,
-              engagementSignal: a.engagementSignal,
-              salesAngle: a.salesAngle,
-            };
-            lead.status = 'ready';
-          } catch {
-            lead.status = 'ready';
-          }
-          return lead;
-        }));
-        analyzed.push(...chunkResults.filter((l): l is Lead => l !== null));
-      }
+      const allChunkResults = await Promise.all(
+        this.chunkArray(toProcess, 5).map(async (chunk) => {
+          return Promise.all(chunk.map(async (lead) => {
+            if (!this.isRunning) return null;
+            try {
+              const a = await this.generateCreatorAnalysis(lead);
+              lead.aiAnalysis = {
+                summary: a.summary,
+                painPoints: [],
+                generatedIcebreaker: a.vslPitch,
+                coldEmailSubject: a.coldEmailSubject,
+                coldEmailBody: a.coldEmailBody,
+                vslPitch: a.vslPitch,
+                fullAnalysis: a.psychologicalProfile + ' | ' + a.engagementSignal,
+                psychologicalProfile: a.psychologicalProfile,
+                engagementSignal: a.engagementSignal,
+                salesAngle: a.salesAngle,
+              };
+              lead.status = 'ready';
+            } catch {
+              lead.status = 'ready';
+            }
+            return lead;
+          }));
+        }),
+      );
+      analyzed.push(...allChunkResults.flat().filter((l): l is Lead => l !== null));
 
       // Accept all analyzed leads (with or without email)
       for (const lead of analyzed) {

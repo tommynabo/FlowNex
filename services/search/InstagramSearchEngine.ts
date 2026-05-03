@@ -10,7 +10,7 @@
  *   - MAX_RETRIES scales with the target, capped at 100
  */
 
-import { Lead, SearchConfigState, AudienceTier } from '../../lib/types';
+import { Lead, SearchConfigState, AudienceTier, ICPType } from '../../lib/types';
 import { deduplicationService } from '../deduplication/DeduplicationService';
 import { PROJECT_CONFIG } from '../../config/project';
 import { icpEvaluator, RawApifyProfile } from './ICPEvaluator';
@@ -37,6 +37,24 @@ const KEYWORD_POOLS: string[][] = [
   ['"gym motivation"', '"lifting"'],
   ['"nutrition coach"', '"diet coach"'],
   ['"meal prep"', '"sports nutrition"'],
+];
+
+// ── Faceless & Clipper keyword pool ────────────────────────────────────────
+// Targets motivational/faceless accounts, clippers and entrepreneur mindset pages.
+// Each inner array is one OR-group per search attempt.
+const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
+  ['"Iman Gadzhi"', '"Alex Hormozi"', '"Andrew Tate"'],
+  ['"Mindset"', '"Wealth"', '"Wifi Money"'],
+  ['"Gym Motivation"', '"Daily Quotes"', '"Slideshow"'],
+  ['"hustle"', '"grind"', '"entrepreneur"'],
+  ['"passive income"', '"financial freedom"'],
+  ['"success mindset"', '"daily motivation"', '"discipline"'],
+  ['"Hormozi clips"', '"Iman clips"', '"motivation clips"'],
+  ['"money mindset"', '"self improvement"'],
+  ['"Andrew Tate clips"', '"motivational content"'],
+  ['"entrepreneur mindset"', '"wealth mindset"'],
+  ['"gym motivation"', '"body transformation"', '"mindset"'],
+  ['"wifi money"', '"online business"', '"make money online"'],
 ];
 
 // Location suffixes — rotate through US/Canada only (our target market)
@@ -88,8 +106,9 @@ export class InstagramSearchEngine {
 
   // ── Keyword / query rotation ─────────────────────────────────────────────────
 
-  /** Always returns the unified fitness-only keyword pool */
-  private detectKeywordPool(_baseKeywords: string[]): string[][] {
+  /** Returns the appropriate keyword pool based on ICPType */
+  private detectKeywordPool(_baseKeywords: string[], icpType?: ICPType): string[][] {
+    if (icpType === 'faceless_clipper') return FACELESS_CLIPPER_KEYWORD_POOLS;
     return KEYWORD_POOLS;
   }
 
@@ -109,7 +128,18 @@ export class InstagramSearchEngine {
     attempt: number,
     keywordPool: string[][],
     relaxed: boolean,
+    icpType?: ICPType,
   ): string {
+    // Faceless & Clipper: build OR-group dorks (different format than personal brand)
+    if (icpType === 'faceless_clipper') {
+      const poolIdx = attempt <= 1 ? 0 : (attempt - 2) % keywordPool.length;
+      const locIdx  = attempt <= 1 ? 0 : Math.floor((attempt - 2) / keywordPool.length) % LOCATION_SUFFIXES.length;
+      const terms = keywordPool[poolIdx];
+      const orGroup = '(' + terms.join(' OR ') + ')';
+      const loc = attempt === 1 ? 'USA OR Canada' : LOCATION_SUFFIXES[locIdx];
+      return `site:instagram.com ${orGroup} ${loc}`;
+    }
+
     let keywords: string[];
     let location: string;
 
@@ -352,15 +382,15 @@ export class InstagramSearchEngine {
     const maxFollowers = icpFilters?.maxFollowers ?? 99_000_000;
     const targetRegions = icpFilters?.regions ?? [];
     const targetContentTypes = icpFilters?.contentTypes ?? [];
+    const icpType: ICPType = icpFilters?.icpType ?? 'personal_brand';
     const targetCount = Math.max(1, config.maxResults);
     const baseKeywords = this.parseKeywordsFromQuery(config.query);
-    const keywordPool  = this.detectKeywordPool(baseKeywords);
+    const keywordPool  = this.detectKeywordPool(baseKeywords, icpType);
 
     // MAX_RETRIES scales with target size — base of 40 so even small targets (1-5) have enough runway
     const MAX_RETRIES = Math.min(75, Math.max(40, targetCount * 5));
 
-    onLog('[IG] Keywords base: ' + baseKeywords.join(', '));
-    onLog('[IG] Keyword pool: ' + keywordPool.length + ' variantes de búsqueda (Google site:instagram.com)');
+    onLog('[IG] Keywords base: ' + baseKeywords.join(', '));      onLog('[IG] ICP Type: ' + icpType);    onLog('[IG] Keyword pool: ' + keywordPool.length + ' variantes de búsqueda (Google site:instagram.com)');
     onLog('[IG] 🎯 Objetivo: ' + targetCount + ' creadores | Máx intentos: ' + MAX_RETRIES);
     onLog('[IG] Followers: ' + (minFollowers > 0 ? this.formatFollowers(minFollowers) : '0') + ' – ' + (maxFollowers < 99_000_000 ? this.formatFollowers(maxFollowers) : '∞'));
     console.log('[InstagramEngine] START — target:', targetCount, '| maxRetries:', MAX_RETRIES, '| keywords:', baseKeywords);
@@ -395,7 +425,7 @@ export class InstagramSearchEngine {
         console.log('[InstagramEngine] Query relaxation activated at attempt', attempt);
       }
 
-      const searchQuery = this.buildSearchQuery(baseKeywords, attempt, keywordPool, relaxed);
+      const searchQuery = this.buildSearchQuery(baseKeywords, attempt, keywordPool, relaxed, icpType);
 
       onLog('');
       onLog('━━━ ATTEMPT ' + attempt + '/' + MAX_RETRIES + ' ━━━  ' +
@@ -483,7 +513,7 @@ export class InstagramSearchEngine {
 
       // ── STEP 3: Hard ICP filter ──────────────────────────────────────────────
       onLog('🔍 STEP 3/4 — Aplicando filtros ICP duros (' + profiles.length + ' perfiles)...');
-      const hardFiltered = icpEvaluator.applyHardFilter(profiles as RawApifyProfile[], onLog);
+      const hardFiltered = icpEvaluator.applyHardFilter(profiles as RawApifyProfile[], onLog, icpType);
       onLog('[HARD FILTER] Embudo: ' + profiles.length + ' descargados → ' + hardFiltered.length +
         ' pasaron (followers ✓, sin marca ✓, keyword fitness ✓)');
       console.log('[InstagramEngine] Attempt', attempt, '| hard filter:', profiles.length, '→', hardFiltered.length);
@@ -638,7 +668,7 @@ export class InstagramSearchEngine {
 
       // ── STEP 4: AI Soft Filter — solo para leads CON email ───────────────────
       onLog('🤖 STEP 4a — Filtro IA para ' + withEmail.length + ' candidatos con email (verificando ICP fitness)...');
-      const softFiltered = await icpEvaluator.applySoftFilter(withEmail, onLog);
+      const softFiltered = await icpEvaluator.applySoftFilter(withEmail, onLog, icpType);
       const icpVerified = softFiltered.filter(l => l.icp_verified === true);
       const icpUnverified = softFiltered.filter(l => l.icp_verified !== true);
 

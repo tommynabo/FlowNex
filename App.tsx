@@ -298,6 +298,7 @@ function App() {
             regions: r.icp_regions ?? [],
             contentTypes: r.icp_content_types ?? [],
             campaignName: r.name,
+            icpType: (r.icp_type as import('./lib/types').ICPType) ?? 'personal_brand',
           },
           totalLeads: r.total_leads ?? 0,
           createdAt: new Date(r.created_at),

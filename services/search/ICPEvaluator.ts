@@ -1,4 +1,4 @@
-import { Lead } from '../../lib/types';
+import { Lead, ICPType } from '../../lib/types';
 import type { LogCallback } from './SearchService';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -47,6 +47,16 @@ const MENTAL_COACH_REJECT_KEYWORDS = [
 
 const ICP_SOFT_FILTER_BATCH_SIZE = 10;
 
+// Required keywords for faceless/clipper ICP — at least ONE must be present
+const FACELESS_CLIPPER_REQUIRED_KEYWORDS = [
+  'mindset', 'motivation', 'wealth', 'hustle', 'grind', 'entrepreneur',
+  'clips', 'clip', 'money', 'success', 'discipline', 'selfimprovement',
+  'wifimoney', 'passiveincome', 'financialfreedom', 'hormozi', 'gadzhi',
+  'tate', 'daily', 'slideshow', 'mindsetcoach', 'businessmindset',
+  'successmindset', 'gymmotivation', 'moneymindset', 'dailymotivation',
+  'motivational', 'makemoney', 'onlinebusiness', 'entrepreneurship',
+];
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface RawApifyProfile {
@@ -74,7 +84,7 @@ export class ICPEvaluator {
    *   - Have followers outside [HARD_FILTER_MIN_FOLLOWERS, HARD_FILTER_MAX_FOLLOWERS]
    *   - Have a fullName or username that contains a brand keyword
    */
-  applyHardFilter(profiles: RawApifyProfile[], onLog: LogCallback): RawApifyProfile[] {
+  applyHardFilter(profiles: RawApifyProfile[], onLog: LogCallback, icpType: ICPType = 'personal_brand'): RawApifyProfile[] {
     const passed: RawApifyProfile[] = [];
 
     for (const profile of profiles) {
@@ -103,28 +113,36 @@ export class ICPEvaluator {
         continue;
       }
 
-      // Positive fitness check — reject if NO physical fitness keyword is present
-      const hasFitnessKeyword = FITNESS_REQUIRED_KEYWORDS.some(kw => fullText.includes(kw));
-      if (!hasFitnessKeyword) {
-        onLog(`[HARD FILTER] 🚫 @${handle} skip: no physical fitness keyword in bio/name`);
-        continue;
-      }
-
-      // Mental/spiritual coach rejection — even if they mention fitness occasionally
-      const mentalKeyword = MENTAL_COACH_REJECT_KEYWORDS.find(kw => fullText.includes(kw));
-      if (mentalKeyword) {
-        onLog(`[HARD FILTER] 🧠 @${handle} skip: mental/spiritual keyword "${mentalKeyword}" found`);
-        continue;
-      }
-
-      // Non-gym sport check: reject cycling, running, triathlon, etc.
-      // unless they also show gym/fitness/coaching keywords (e.g. a cycling coach who also lifts)
-      const nonGymSport = NON_GYM_SPORT_KEYWORDS.find(kw => fullText.includes(kw));
-      if (nonGymSport) {
-        const hasGymOverride = GYM_FITNESS_OVERRIDE_KEYWORDS.some(kw => fullText.includes(kw));
-        if (!hasGymOverride) {
-          onLog(`[HARD FILTER] 🚴 @${handle} skip: non-gym sport "${nonGymSport}" detected, no fitness override`);
+      if (icpType === 'faceless_clipper') {
+        // Require at least one motivation/mindset/clipper keyword
+        const hasFacelessKeyword = FACELESS_CLIPPER_REQUIRED_KEYWORDS.some(kw => fullText.includes(kw));
+        if (!hasFacelessKeyword) {
+          onLog(`[HARD FILTER] 🚫 @${handle} skip: no motivation/mindset/clipper keyword in bio/name`);
           continue;
+        }
+      } else {
+        // personal_brand: require physical fitness keyword
+        const hasFitnessKeyword = FITNESS_REQUIRED_KEYWORDS.some(kw => fullText.includes(kw));
+        if (!hasFitnessKeyword) {
+          onLog(`[HARD FILTER] 🚫 @${handle} skip: no physical fitness keyword in bio/name`);
+          continue;
+        }
+
+        // Mental/spiritual coach rejection
+        const mentalKeyword = MENTAL_COACH_REJECT_KEYWORDS.find(kw => fullText.includes(kw));
+        if (mentalKeyword) {
+          onLog(`[HARD FILTER] 🧠 @${handle} skip: mental/spiritual keyword "${mentalKeyword}" found`);
+          continue;
+        }
+
+        // Non-gym sport check
+        const nonGymSport = NON_GYM_SPORT_KEYWORDS.find(kw => fullText.includes(kw));
+        if (nonGymSport) {
+          const hasGymOverride = GYM_FITNESS_OVERRIDE_KEYWORDS.some(kw => fullText.includes(kw));
+          if (!hasGymOverride) {
+            onLog(`[HARD FILTER] 🚴 @${handle} skip: non-gym sport "${nonGymSport}" detected, no fitness override`);
+            continue;
+          }
         }
       }
 
@@ -142,12 +160,12 @@ export class ICPEvaluator {
    * On failure, marks batch leads as icp_verified = false (strict fallback — never assume pass).
    * Returns ALL leads with icp_verified flag set; caller decides whether to filter.
    */
-  async applySoftFilter(leads: Lead[], onLog: LogCallback): Promise<Lead[]> {
+  async applySoftFilter(leads: Lead[], onLog: LogCallback, icpType: ICPType = 'personal_brand'): Promise<Lead[]> {
     if (!leads.length) return [];
 
-    onLog(`[ICP SOFT] Evaluating ${leads.length} profiles with AI (batches of ${ICP_SOFT_FILTER_BATCH_SIZE})...`);
+    onLog(`[ICP SOFT] Evaluating ${leads.length} profiles with AI (batches of ${ICP_SOFT_FILTER_BATCH_SIZE}, icpType: ${icpType})...`);
 
-    const SYSTEM_PROMPT = `You are a talent scout for a fitness creator outreach agency targeting US/Canada Instagram accounts. Your job is to decide whether each profile belongs to a GYM/FITNESS CONTENT CREATOR — this includes both professional coaches AND everyday gym-goers who create content about the gym lifestyle.
+    const FITNESS_SYSTEM_PROMPT = `You are a talent scout for a fitness creator outreach agency targeting US/Canada Instagram accounts. Your job is to decide whether each profile belongs to a GYM/FITNESS CONTENT CREATOR — this includes both professional coaches AND everyday gym-goers who create content about the gym lifestyle.
 
 Criteria to PASS (is_physical_fitness_creator = true) — the profile must fit ONE of these:
 - Professional: personal trainer, fitness coach, bodybuilding coach, nutrition coach (sports/gym focused)
@@ -170,6 +188,34 @@ NOTE: Accept gym content creators who are NOT professional coaches — someone w
 
 Reply ONLY with a valid JSON array matching the input order:
 [ { "username": "user1", "is_physical_fitness_creator": true, "confidence": 93, "reason": "Posts daily gym workout videos and lifting content, US-based" }, ... ]`;
+
+    const FACELESS_CLIPPER_SYSTEM_PROMPT = `You are a talent scout for a creator outreach agency targeting US/Canada Instagram accounts in the entrepreneur, motivation, and online business space.
+
+Your job is to decide whether each profile belongs to a FACELESS, CLIPPER, or MOTIVATION CONTENT CREATOR — this includes accounts without showing a face, pages that clip motivational content from figures like Alex Hormozi, Iman Gadzhi, or Andrew Tate, slideshow/carousel accounts about mindset, wealth, or gym motivation, and individual entrepreneurs with an online-business-focused personal brand.
+
+Criteria to PASS (is_human_creator = true) — the profile must fit ONE of these:
+- Faceless motivation page: posts mindset quotes, daily motivation, wealth/success content (even without showing a face or a logo as profile picture)
+- Clipper account: reposts or edits clips from Alex Hormozi, Iman Gadzhi, Andrew Tate, or similar figures
+- Slideshow/carousel account: creates content about mindset, gym motivation, self-improvement, wealth, discipline
+- Entrepreneur personal brand: individual focused on making money online, wifi money, passive income, business tips
+- Individual gym motivation account: posts motivational gym content, body transformation, hustle/grind content — even without being a certified coach
+
+They must ALSO be:
+- Active content creators (not completely inactive or suspended-looking accounts)
+- Based in US or Canada (or appear to be, based on language/references)
+
+Criteria to FAIL (is_human_creator = false) — ANY of these → reject:
+- Large official brand accounts, media companies, or entertainment studios
+- Accounts with zero relevance to motivation, mindset, wealth, gym, or entrepreneurship
+- Spam or bot accounts with gibberish bios
+- Sports teams, corporations, or government accounts
+
+IMPORTANT: Faceless accounts (no profile photo showing a person, using logos or stock images) are VALID targets. Clippers and repost accounts are VALID targets. Do NOT reject an account just because it lacks a personal face. Accept ANY account that creates or curates content about mindset, motivation, wealth, fitness motivation, or entrepreneurship.
+
+Reply ONLY with a valid JSON array matching the input order:
+[ { "username": "user1", "is_human_creator": true, "confidence": 93, "reason": "Faceless motivation page posting Hormozi clips and mindset quotes" }, ... ]`;
+
+    const SYSTEM_PROMPT = icpType === 'faceless_clipper' ? FACELESS_CLIPPER_SYSTEM_PROMPT : FITNESS_SYSTEM_PROMPT;
 
     // Chunk into batches
     const batches: Lead[][] = [];

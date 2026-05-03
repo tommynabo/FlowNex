@@ -3,6 +3,7 @@ export type SearchMode = 'fast' | 'deep';
 export type PageView = 'login' | 'dashboard' | 'campaigns' | 'setter'; // 'generator' and 'history' are removed, 'campaigns' will handle details internally if needed, or we can use another state in App.
 export type VslSentStatus = 'pending' | 'sent' | 'opened' | 'clicked' | 'converted';
 export type AudienceTier = 'nano' | 'micro' | 'mid' | 'macro';
+export type ICPType = 'personal_brand' | 'faceless_clipper';
 
 // ── AI Setter Module ────────────────────────────────────────────────────────
 export type SetterStatus = 'pending_review' | 'approved' | 'rejected' | 'corrected' | 'sent';
@@ -44,6 +45,7 @@ export interface IcpFilters {
   regions: string[];           // e.g. ['US', 'UK', 'CA']
   contentTypes: string[];      // e.g. ['Fitness', 'Wellness']
   campaignName: string;        // optional tag for this search
+  icpType: ICPType;            // 'personal_brand' | 'faceless_clipper'
 }
 
 export interface Campaign {

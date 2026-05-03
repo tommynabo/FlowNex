@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { X, Rocket, Hash, Users, MapPin, Tag } from 'lucide-react';
-import { Campaign, IcpFilters } from '../lib/types';
+import { X, Rocket, Hash, Users, MapPin, Tag, User, EyeOff } from 'lucide-react';
+import { Campaign, IcpFilters, ICPType } from '../lib/types';
 import { supabase } from '../lib/supabase';
 
 interface CampaignCreatorModalProps {
@@ -30,9 +30,11 @@ export function CampaignCreatorModal({ userId, onClose, onCreated }: CampaignCre
   const [description, setDescription] = useState('');
   const [hashtagsRaw, setHashtagsRaw] = useState('#fitnesscoach #mindset #personaldevelopment');
   const [instantlyCampaignId, setInstantlyCampaignId] = useState('');
+  const [icpType, setIcpType] = useState<ICPType>('personal_brand');
   const [icp, setIcp] = useState<IcpFilters>({
     minFollowers: 0, maxFollowers: 99_000_000,
-    regions: [], contentTypes: [], campaignName: ''
+    regions: [], contentTypes: [], campaignName: '',
+    icpType: 'personal_brand',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -66,6 +68,7 @@ export function CampaignCreatorModal({ userId, onClose, onCreated }: CampaignCre
           icp_max_followers: icp.maxFollowers,
           icp_regions: icp.regions,
           icp_content_types: icp.contentTypes,
+          icp_type: icpType,
           total_leads: 0,
           leads_with_email: 0,
           ...(instantlyCampaignId.trim() ? { instantly_campaign_id: instantlyCampaignId.trim() } : {}),
@@ -86,8 +89,7 @@ export function CampaignCreatorModal({ userId, onClose, onCreated }: CampaignCre
           maxFollowers: data.icp_max_followers,
           regions: data.icp_regions ?? [],
           contentTypes: data.icp_content_types ?? [],
-          campaignName: data.name,
-        },
+          campaignName: data.name,          icpType: (data.icp_type as ICPType) ?? 'personal_brand',        },
         totalLeads: 0,
         createdAt: new Date(data.created_at),
         userId,
@@ -157,6 +159,60 @@ export function CampaignCreatorModal({ userId, onClose, onCreated }: CampaignCre
               className="w-full h-10 px-3 text-sm bg-background border border-input rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all placeholder:text-muted-foreground/50 font-mono"
             />
             <p className="text-xs text-muted-foreground">Leads from this campaign will be sent to this specific Instantly campaign. Leave blank to use the default.</p>
+          </div>
+
+          {/* ICP Type Selector */}
+          <div className="space-y-2">
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">ICP Type *</label>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={() => { setIcpType('personal_brand'); updateIcp({ icpType: 'personal_brand' }); }}
+                className={`relative flex flex-col items-start gap-1.5 p-4 rounded-xl border-2 text-left transition-all ${
+                  icpType === 'personal_brand'
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border bg-background hover:border-primary/40'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <div className={`p-1.5 rounded-md ${ icpType === 'personal_brand' ? 'bg-primary/20' : 'bg-muted' }`}>
+                    <User className={`w-4 h-4 ${ icpType === 'personal_brand' ? 'text-primary' : 'text-muted-foreground' }`} />
+                  </div>
+                  <span className={`text-sm font-semibold ${ icpType === 'personal_brand' ? 'text-foreground' : 'text-muted-foreground' }`}>
+                    Marcas Personales Fitness
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground leading-snug">
+                  Creadores tradicionales, coaches, marcas personales.
+                </p>
+                {icpType === 'personal_brand' && (
+                  <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-primary" />
+                )}
+              </button>
+
+              <button
+                onClick={() => { setIcpType('faceless_clipper'); updateIcp({ icpType: 'faceless_clipper' }); }}
+                className={`relative flex flex-col items-start gap-1.5 p-4 rounded-xl border-2 text-left transition-all ${
+                  icpType === 'faceless_clipper'
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border bg-background hover:border-primary/40'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <div className={`p-1.5 rounded-md ${ icpType === 'faceless_clipper' ? 'bg-primary/20' : 'bg-muted' }`}>
+                    <EyeOff className={`w-4 h-4 ${ icpType === 'faceless_clipper' ? 'text-primary' : 'text-muted-foreground' }`} />
+                  </div>
+                  <span className={`text-sm font-semibold ${ icpType === 'faceless_clipper' ? 'text-foreground' : 'text-muted-foreground' }`}>
+                    Faceless & Clippers
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground leading-snug">
+                  Cuentas de motivación, clippers de Hormozi/Iman, carruseles mindset/gym.
+                </p>
+                {icpType === 'faceless_clipper' && (
+                  <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-primary" />
+                )}
+              </button>
+            </div>
           </div>
 
           {/* Hashtags */}

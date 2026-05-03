@@ -55,6 +55,10 @@ const FACELESS_CLIPPER_REQUIRED_KEYWORDS = [
   'tate', 'daily', 'slideshow', 'mindsetcoach', 'businessmindset',
   'successmindset', 'gymmotivation', 'moneymindset', 'dailymotivation',
   'motivational', 'makemoney', 'onlinebusiness', 'entrepreneurship',
+  // Gym motivation + body transformation category
+  'bodytransformation', 'transformation', 'gymtok', 'fitnessmotivation',
+  'noexcuses', 'neversettle', 'hardwork', 'nodaysoff', 'grindset',
+  'physique', 'gains', 'shredded', 'bulk', 'cutting', 'aesthetics',
 ];
 
 // ── Types ─────────────────────────────────────────────────────────────────────

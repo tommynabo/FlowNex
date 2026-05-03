@@ -96,7 +96,9 @@ const REGION_MAP: Record<string, string[]> = {
 // Google Search Scraper — queries `site:instagram.com [keywords]`, extracts handles from URLs
 const GOOGLE_SEARCH_SCRAPER = 'nFJndFXA5zjCTuudP';
 const INSTAGRAM_PROFILE_SCRAPER = 'apify~instagram-profile-scraper';
-const TIKTOK_PROFILE_SCRAPER = 'clockworks~tiktok-profile-scraper';
+// clockworks~free-tiktok-scraper returns one profile object per username (not a video feed).
+// The old clockworks~tiktok-profile-scraper returned 500+ video items per call, draining credits.
+const TIKTOK_PROFILE_SCRAPER = 'clockworks~free-tiktok-scraper';
 const INSTAGRAM_POSTS_SCRAPER = 'apify~instagram-scraper';
 
 // TikTok URL path segments that are not profile pages
@@ -402,8 +404,8 @@ export class InstagramSearchEngine {
   private async fetchRecentPosts(
     igHandles: string[],
     onLog: LogCallback,
-  ): Promise<Map<string, { caption: string; isVideo: boolean; thumbnailUrl: string }[]>> {
-    const result = new Map<string, { caption: string; isVideo: boolean; thumbnailUrl: string }[]>();
+  ): Promise<Map<string, { caption: string; hashtags: string[]; isVideo: boolean; thumbnailUrl: string }[]>> {
+    const result = new Map<string, { caption: string; hashtags: string[]; isVideo: boolean; thumbnailUrl: string }[]>();
     if (!igHandles.length) return result;
 
     try {
@@ -416,12 +418,15 @@ export class InstagramSearchEngine {
       for (const item of items as Record<string, unknown>[]) {
         const owner = ((item.ownerUsername as string) || '').toLowerCase().trim();
         if (!owner) continue;
-        const caption = ((item.caption as string) || '').substring(0, 400);
+        const fullCaption = (item.caption as string) || '';
+        const caption = fullCaption.substring(0, 600);
+        // Extract hashtags from the caption for richer post-vision context
+        const hashtags = (fullCaption.match(/#[\w]+/g) || []).slice(0, 20);
         const isVideo = ((item.type as string) || '').toLowerCase() === 'video';
         const thumbnailUrl = (item.displayUrl as string) || (item.thumbnailUrl as string) || '';
         const existing = result.get(owner) ?? [];
         if (existing.length < 3) {
-          existing.push({ caption, isVideo, thumbnailUrl });
+          existing.push({ caption, hashtags, isVideo, thumbnailUrl });
           result.set(owner, existing);
         }
       }
@@ -440,7 +445,7 @@ export class InstagramSearchEngine {
    */
   private async analyzePostsForFacelessICP(
     handle: string,
-    posts: { caption: string; isVideo: boolean; thumbnailUrl: string }[],
+    posts: { caption: string; hashtags: string[]; isVideo: boolean; thumbnailUrl: string }[],
     onLog: LogCallback,
   ): Promise<{ approved: boolean; reason: string; confidence: number }> {
     // No posts available → pass through (benefit of the doubt)
@@ -448,24 +453,27 @@ export class InstagramSearchEngine {
       return { approved: true, reason: 'No posts available — passed by default', confidence: 50 };
     }
 
-    const postsContext = posts.map((p, i) =>
-      `Post ${i + 1}: type=${p.isVideo ? 'video' : 'image/carousel'}\nCaption: ${p.caption || '(no caption)'}`
-    ).join('\n\n');
+    const postsContext = posts.map((p, i) => {
+      const hashtagLine = p.hashtags.length > 0 ? `\nHashtags: ${p.hashtags.join(' ')}` : '';
+      return `Post ${i + 1}: type=${p.isVideo ? 'video' : 'image/carousel'}\nCaption: ${p.caption || '(no caption)'}${hashtagLine}`;
+    }).join('\n\n');
 
     const systemPrompt =
       'You are an expert content analyst for a creator outreach agency. ' +
-      'Your task: decide if a creator\'s last 3 posts match the FACELESS / CLIPPER / MOTIVATIONAL content archetype.\n\n' +
-      'APPROVE (approved=true) if AT LEAST 2 of the 3 posts are:\n' +
-      '- Slideshow/carousel: motivational quotes, mindset tips, wealth/success content, gym motivation\n' +
-      '- Clipper: edited clips from known figures (Hormozi, Tate, Gadzhi, etc.) or other motivational speakers\n' +
-      '- Faceless motivation video: no face shown, voiceover + b-roll, entrepreneurship or self-improvement content\n' +
-      '- Online business tips: passive income, make money online, dropshipping, smma, agency growth\n\n' +
+      'Your task: decide if a creator\'s last 3 posts match the FACELESS / CLIPPER / MOTIVATIONAL / GYM-MOTIVATION content archetype.\n\n' +
+      'APPROVE (approved=true) if AT LEAST 2 of the 3 posts fall into ANY of these categories:\n' +
+      '- Faceless motivation: no face shown, voiceover + b-roll, mindset, discipline, entrepreneurship, self-improvement\n' +
+      '- Clipper/reposter: edited clips from known figures (Hormozi, Tate, Gadzhi, Goggins, etc.) or other motivational speakers\n' +
+      '- Slideshow/carousel: motivational quotes, mindset tips, wealth/success, discipline, hustle, grind culture\n' +
+      '- Gym motivation: body transformation posts, before/after physique, "no days off", "no excuses", discipline in the gym, cutting/bulking journeys WITH a motivational message or caption\n' +
+      '- Online business tips: passive income, make money online, dropshipping, smma, agency growth, wifi money\n\n' +
       'REJECT (approved=false) if the majority of posts are:\n' +
-      '- Personal lifestyle with face shown (selfies, vlogs, travel, food)\n' +
-      '- Physical fitness/gym workout demonstrations by a trainer or athlete\n' +
-      '- Entertainment, comedy, or completely unrelated niches\n\n' +
+      '- Personal face-forward lifestyle content (selfies, daily vlogs, travel diaries, food posts) with no motivational angle\n' +
+      '- Pure gym tutorial/form-check demonstrations by a certified trainer (educational fitness instruction, NOT motivation)\n' +
+      '- Entertainment, comedy, gaming, or niches completely unrelated to motivation/mindset/fitness/business\n\n' +
+      'NOTE: Gym transformation or physique progress posts are VALID when paired with a motivational/discipline caption or hashtags like #nodaysoff #discipline #transformation.\n\n' +
       'Reply ONLY with valid JSON, no markdown:\n' +
-      '{"approved":true,"confidence":85,"reason":"2 of 3 are Hormozi clip carousels + mindset slideshows"}';
+      '{"approved":true,"confidence":85,"reason":"2 of 3 are discipline/transformation posts with motivational captions"}';
 
     const userMessage = `Analyze these 3 most recent posts for creator @${handle}:\n\n${postsContext}`;
     const imageMessages = posts
@@ -520,20 +528,56 @@ export class InstagramSearchEngine {
    * Adds __platform: 'tiktok' so the candidate-building section sets lead.source correctly.
    */
   private normalizeTikTokProfile(p: Record<string, unknown>): RawApifyProfile {
-    const bioLink = p.bioLink as Record<string, unknown> | undefined;
-    const website = (bioLink?.link as string) || (p.bioLink as string) || (p.website as string) || '';
-    const regionCode = ((p.region as string) || '').toUpperCase();
+    // Support both clockworks~free-tiktok-scraper (flat fields) and legacy actor
+    // (which nested profile data under authorMeta on video-feed items).
+    const meta = (p.authorMeta as Record<string, unknown>) || {};
+    const bioLink = (p.bioLink as Record<string, unknown>) || {};
+    const website =
+      (typeof bioLink.link === 'string' ? bioLink.link : '') ||
+      (p.bioLink as string) ||
+      (p.website as string) ||
+      (meta.bioLink as string) || '';
+    const regionCode = ((p.region as string) || (p.countryCode as string) || (meta.region as string) || '').toUpperCase();
+    const username = (
+      (p.uniqueId as string) ||
+      (p.username as string) ||
+      (meta.uniqueId as string) ||
+      (meta.username as string) ||
+      ''
+    ).toLowerCase().trim();
+    const followersCount = (
+      (p.fans as number) ||
+      (p.followerCount as number) ||
+      (p.follower_count as number) ||
+      (meta.fans as number) ||
+      (meta.followerCount as number) ||
+      0
+    );
+    const biography = (
+      (p.signature as string) ||
+      (p.bio as string) ||
+      (p.desc as string) ||
+      (meta.signature as string) ||
+      (meta.bio as string) ||
+      ''
+    );
+    const fullName = (
+      (p.nickname as string) ||
+      (p.displayName as string) ||
+      (p.name as string) ||
+      (meta.nickname as string) ||
+      (meta.displayName as string) ||
+      ''
+    );
     return {
-      username: ((p.uniqueId as string) || (p.username as string) || '').toLowerCase(),
-      followersCount: (p.fans as number) || (p.followerCount as number) || (p.follower_count as number) || 0,
-      biography: ((p.signature as string) || (p.desc as string) || (p.bio as string) || ''),
-      fullName: ((p.nickname as string) || (p.displayName as string) || (p.name as string) || ''),
+      username,
+      followersCount,
+      biography,
+      fullName,
       externalUrl: website,
-      publicEmail: (p.email as string) || '',
-      // Pass region so the US/CA location filter can match
+      publicEmail: (p.email as string) || (meta.email as string) || '',
       countryCode: regionCode,
       country: regionCode === 'US' ? 'United States' : regionCode === 'CA' ? 'Canada' : regionCode,
-      // Tag so candidate-building section can set lead.source = 'tiktok'
       __platform: 'tiktok',
     } as RawApifyProfile;
   }
@@ -769,11 +813,23 @@ export class InstagramSearchEngine {
           scrapePromises.push(
             this.callApifyActor(
               TIKTOK_PROFILE_SCRAPER,
-              { profiles: ttHandles.map(h => `https://www.tiktok.com/@${h}`) },
+              // maxItems:1 — fetch only the profile object, not the video feed
+              { usernames: ttHandles, maxItems: 1 },
               onLog,
-            ).then(ttProfiles =>
-              (ttProfiles as Record<string, unknown>[]).map(p => this.normalizeTikTokProfile(p)),
-            ),
+            ).then(ttProfiles => {
+              const normalized = (ttProfiles as Record<string, unknown>[])
+                .map(p => this.normalizeTikTokProfile(p))
+                .filter(p => p.username !== ''); // discard video-feed items with no username
+              // Deduplicate by username (video-feed items can repeat the same profile)
+              const seen = new Set<string>();
+              const deduped = normalized.filter(p => {
+                if (seen.has(p.username)) return false;
+                seen.add(p.username);
+                return true;
+              });
+              onLog(`[TIKTOK] ${ttProfiles.length} raw items → ${deduped.length} unique profiles after normalization`);
+              return deduped;
+            }),
           );
         }
         const results = await Promise.all(scrapePromises);
@@ -931,7 +987,7 @@ export class InstagramSearchEngine {
         // Fetch recent posts for IG handles in one batch call
         const postsMap = igHandlesForPosts.length > 0
           ? await this.fetchRecentPosts(igHandlesForPosts, onLog)
-          : new Map<string, { caption: string; isVideo: boolean; thumbnailUrl: string }[]>();
+          : new Map<string, { caption: string; hashtags: string[]; isVideo: boolean; thumbnailUrl: string }[]>();
 
         // Analyze IG candidates in chunks of 5 to avoid OpenAI rate limits
         const igVerified: typeof dbDeduped = [];

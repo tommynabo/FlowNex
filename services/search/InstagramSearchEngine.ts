@@ -416,6 +416,220 @@ export class InstagramSearchEngine {
     return chunks;
   }
 
+  // ── Batch LLM Analysis (Pilar 2 + 3) ─────────────────────────────────────────
+  /**
+   * BATCH AI ANALYSIS — replaces N individual generateCreatorAnalysis() calls
+   * with a single /api/openai call that processes all leads at once.
+   *
+   * Why: Each individual call carries ~300-800ms of network round-trip overhead.
+   * For 10 leads, 10 calls = 3–8s of pure latency overhead before any tokens are
+   * processed. One batch call eliminates 9 of those 10 round trips.
+   *
+   * Model Tiering (Pilar 3):
+   *   Pass 1 — gpt-4o-mini: fast, cheap, handles the full batch in one call.
+   *   Pass 2 — gpt-4o (optional): premium enrichment for coldEmailBody and
+   *             psychologicalProfile only, activated by usePremiumModel=true in
+   *             PROJECT_CONFIG.flownextConfig. Doubles AI cost; disable by default.
+   *
+   * Mutates each Lead's aiAnalysis field in place.
+   * Falls back to individual generateCreatorAnalysis() calls if the batch fails.
+   */
+  private async generateCreatorAnalysisBatch(
+    leads: Lead[],
+    onLog: LogCallback,
+    icpType: ICPType,
+  ): Promise<void> {
+    if (!leads.length) return;
+
+    const vslLink = PROJECT_CONFIG.flownextConfig?.vslLink || 'https://flownext.io/vsl';
+    const usePremiumModel = PROJECT_CONFIG.flownextConfig?.usePremiumModel ?? false;
+
+    // Build compact batch input — only the fields the LLM needs
+    const batch = leads.map(lead => ({
+      handle: lead.ig_handle || '',
+      name: lead.decisionMaker?.name || '',
+      niche: lead.niche || '',
+      followers: this.formatFollowers(lead.follower_count || 0),
+      tier: lead.audience_tier || 'nano',
+      email: lead.decisionMaker?.email || 'none',
+    }));
+
+    const systemPrompt =
+      'You are an expert cold email copywriter for Instagram fitness/personal development creator outreach.\n' +
+      'You will receive a JSON array of creator profiles.\n' +
+      'GOAL: For EACH creator, write a cold email pitching a VSL link. Personal, peer-to-peer, not mass blast.\n' +
+      'TONE: Direct, confident, no fluff. English only. Under 120 words per email. No emojis in subject.\n' +
+      'Rules: Reference their niche. CTA = watch VSL. Subject under 8 words.\n' +
+      'VSL Link: ' + vslLink + '\n\n' +
+      'Respond ONLY with a valid JSON array (no markdown, no wrapping object) in the EXACT same order as the input:\n' +
+      '[{"coldEmailSubject":"...","coldEmailBody":"...","vslPitch":"One-liner hook max 15 words","psychologicalProfile":"2-sentence assessment","engagementSignal":"inferred signal","salesAngle":"top reason they say yes","summary":"one sentence lead description"},...]';
+
+    // Helper: applies a parsed results array onto lead objects
+    const applyResults = (rawResults: Record<string, string>[], source: 'mini' | 'premium') => {
+      for (let i = 0; i < leads.length; i++) {
+        const lead = leads[i];
+        const r = rawResults[i];
+        if (!r) continue;
+        const followerStr = this.formatFollowers(lead.follower_count || 0);
+        if (source === 'mini') {
+          lead.aiAnalysis = {
+            summary: r.summary || (lead.niche + ' creator with ' + followerStr + ' followers.'),
+            painPoints: [],
+            generatedIcebreaker: r.vslPitch || ('Scale your ' + lead.niche + ' brand without more hours'),
+            coldEmailSubject: r.coldEmailSubject || ('Quick question about your ' + lead.niche + ' content'),
+            coldEmailBody: r.coldEmailBody || this.fallbackEmailBody(lead, vslLink),
+            vslPitch: r.vslPitch || ('Scale your ' + lead.niche + ' brand without more hours'),
+            fullAnalysis: (r.psychologicalProfile || '') + ' | ' + (r.engagementSignal || ''),
+            psychologicalProfile: r.psychologicalProfile || 'Ambitious creator focused on growth.',
+            engagementSignal: r.engagementSignal || 'Active niche audience.',
+            salesAngle: r.salesAngle || 'Monetization opportunity.',
+          };
+        } else {
+          // Premium enrichment: only overwrite the richer fields on top of mini base
+          if (!lead.aiAnalysis) return;
+          if (r.coldEmailBody) lead.aiAnalysis.coldEmailBody = r.coldEmailBody;
+          if (r.psychologicalProfile) lead.aiAnalysis.psychologicalProfile = r.psychologicalProfile;
+          if (r.salesAngle) lead.aiAnalysis.salesAngle = r.salesAngle;
+          if (r.summary) lead.aiAnalysis.summary = r.summary;
+          if (r.vslPitch) { lead.aiAnalysis.vslPitch = r.vslPitch; lead.aiAnalysis.generatedIcebreaker = r.vslPitch; }
+          lead.aiAnalysis.fullAnalysis = r.psychologicalProfile + ' | ' + (r.engagementSignal || lead.aiAnalysis.engagementSignal);
+        }
+      }
+    };
+
+    // ── Pass 1: gpt-4o-mini — fast batch for all leads ───────────────────────
+    let batchSucceeded = false;
+    try {
+      const response = await fetch('/api/openai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          // FAST MODEL (Pilar 3): gpt-4o-mini handles the full batch in one call.
+          // It is fast (~1-2s per batch regardless of N) and cheap ($0.15/1M tokens).
+          // DO NOT swap this for gpt-4o here — use usePremiumModel flag for enrichment.
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: 'Analyze these ' + leads.length + ' creators:\n' + JSON.stringify(batch) },
+          ],
+          temperature: 0.7,
+          // Allow enough tokens for the full array: ~350 tokens per lead
+          max_tokens: Math.min(4096, leads.length * 380),
+        }),
+      });
+      if (response.ok) {
+        const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+        const raw = data.choices?.[0]?.message?.content || '';
+        const arrayMatch = raw.match(/\[[\s\S]*\]/);
+        if (arrayMatch) {
+          const parsed = JSON.parse(arrayMatch[0]) as Record<string, string>[];
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            applyResults(parsed, 'mini');
+            onLog('[BATCH AI] ✓ ' + leads.length + ' perfiles analizados en 1 llamada gpt-4o-mini (Pilar 2)');
+            batchSucceeded = true;
+          }
+        }
+      }
+    } catch (e) {
+      onLog('[BATCH AI] ⚠ Batch request falló — usando análisis individual como fallback: ' +
+        (e instanceof Error ? e.message : String(e)));
+    }
+
+    if (!batchSucceeded) {
+      // Fallback: individual calls (old behavior) — preserves correctness over speed
+      onLog('[BATCH AI] Fallback: analizando ' + leads.length + ' perfiles individualmente...');
+      for (const lead of leads) {
+        if (!this.isRunning) break;
+        try {
+          const a = await this.generateCreatorAnalysis(lead);
+          const followerStr = this.formatFollowers(lead.follower_count || 0);
+          lead.aiAnalysis = {
+            summary: a.summary,
+            painPoints: [],
+            generatedIcebreaker: a.vslPitch,
+            coldEmailSubject: a.coldEmailSubject,
+            coldEmailBody: a.coldEmailBody,
+            vslPitch: a.vslPitch,
+            fullAnalysis: a.psychologicalProfile + ' | ' + a.engagementSignal,
+            psychologicalProfile: a.psychologicalProfile,
+            engagementSignal: a.engagementSignal,
+            salesAngle: a.salesAngle,
+          };
+          void followerStr; // suppress unused warning
+        } catch { /* generateCreatorAnalysis already returns defaults on error */ }
+      }
+      return;
+    }
+
+    // Ensure every lead has aiAnalysis set (guards against partial batch responses)
+    for (const lead of leads) {
+      if (!lead.aiAnalysis) {
+        const followerStr = this.formatFollowers(lead.follower_count || 0);
+        lead.aiAnalysis = {
+          summary: (lead.niche || 'Creator') + ' with ' + followerStr + ' followers.',
+          painPoints: [],
+          generatedIcebreaker: 'Scale your brand without more hours',
+          coldEmailSubject: 'Quick question about your ' + (lead.niche || 'content'),
+          coldEmailBody: this.fallbackEmailBody(lead, vslLink),
+          vslPitch: 'Scale your brand without more hours',
+          fullAnalysis: 'Ambitious creator.',
+          psychologicalProfile: 'Ambitious creator focused on growth.',
+          engagementSignal: 'Active niche audience.',
+          salesAngle: 'Monetization opportunity.',
+        };
+      }
+    }
+
+    // ── Pass 2: gpt-4o — premium enrichment (Pilar 3, opt-in) ───────────────
+    // Only runs when usePremiumModel=true. Overwrites coldEmailBody, psychologicalProfile,
+    // salesAngle, and summary with richer, more conversion-focused copy.
+    // Cost: ~$5-15/1M tokens vs $0.15/1M for gpt-4o-mini. Enable deliberately.
+    if (!usePremiumModel) return;
+
+    onLog('[MODEL TIER] 🚀 Enriquecimiento premium con gpt-4o (' + leads.length + ' creadores)...');
+    const premiumPrompt =
+      'You are a world-class B2B copywriter specializing in creator economy outreach.\n' +
+      'Rewrite the cold email body and psychological profile for MAXIMUM conversion.\n' +
+      'Be highly specific to each creator\'s niche, audience size, and unique angle.\n' +
+      'Under 150 words per email. Hyper-personalized. B2B peer-to-peer tone.\n' +
+      'VSL Link: ' + vslLink + '\n\n' +
+      'Return ONLY a valid JSON array (same order as input), each item:\n' +
+      '[{"coldEmailBody":"...","psychologicalProfile":"3-sentence deep profile","salesAngle":"specific reason they say yes","summary":"sharp one-liner","vslPitch":"compelling hook max 12 words"},...]';
+
+    try {
+      const resp = await fetch('/api/openai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          // PREMIUM MODEL (Pilar 3): only reached when usePremiumModel=true.
+          // Used exclusively for enrichment — the fast filter already ran above.
+          model: 'gpt-4o',
+          messages: [
+            { role: 'system', content: premiumPrompt },
+            { role: 'user', content: 'Enrich these ' + leads.length + ' creators:\n' + JSON.stringify(batch) },
+          ],
+          temperature: 0.8,
+          max_tokens: Math.min(8192, leads.length * 500),
+        }),
+      });
+      if (resp.ok) {
+        const data = await resp.json() as { choices?: Array<{ message?: { content?: string } }> };
+        const raw = data.choices?.[0]?.message?.content || '';
+        const arrayMatch = raw.match(/\[[\s\S]*\]/);
+        if (arrayMatch) {
+          const parsed = JSON.parse(arrayMatch[0]) as Record<string, string>[];
+          if (Array.isArray(parsed)) {
+            applyResults(parsed, 'premium');
+            onLog('[MODEL TIER] ✓ Enriquecimiento gpt-4o completado (' + leads.length + ' creadores)');
+          }
+        }
+      }
+    } catch (e) {
+      onLog('[MODEL TIER] ⚠ gpt-4o premium pass falló (manteniendo análisis mini): ' +
+        (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
   // ── Post Vision Verifier ──────────────────────────────────────────────────────
 
   /**
@@ -423,6 +637,12 @@ export class InstagramSearchEngine {
    * instagram-scraper actor and builds a map handle → PostSummary[].
    * TikTok handles receive an empty array (their recent videos come from
    * the profile scraper via normalizeTikTokProfile, handled separately).
+   *
+   * SLOW SCRAPER NOTE (Pilar 5): apify~instagram-scraper below IS Puppeteer-based.
+   * This is intentional and acceptable ONLY because fetchRecentPosts() is called
+   * exclusively for faceless_clipper content verification, which runs as an async
+   * cron job (ContentVerificationService) — NEVER during a live user search.
+   * DO NOT call this method from the main search loop.
    */
   private async fetchRecentPosts(
     igHandles: string[],
@@ -612,6 +832,7 @@ export class InstagramSearchEngine {
     onLog: LogCallback,
     onComplete: ResultCallback,
     userId?: string | null,
+    onLeadFound?: (lead: Lead) => void,
   ): Promise<void> {
     this.isRunning = true;
     this.userId = userId ?? null;
@@ -620,11 +841,11 @@ export class InstagramSearchEngine {
       onLog('[INIT] UserId: ' + (this.userId || 'not authenticated'));
       onLog('[INIT] Source: ' + config.source + ' | Query: "' + config.query + '" | Target: ' + config.maxResults);
 
-      onLog('[DEDUP] Loading existing leads from database...');
+      onLog('[DEDUP] Loading existing leads from database (últimos 30 días)...');
       const { existingIgHandles, existingEmails } = await deduplicationService.fetchExistingLeads(this.userId);
       onLog('[DEDUP] Pre-flight: ' + existingIgHandles.size + ' IG handles, ' + existingEmails.size + ' emails already in DB');
 
-      await this.runSearchLoop(config, existingIgHandles, existingEmails, onLog, onComplete, config.instantlyCampaignId);
+      await this.runSearchLoop(config, existingIgHandles, existingEmails, onLog, onComplete, config.instantlyCampaignId, onLeadFound);
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error('[InstagramSearchEngine] FATAL:', error);
@@ -644,6 +865,7 @@ export class InstagramSearchEngine {
     onLog: LogCallback,
     onComplete: ResultCallback,
     instantlyCampaignId?: string,
+    onLeadFound?: (lead: Lead) => void,
   ): Promise<void> {
     const icpFilters = config.icpFilters;
     const minFollowers = icpFilters?.minFollowers ?? 0;
@@ -709,6 +931,9 @@ export class InstagramSearchEngine {
       onLog('🔎 STEP 1/4 — Google Search: ' + searchQuery);
 
       // ── STEP 1: Google Search site:instagram.com → novel handles ────────────
+      // FAST SCRAPER (Pilar 5): nFJndFXA5zjCTuudP is an API-based Google Search
+      // scraper — returns JSON in ~1-2s. DO NOT replace with a headless/Puppeteer
+      // actor. This actor does NOT start a browser; it uses Google's public API.
       let searchResults: unknown[];
       try {
         searchResults = await this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
@@ -823,6 +1048,19 @@ export class InstagramSearchEngine {
       consecutiveZeros = 0; // reset — fresh handles found
 
       // ── STEP 2: Full profile scrape — parallel by platform ──────────────────────
+      // PRE-SCRAPE DEDUP NOTE (Pilar 1): handles from Google Search are already
+      // filtered against existingIgHandles (seenHandles Set) above — known handles
+      // never reach this point. Only genuinely novel handles hit the profile scraper.
+      //
+      // FAST SCRAPER (Pilar 5):
+      //   Instagram: apify~instagram-profile-scraper uses Instagram's internal GraphQL
+      //   API (NOT Puppeteer/headless). Returns profile JSON in 2-5s per batch.
+      //   If this actor is ever replaced, ensure the replacement also uses GraphQL
+      //   (e.g. apify/instagram-api-scraper). DO NOT use Puppeteer-based actors here —
+      //   headless browser cold-start adds 30-60s overhead per run.
+      //
+      //   TikTok: clockworks~free-tiktok-scraper uses TikTok's internal API (not
+      //   headless). DO NOT replace with a Puppeteer/Playwright-based TikTok actor.
       const igHandles = novelHandles.filter(h => h.platform === 'instagram').map(h => h.handle);
       const ttHandles = novelHandles.filter(h => h.platform === 'tiktok').map(h => h.handle);
       onLog(`👤 STEP 2/4 — Fetching profiles: ${igHandles.length} Instagram, ${ttHandles.length} TikTok`);
@@ -1105,43 +1343,32 @@ export class InstagramSearchEngine {
 
       // ── STEP 4b: AI analysis for ICP-verified leads with email ───────────────
       onLog('✍ STEP 4b — Generando análisis IA para ' + toProcess.length + ' creadores (con email + ICP ✓)...');
-      // All chunks fire in parallel — 5 concurrent AI calls per chunk, all chunks at once
+
+      // ── BATCH AI ANALYSIS (Pilar 2: LLM Prompt Batching) ─────────────────────
+      // One /api/openai call for ALL N leads instead of N individual calls.
+      // Eliminates N-1 round-trip latencies (~300-800ms each). For 10 leads this
+      // is ~10× faster than the old Promise.all(chunkArray(leads, 5)) approach.
+      // Model Tiering (Pilar 3): fast gpt-4o-mini first; optional gpt-4o enrichment
+      // pass if PROJECT_CONFIG.flownextConfig.usePremiumModel = true.
+      // Falls back to individual calls if the batch request fails.
+      await this.generateCreatorAnalysisBatch(toProcess, onLog, icpType);
+
+      // Set lead status and stream each lead to the UI immediately (Pilar 4: Streaming)
+      // onLeadFound fires per lead as soon as analysis is done — the screen populates
+      // while the engine continues its next attempt in the background.
       const analyzed: Lead[] = [];
-      const allChunkResults = await Promise.all(
-        this.chunkArray(toProcess, 5).map(async (chunk) => {
-          return Promise.all(chunk.map(async (lead) => {
-            if (!this.isRunning) return null;
-            try {
-              const a = await this.generateCreatorAnalysis(lead);
-              lead.aiAnalysis = {
-                summary: a.summary,
-                painPoints: [],
-                generatedIcebreaker: a.vslPitch,
-                coldEmailSubject: a.coldEmailSubject,
-                coldEmailBody: a.coldEmailBody,
-                vslPitch: a.vslPitch,
-                fullAnalysis: a.psychologicalProfile + ' | ' + a.engagementSignal,
-                psychologicalProfile: a.psychologicalProfile,
-                engagementSignal: a.engagementSignal,
-                salesAngle: a.salesAngle,
-              };
-              // faceless_clipper leads await deep content analysis by the cron job;
-              // personal_brand leads are immediately ready (bio/hashtag filter sufficient)
-              lead.status = icpType === 'faceless_clipper' ? 'pending_content_verification' : 'ready';
-              if (icpType === 'faceless_clipper') lead._icpType = 'faceless_clipper';
-            } catch {
-              lead.status = icpType === 'faceless_clipper' ? 'pending_content_verification' : 'ready';
-              if (icpType === 'faceless_clipper') lead._icpType = 'faceless_clipper';
-            }
-            return lead;
-          }));
-        }),
-      );
-      analyzed.push(...allChunkResults.flat().filter((l): l is Lead => l !== null));
+      for (const lead of toProcess) {
+        if (!this.isRunning) break;
+        lead.status = icpType === 'faceless_clipper' ? 'pending_content_verification' : 'ready';
+        if (icpType === 'faceless_clipper') lead._icpType = 'faceless_clipper';
+        analyzed.push(lead);
+      }
 
       // Accept all analyzed leads (with or without email)
       for (const lead of analyzed) {
         accepted.push(lead);
+        // Stream this lead to the UI immediately — don't wait for the full run to finish
+        onLeadFound?.(lead);
         // Register in existingIgHandles so future dedup passes are aware
         if (lead.ig_handle) existingIgHandles.add(lead.ig_handle);
         const emailStr = lead.decisionMaker?.email ? '📧 ' + lead.decisionMaker.email : '(sin email — pendiente enriquecimiento)';

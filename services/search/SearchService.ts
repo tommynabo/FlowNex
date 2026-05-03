@@ -212,7 +212,8 @@ export class SearchService {
         config: SearchConfigState,
         onLog: LogCallback,
         onComplete: ResultCallback,
-        userId?: string | null
+        userId?: string | null,
+        onLeadFound?: (lead: Lead) => void,
     ) {
         this.isRunning = true;
         this.userId = userId || null;
@@ -220,7 +221,7 @@ export class SearchService {
             // Instagram searches are handled by InstagramSearchEngine
             // which implements the "keep going until N" loop with hashtag rotation
             if (config.source === 'instagram') {
-                await instagramSearchEngine.startSearch(config, onLog, onComplete, userId);
+                await instagramSearchEngine.startSearch(config, onLog, onComplete, userId, onLeadFound);
                 return;
             }
 

@@ -1,6 +1,11 @@
 import { Lead } from '../../lib/types';
 import { supabase } from '../../lib/supabase';
 
+// Only consider leads created within the last N days for dedup pre-flight.
+// Handles older than this window are considered "expired" — we may legitimately
+// want to re-contact creators whose data has changed significantly.
+const DEDUP_WINDOW_DAYS = 30;
+
 export class DeduplicationService {
     private normalizeHandle(handle: string): string {
         return handle.toLowerCase().replace(/^@/, '').trim();
@@ -16,7 +21,7 @@ export class DeduplicationService {
 
         try {
             const { data, error } = await supabase
-                .rpc('get_global_existing_leads');
+                .rpc('get_global_existing_leads', { days_back: DEDUP_WINDOW_DAYS });
 
             if (error) {
                 console.error('[DEDUP] Error fetching existing leads:', error);

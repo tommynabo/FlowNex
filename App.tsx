@@ -391,7 +391,7 @@ function App() {
   };
 
   // Search Logic
-  const handleSearch = () => {
+  const handleSearch = async () => {
     if (!config.query) return;
 
     setIsSearching(true);
@@ -399,6 +399,60 @@ function App() {
     setTerminalExpanded(true);
     setLogs([]);
     setLeads([]);
+
+    // ── Create search_history record BEFORE the search starts (Streaming — Pilar 4) ──
+    // Having the searchId upfront allows each lead to be saved to Supabase as soon
+    // as it's found, rather than waiting for the full run to complete.
+    let activeSearchId: string | null = null;
+    if (userId) {
+      try {
+        const { data: shData, error: shErr } = await supabase
+          .from('search_history')
+          .insert({
+            user_id: userId,
+            search_query: config.query,
+            source: config.source,
+            mode: config.mode,
+            total_results: 0,
+            results_extracted: 0,
+            status: 'running',
+            executed_at: new Date().toISOString(),
+            ...(activeCampaign ? { campaign_id: activeCampaign.id } : {})
+          })
+          .select();
+        if (!shErr && shData && shData.length > 0) {
+          activeSearchId = shData[0].id as string;
+          addLog('[DB] Search iniciado (ID: ' + activeSearchId + ')');
+        }
+      } catch { /* non-fatal — search continues, falls back to bulk save in onComplete */ }
+    }
+
+    // Helper: maps a Lead to the leads table row shape
+    const leadToRow = (lead: Lead, searchId: string) => ({
+      user_id: userId!,
+      search_id: searchId,
+      ...(activeCampaign ? { campaign_id: activeCampaign.id } : {}),
+      name: lead.decisionMaker?.name || ('@' + lead.ig_handle) || '',
+      ig_handle: lead.ig_handle || '',
+      follower_count: lead.follower_count || 0,
+      niche: lead.niche || '',
+      audience_tier: lead.audience_tier || 'nano',
+      job_title: lead.decisionMaker?.role || 'Content Creator',
+      email: lead.decisionMaker?.email || '',
+      location: lead.location || '',
+      ai_summary: lead.aiAnalysis?.summary || '',
+      ai_pain_points: lead.aiAnalysis?.painPoints || [],
+      cold_email_subject: lead.aiAnalysis?.coldEmailSubject || '',
+      cold_email_body: lead.aiAnalysis?.coldEmailBody || '',
+      vsl_pitch: lead.aiAnalysis?.vslPitch || '',
+      vsl_sent_status: lead.vsl_sent_status || 'pending',
+      email_status: lead.email_status || 'pending',
+      status: 'scraped',
+      icp_verified: lead.icp_verified ?? false
+    });
+
+    // Streaming counter — tracks how many leads arrived via onLeadFound
+    let streamedCount = 0;
 
     searchService.startSearch(
       { ...config, ...(activeCampaign?.instantlyCampaignId ? { instantlyCampaignId: activeCampaign.instantlyCampaignId } : {}) },
@@ -420,84 +474,68 @@ function App() {
           leads: results
         };
         setHistory(prev => [newSession, ...prev]);
-        setTotalLeadsGenerated(prev => prev + results.length);
+        // Only add to total if not already counted by onLeadFound
+        if (streamedCount === 0) {
+          setTotalLeadsGenerated(prev => prev + results.length);
+        }
 
         // Save to Supabase (Cloud)
         if (userId) {
-          console.log('[DB] onComplete: saving', results.length, 'leads. userId:', userId);
+          console.log('[DB] onComplete: userId:', userId, '| activeSearchId:', activeSearchId, '| results:', results.length);
           try {
-            // 1. Insert search record and get ID
-            console.log('[DB] Inserting search_history...');
-            const { data, error: searchError } = await supabase
-              .from('search_history')
-              .insert({
-                user_id: userId,
-                search_query: config.query,
-                source: config.source,
-                mode: config.mode,
-                total_results: results.length,
-                results_extracted: results.length,
-                status: 'completed',
-                executed_at: new Date().toISOString(),
-                completed_at: new Date().toISOString(),
-                ...(activeCampaign ? { campaign_id: activeCampaign.id } : {})
-              })
-              .select();
-
-            if (searchError) {
-              console.error('[DB] ❌ search_history INSERT failed:', searchError);
-              addLog(`[DB] Error saving search: ${searchError.message}`);
-              return;
-            }
-
-            if (!data || data.length === 0) {
-              console.error('[DB] ❌ search_history INSERT returned no data (RLS issue?)');
-              addLog('[DB] No search ID returned.');
-              return;
-            }
-
-            const searchId = data[0].id;
-            console.log('[DB] ✅ search_history saved. searchId:', searchId);
-            addLog(`[DB] Search registered (ID: ${searchId})`);
-
-            // 2. Save each lead to the leads table with search_id reference
-            const leadsToInsert = results.map(lead => ({
-              user_id: userId,
-              search_id: searchId,
-              ...(activeCampaign ? { campaign_id: activeCampaign.id } : {}),
-              name: lead.decisionMaker?.name || ('@' + lead.ig_handle) || '',
-              ig_handle: lead.ig_handle || '',
-              follower_count: lead.follower_count || 0,
-              niche: lead.niche || '',
-              audience_tier: lead.audience_tier || 'nano',
-              job_title: lead.decisionMaker?.role || 'Content Creator',
-              email: lead.decisionMaker?.email || '',
-              location: lead.location || '',
-              ai_summary: lead.aiAnalysis?.summary || '',
-              ai_pain_points: lead.aiAnalysis?.painPoints || [],
-              cold_email_subject: lead.aiAnalysis?.coldEmailSubject || '',
-              cold_email_body: lead.aiAnalysis?.coldEmailBody || '',
-              vsl_pitch: lead.aiAnalysis?.vslPitch || '',
-              vsl_sent_status: lead.vsl_sent_status || 'pending',
-              email_status: lead.email_status || 'pending',
-              status: 'scraped',
-              icp_verified: lead.icp_verified ?? false
-            }));
-
-            console.log('[DB] Inserting', leadsToInsert.length, 'leads...');
-            const { error: leadsError } = await supabase
-              .from('leads')
-              .insert(leadsToInsert);
-
-            if (leadsError) {
-              console.error('[DB] ❌ leads INSERT failed:', leadsError);
-              addLog(`[DB] Error saving ${results.length} leads: ${leadsError.message}`);
-            } else {
-              console.log('[DB] ✅ leads saved successfully');
-              addLog(`[DB] ${results.length} creators saved.`);
+            if (activeSearchId) {
+              // Streaming path: search_history already exists — update final stats
+              await supabase
+                .from('search_history')
+                .update({
+                  total_results: results.length,
+                  results_extracted: results.length,
+                  status: 'completed',
+                  completed_at: new Date().toISOString(),
+                })
+                .eq('id', activeSearchId);
+              addLog('[DB] ✅ ' + results.length + ' creators saved (streaming).');
               if (activeCampaign) {
                 loadCampaignLeads(activeCampaign.id);
                 loadCampaigns(userId);
+              }
+            } else {
+              // Fallback bulk path: search_history creation failed earlier —
+              // create it now and save all leads at once (old behavior)
+              console.warn('[DB] No activeSearchId — falling back to bulk save');
+              const { data, error: searchError } = await supabase
+                .from('search_history')
+                .insert({
+                  user_id: userId,
+                  search_query: config.query,
+                  source: config.source,
+                  mode: config.mode,
+                  total_results: results.length,
+                  results_extracted: results.length,
+                  status: 'completed',
+                  executed_at: new Date().toISOString(),
+                  completed_at: new Date().toISOString(),
+                  ...(activeCampaign ? { campaign_id: activeCampaign.id } : {})
+                })
+                .select();
+
+              if (searchError) {
+                console.error('[DB] ❌ search_history INSERT failed:', searchError);
+                addLog(`[DB] Error saving search: ${searchError.message}`);
+              } else if (data && data.length > 0) {
+                const searchId = data[0].id as string;
+                addLog(`[DB] Search registered (ID: ${searchId})`);
+                const leadsToInsert = results.map(lead => leadToRow(lead, searchId));
+                const { error: leadsError } = await supabase.from('leads').insert(leadsToInsert);
+                if (leadsError) {
+                  addLog(`[DB] Error saving ${results.length} leads: ${leadsError.message}`);
+                } else {
+                  addLog(`[DB] ${results.length} creators saved.`);
+                  if (activeCampaign) {
+                    loadCampaignLeads(activeCampaign.id);
+                    loadCampaigns(userId);
+                  }
+                }
               }
             }
           } catch (err) {
@@ -513,7 +551,21 @@ function App() {
         setTimeout(() => setTerminalExpanded(false), 1500);
       },
       // userId para deduplicación
-      userId
+      userId,
+      // onLeadFound — Streaming (Pilar 4): display and save each lead as it arrives.
+      // The screen starts populating within seconds while the engine continues working.
+      async (lead: Lead) => {
+        streamedCount++;
+        setLeads(prev => [...prev, lead]);
+        setTotalLeadsGenerated(prev => prev + 1);
+        if (userId && activeSearchId) {
+          try {
+            await supabase.from('leads').insert(leadToRow(lead, activeSearchId));
+          } catch (e) {
+            console.warn('[DB] onLeadFound: save failed for @' + lead.ig_handle, e);
+          }
+        }
+      }
     );
   };
 

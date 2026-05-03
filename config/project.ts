@@ -27,5 +27,8 @@ export const PROJECT_CONFIG: ProjectConfig = {
         ],
         dailyEmailLimit: 100,
         vslLink: 'https://flownext.io/vsl',
+        // Model Tiering (Pilar 3): set to true to enable gpt-4o enrichment pass
+        // after the fast gpt-4o-mini batch. Doubles AI cost; use only when needed.
+        usePremiumModel: false,
     }
 };

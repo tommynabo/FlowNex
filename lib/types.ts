@@ -85,6 +85,13 @@ export interface FlowNextConfig {
   followerRanges: { label: string; min: number; max: number }[];
   dailyEmailLimit: number;
   vslLink: string;
+  /**
+   * Model Tiering (Pilar 3): when true, runs a second enrichment pass
+   * with gpt-4o after the fast gpt-4o-mini batch analysis.
+   * Default: false — gpt-4o-mini is fast and cheap enough for most use cases.
+   * Enable only when output quality must be maximized and cost is not a concern.
+   */
+  usePremiumModel?: boolean;
 }
 
 export interface ProjectConfig {

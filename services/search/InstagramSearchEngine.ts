@@ -111,6 +111,11 @@ const INSTAGRAM_POSTS_SCRAPER = 'apify~instagram-scraper';
 // TikTok URL path segments that are not profile pages
 const TIKTOK_SKIP_HANDLES = new Set(['tag', 'search', 'discover', 'music', 'video', 'live', 'trending', 'foryou', 't']);
 
+// Anti-ICP negative keywords — always appended to every Google Search query to purge
+// local physical businesses (restaurants, retail, clinics) and generic corporate accounts.
+// This is the first-line defence against false positives at the search layer.
+const ANTI_ICP_NEGATIVES = '-restaurant -cafe -clinic -store -food -apparel -"life coach" -corporate -consulting -boutique -"shop now"';
+
 // Handle with platform tag — produced during multi-platform search result parsing
 type HandleWithPlatform = { handle: string; platform: 'instagram' | 'tiktok' };
 
@@ -175,11 +180,12 @@ export class InstagramSearchEngine {
       const mod = attempt % 3;
       if (mod === 0) {
         // Combined: broadest reach, CTA-narrowed to exclude random tagged posts
-        return `(site:tiktok.com OR site:instagram.com) ${orGroup} ${ctaGroup} ${loc} -site:instagram.com/p/ -site:instagram.com/reel/ -site:tiktok.com/tag/`;
+        // "link in bio" is mandatory — forces creator-intentionality signal on every query
+        return `(site:tiktok.com OR site:instagram.com) "link in bio" ${orGroup} ${ctaGroup} ${loc} -site:instagram.com/p/ -site:instagram.com/reel/ -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`;
       } else if (mod === 1) {
-        return `site:instagram.com ${orGroup} ${loc} -site:instagram.com/p/ -site:instagram.com/reel/`;
+        return `site:instagram.com "link in bio" ${orGroup} ${loc} -site:instagram.com/p/ -site:instagram.com/reel/ ${ANTI_ICP_NEGATIVES}`;
       } else {
-        return `site:tiktok.com ${orGroup} ${loc} -site:tiktok.com/tag/`;
+        return `site:tiktok.com "link in bio" ${orGroup} ${loc} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`;
       }
     }
 
@@ -202,7 +208,7 @@ export class InstagramSearchEngine {
     }
 
     const kw = keywords.join(' ');
-    return location ? `site:instagram.com ${kw} ${location}` : `site:instagram.com ${kw}`;
+    return location ? `site:instagram.com ${kw} ${location} ${ANTI_ICP_NEGATIVES}` : `site:instagram.com ${kw} ${ANTI_ICP_NEGATIVES}`;
   }
 
   // ── Apify calls ──────────────────────────────────────────────────────────────
@@ -1332,8 +1338,26 @@ export class InstagramSearchEngine {
         continue;
       }
 
+      // ── Anti-ICP Early Exit (Paso 3) ─────────────────────────────────────────
+      // Leads flagged as Anti-ICP by the soft filter are discarded HERE — before
+      // generateCreatorAnalysisBatch(). Zero tokens spent on summaries, pain_points,
+      // cold emails, or psychological profiles for accounts that are clearly wrong targets.
+      const antiIcpLeads = toEvaluate.filter(l => (l as any).anti_icp === true);
+      if (antiIcpLeads.length > 0) {
+        for (const lead of antiIcpLeads) {
+          lead.status = 'discarded';
+          onLog(`[ANTI-ICP 🚫] @${lead.ig_handle} → discarded (cero tokens IA gastados)`);
+        }
+        onLog(`[ANTI-ICP] ${antiIcpLeads.length} lead(s) descartados sin análisis IA.`);
+      }
+      const cleanToEvaluate = toEvaluate.filter(l => !(l as any).anti_icp);
+      if (!cleanToEvaluate.length) {
+        onLog('⚠ Todos los leads del batch eran Anti-ICP. Rotando query...');
+        continue;
+      }
+
       // Accept only leads that passed ICP (all already have email at this point)
-      const toProcess = toEvaluate.slice(0, slotsRemaining);
+      const toProcess = cleanToEvaluate.slice(0, slotsRemaining);
       onLog('📧 STEP 4a ✓ — ' + toProcess.length + ' leads con email + ICP verificado listos para análisis IA');
 
       if (!toProcess.length) {

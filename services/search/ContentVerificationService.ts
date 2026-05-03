@@ -288,6 +288,12 @@ export class ContentVerificationService {
 
   private buildSystemPrompt(icpType: ICPType): string {
     const facelessCriteria = `
+CRITICAL REJECTION CRITERIA (ANTI-ICP): Score 0 immediately if the content shows:
+- Food, restaurant, cafe, acai/smoothie/juice brand, retail store, or physical product promotion
+- Traditional life coaching sessions (non-fitness, non-digital), HR/corporate consulting content
+- Standard personal lifestyle vlogs (selfies, food, travel, pets) with zero hustle/wealth/entrepreneurship angle
+If ANY of these apply, return content_alignment_score: 0 and is_icp_match: false.
+
 APPROVE (score ≥ 65) if the content matches ANY of these patterns:
 - Faceless motivation: no face shown, voiceover + b-roll, discipline, entrepreneurship, self-improvement
 - Clipper/reposter: edited clips from known figures (Hormozi, Tate, Gadzhi, Goggins, etc.)

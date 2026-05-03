@@ -47,6 +47,17 @@ const MENTAL_COACH_REJECT_KEYWORDS = [
 
 const ICP_SOFT_FILTER_BATCH_SIZE = 10;
 
+// Anti-ICP bio keywords — immediate rejection if ANY appears in bio/name/username.
+// Fires BEFORE email discovery — maximum cost savings on obvious false positives.
+// Targets: local physical businesses, food brands, and generic corporate coaches.
+const ANTI_ICP_BIO_KEYWORDS = [
+  'restaurant', 'cafe', 'coffee shop', 'food truck', 'bakery', 'catering',
+  'acai', 'smoothie', 'juice bar', 'pizz', 'burger', 'sushi',
+  'boutique', 'retail store', 'e-commerce store', 'physical products',
+  'hr consulting', 'corporate leadership', 'corporate coach', 'corporate trainer',
+  'dental', 'dentist', 'clinic', 'salon', 'spa', 'franchis',
+];
+
 // Required keywords for faceless/clipper ICP — at least ONE must be present
 const FACELESS_CLIPPER_REQUIRED_KEYWORDS = [
   'mindset', 'motivation', 'wealth', 'hustle', 'grind', 'entrepreneur',
@@ -114,6 +125,14 @@ export class ICPEvaluator {
       );
       if (brandKeyword) {
         onLog(`[HARD FILTER] 🏷 @${handle} skip: "${brandKeyword}" brand keyword in name/username`);
+        continue;
+      }
+
+      // Anti-ICP bio keyword check — rejects physical businesses and corporate accounts
+      // Applies to BOTH icpTypes: these profiles are never valid targets regardless of ICP.
+      const antiIcpKw = ANTI_ICP_BIO_KEYWORDS.find(kw => fullText.includes(kw));
+      if (antiIcpKw) {
+        onLog(`[HARD FILTER] 🚫 @${handle} skip: Anti-ICP keyword "${antiIcpKw}" detected in bio/name`);
         continue;
       }
 
@@ -187,8 +206,14 @@ Criteria to FAIL (is_physical_fitness_creator = false) — ANY of these → reje
 
 NOTE: Accept gym content creators who are NOT professional coaches — someone who posts "gym vlogs", "my workout routine", "gym motivation" is a valid target even without coaching credentials.
 
+CRITICAL REJECTION CRITERIA (ANTI-ICP): You MUST immediately reject (is_physical_fitness_creator: false, confidence: 95, anti_icp: true) if the account falls into ANY of these categories:
+1. Local Physical Businesses: restaurants, cafes, retail stores, acai/smoothie/juice brands, food trucks, e-commerce selling physical products, food franchises.
+2. Generic/Corporate Coaching: traditional life coaches (no fitness/wealth angle), HR consulting, generic corporate leadership consultants, therapists, spiritual coaches.
+3. Standard Personal Diaries/Lifestyle: everyday people posting selfies, pets, daily life, standard activities WITHOUT a specific digital or fitness creator angle.
+We ONLY want digital-first fitness creators or gym-lifestyle content creators who are individuals building an audience.
+
 Reply ONLY with a valid JSON array matching the input order:
-[ { "username": "user1", "is_physical_fitness_creator": true, "confidence": 93, "reason": "Posts daily gym workout videos and lifting content, US-based" }, ... ]`;
+[ { "username": "user1", "is_physical_fitness_creator": true, "confidence": 93, "anti_icp": false, "reason": "Posts daily gym workout videos and lifting content, US-based" }, ... ]`;
 
     const FACELESS_CLIPPER_SYSTEM_PROMPT = `You are a talent scout for a creator outreach agency targeting US/Canada Instagram accounts in the entrepreneur, motivation, and online business space.
 
@@ -213,8 +238,14 @@ Criteria to FAIL (is_human_creator = false) — ANY of these → reject:
 
 IMPORTANT: Faceless accounts (no profile photo showing a person, using logos or stock images) are VALID targets. Clippers and repost accounts are VALID targets. Do NOT reject an account just because it lacks a personal face. Accept ANY account that creates or curates content about mindset, motivation, wealth, fitness motivation, or entrepreneurship.
 
+CRITICAL REJECTION CRITERIA (ANTI-ICP): You MUST immediately reject (is_human_creator: false, confidence: 95, anti_icp: true) if the account falls into ANY of these categories:
+1. Local Physical Businesses: restaurants, cafes, retail stores, acai/smoothie/juice brands, food trucks, food franchises, e-commerce selling physical products.
+2. Generic/Corporate Coaching: traditional life coaches (no wealth/hustle/digital angle), HR consulting, generic corporate leadership consultants, therapists, spiritual coaches.
+3. Standard Personal Diaries/Lifestyle: everyday people posting selfies, pets, daily life, travel WITHOUT a hustle/wealth/entrepreneurship angle.
+We ONLY want digital-first creators, faceless channels, hustle/wealth/stoicism aesthetic, video editors, or young digital entrepreneurs.
+
 Reply ONLY with a valid JSON array matching the input order:
-[ { "username": "user1", "is_human_creator": true, "confidence": 93, "reason": "Faceless motivation page posting Hormozi clips and mindset quotes" }, ... ]`;
+[ { "username": "user1", "is_human_creator": true, "confidence": 93, "anti_icp": false, "reason": "Faceless motivation page posting Hormozi clips and mindset quotes" }, ... ]`;
 
     const SYSTEM_PROMPT = icpType === 'faceless_clipper' ? FACELESS_CLIPPER_SYSTEM_PROMPT : FITNESS_SYSTEM_PROMPT;
 
@@ -277,13 +308,19 @@ Reply ONLY with a valid JSON array matching the input order:
             result.username.toLowerCase() === (lead.ig_handle || '').toLowerCase();
 
           const passes = (result as any).is_physical_fitness_creator ?? result.is_human_creator;
-          if (usernameMatch && passes === true && result.confidence >= 70) {
+          const isAntiIcp = (result as any).anti_icp === true;
+          if (usernameMatch && passes === true && result.confidence >= 70 && !isAntiIcp) {
             lead.icp_verified = true;
             verifiedCount++;
-            onLog(`[ICP SOFT] ✓ @${lead.ig_handle} → Physical Fitness Creator (${result.confidence}% confidence)`);
+            onLog(`[ICP SOFT] ✓ @${lead.ig_handle} → ICP verified (${result.confidence}% confidence)`);
           } else {
             lead.icp_verified = false;
-            onLog(`[ICP SOFT] ✗ @${lead.ig_handle} → ${passes ? `Low confidence (${result.confidence}%)` : `Not fitness creator`}: ${result.reason || 'no reason given'}`);
+            if (isAntiIcp) {
+              (lead as any).anti_icp = true;
+              onLog(`[ICP SOFT] 🚫 @${lead.ig_handle} → ANTI-ICP detected: ${result.reason || 'no reason given'}`);
+            } else {
+              onLog(`[ICP SOFT] ✗ @${lead.ig_handle} → ${passes ? `Low confidence (${result.confidence}%)` : `Not ICP`}: ${result.reason || 'no reason given'}`);
+            }
           }
         }
 

@@ -63,6 +63,64 @@ export class EmailDiscoveryService {
   }
 
   /**
+   * Stage 3 (TikTok variant) — fetch the TikTok profile page server-side to
+   * extract any email address embedded in the page JSON.
+   * Proxied through /api/tiktok-email to avoid CORS and bot detection.
+   */
+  async findViaTikTokSource(handle: string, onLog: LogCallback): Promise<string> {
+    try {
+      const response = await fetch('/api/tiktok-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: handle }),
+      });
+
+      if (!response.ok) return '';
+
+      const data = await response.json();
+      const email = (data.email || '').toLowerCase().trim();
+
+      if (email) {
+        onLog(`[EMAIL] @${handle} (TikTok) → found in TikTok source HTML`);
+        return email;
+      }
+    } catch { /* graceful fail */ }
+
+    return '';
+  }
+
+  /**
+   * Full 3-stage email discovery for TikTok creators.
+   * Mirrors discoverEmail() but uses findViaTikTokSource() for Stage 3
+   * instead of the Instagram source HTML endpoint.
+   */
+  async discoverEmailForTikTok(
+    existingEmail: string,
+    website: string,
+    handle: string,
+    onLog: LogCallback,
+  ): Promise<string> {
+    // Stage 1 result already in hand
+    if (existingEmail && isStrictlyValidEmail(existingEmail)) {
+      onLog(`[EMAIL] @${handle} (TikTok) → found in bio/scraper fields`);
+      return existingEmail;
+    }
+
+    // Stage 2: website / bio-link page (server-side, no CORS)
+    if (website) {
+      const websiteEmail = await this.findViaWebsite(website, handle, onLog);
+      if (websiteEmail && isStrictlyValidEmail(websiteEmail)) return websiteEmail;
+    }
+
+    // Stage 3: TikTok profile page source HTML (server-side)
+    const ttEmail = await this.findViaTikTokSource(handle, onLog);
+    if (ttEmail && isStrictlyValidEmail(ttEmail)) return ttEmail;
+
+    onLog(`[EMAIL] @${handle} (TikTok) → no email found across all 3 stages`);
+    return '';
+  }
+
+  /**
    * Full 3-stage discovery orchestrator.
    * Stage 1 (Apify native fields) is already resolved in SearchService before
    * this is called — the pre-extracted `existingEmail` is passed in.

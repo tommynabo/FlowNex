@@ -40,21 +40,19 @@ const KEYWORD_POOLS: string[][] = [
 ];
 
 // ── Faceless & Clipper keyword pool ────────────────────────────────────────
-// Targets motivational/faceless accounts, clippers and entrepreneur mindset pages.
+// Behavior-based dorks targeting motivational/clipper/faceless accounts.
+// Avoids celebrity names (they surface official verified accounts instead of
+// clipper pages). Uses engagement patterns to find page-owner profiles.
 // Each inner array is one OR-group per search attempt.
 const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
-  ['"Iman Gadzhi"', '"Alex Hormozi"', '"Andrew Tate"'],
-  ['"Mindset"', '"Wealth"', '"Wifi Money"'],
-  ['"Gym Motivation"', '"Daily Quotes"', '"Slideshow"'],
-  ['"hustle"', '"grind"', '"entrepreneur"'],
-  ['"passive income"', '"financial freedom"'],
-  ['"success mindset"', '"daily motivation"', '"discipline"'],
-  ['"Hormozi clips"', '"Iman clips"', '"motivation clips"'],
-  ['"money mindset"', '"self improvement"'],
-  ['"Andrew Tate clips"', '"motivational content"'],
-  ['"entrepreneur mindset"', '"wealth mindset"'],
-  ['"gym motivation"', '"body transformation"', '"mindset"'],
-  ['"wifi money"', '"online business"', '"make money online"'],
+  ['"link in bio"', '"DM me"', '"mentorship"'],
+  ['"wifi money"', '"daily clips"', '"wealth"'],
+  ['"motivation"', '"hustle"', '"entrepreneur clips"'],
+  ['"passive income"', '"financial freedom"', '"mindset"'],
+  ['"make money online"', '"online business"', '"success"'],
+  ['"daily motivation"', '"discipline"', '"self improvement"'],
+  ['"motivational content"', '"entrepreneur mindset"'],
+  ['"money mindset"', '"wealth mindset"', '"hustle culture"'],
 ];
 
 // Location suffixes — rotate through US/Canada only (our target market)
@@ -93,6 +91,13 @@ const REGION_MAP: Record<string, string[]> = {
 // Google Search Scraper — queries `site:instagram.com [keywords]`, extracts handles from URLs
 const GOOGLE_SEARCH_SCRAPER = 'nFJndFXA5zjCTuudP';
 const INSTAGRAM_PROFILE_SCRAPER = 'apify~instagram-profile-scraper';
+const TIKTOK_PROFILE_SCRAPER = 'clockworks/tiktok-profile-scraper';
+
+// TikTok URL path segments that are not profile pages
+const TIKTOK_SKIP_HANDLES = new Set(['tag', 'search', 'discover', 'music', 'video', 'live', 'trending', 'foryou', 't']);
+
+// Handle with platform tag — produced during multi-platform search result parsing
+type HandleWithPlatform = { handle: string; platform: 'instagram' | 'tiktok' };
 
 // ── Engine ─────────────────────────────────────────────────────────────────────
 
@@ -130,14 +135,19 @@ export class InstagramSearchEngine {
     relaxed: boolean,
     icpType?: ICPType,
   ): string {
-    // Faceless & Clipper: build OR-group dorks (different format than personal brand)
+    // Faceless & Clipper: build OR-group dorks — alternate Instagram / TikTok by attempt parity
     if (icpType === 'faceless_clipper') {
       const poolIdx = attempt <= 1 ? 0 : (attempt - 2) % keywordPool.length;
       const locIdx  = attempt <= 1 ? 0 : Math.floor((attempt - 2) / keywordPool.length) % LOCATION_SUFFIXES.length;
       const terms = keywordPool[poolIdx];
       const orGroup = '(' + terms.join(' OR ') + ')';
       const loc = attempt === 1 ? 'USA OR Canada' : LOCATION_SUFFIXES[locIdx];
-      return `site:instagram.com ${orGroup} ${loc}`;
+      // Odd attempts → Instagram, even → TikTok (multi-platform rotation)
+      if (attempt % 2 !== 0) {
+        return `site:instagram.com ${orGroup} ${loc} -site:instagram.com/p/ -site:instagram.com/reel/`;
+      } else {
+        return `site:tiktok.com ${orGroup} ${loc} -site:tiktok.com/tag/`;
+      }
     }
 
     let keywords: string[];
@@ -337,6 +347,61 @@ export class InstagramSearchEngine {
     );
   }
 
+  // ── Snippet follower extraction ───────────────────────────────────────────────
+
+  /**
+   * Attempts to extract a follower count from a Google snippet string.
+   * Handles: "12.5K Followers", "2.3M Followers", "150,000 Followers", "850 followers"
+   * Returns the count as a number, or null if the pattern is absent.
+   */
+  private extractFollowersFromSnippet(text: string): number | null {
+    if (!text) return null;
+    const m = text.match(/(\d[\d,.]*)([KkMm])?\s*[Ff]ollower/);
+    if (!m) return null;
+    const raw = parseFloat(m[1].replace(/,/g, ''));
+    if (isNaN(raw)) return null;
+    const suffix = m[2]?.toLowerCase();
+    if (suffix === 'k') return Math.round(raw * 1_000);
+    if (suffix === 'm') return Math.round(raw * 1_000_000);
+    return Math.round(raw);
+  }
+
+  /**
+   * Splits an array into sequential chunks of the given size.
+   * Used to bound concurrency for email discovery and AI analysis calls.
+   */
+  private chunkArray<T>(arr: T[], size: number): T[][] {
+    const chunks: T[][] = [];
+    for (let i = 0; i < arr.length; i += size) {
+      chunks.push(arr.slice(i, i + size));
+    }
+    return chunks;
+  }
+
+  /**
+   * Normalizes a TikTok profile (clockworks/tiktok-profile-scraper output) into the
+   * RawApifyProfile shape expected by ICPEvaluator.applyHardFilter().
+   * Adds __platform: 'tiktok' so the candidate-building section sets lead.source correctly.
+   */
+  private normalizeTikTokProfile(p: Record<string, unknown>): RawApifyProfile {
+    const bioLink = p.bioLink as Record<string, unknown> | undefined;
+    const website = (bioLink?.link as string) || (p.bioLink as string) || (p.website as string) || '';
+    const regionCode = ((p.region as string) || '').toUpperCase();
+    return {
+      username: ((p.uniqueId as string) || (p.username as string) || '').toLowerCase(),
+      followersCount: (p.fans as number) || (p.followerCount as number) || (p.follower_count as number) || 0,
+      biography: ((p.signature as string) || (p.desc as string) || (p.bio as string) || ''),
+      fullName: ((p.nickname as string) || (p.displayName as string) || (p.name as string) || ''),
+      externalUrl: website,
+      publicEmail: (p.email as string) || '',
+      // Pass region so the US/CA location filter can match
+      countryCode: regionCode,
+      country: regionCode === 'US' ? 'United States' : regionCode === 'CA' ? 'Canada' : regionCode,
+      // Tag so candidate-building section can set lead.source = 'tiktok'
+      __platform: 'tiktok',
+    } as RawApifyProfile;
+  }
+
   // ── Public entry point ───────────────────────────────────────────────────────
 
   public async startSearch(
@@ -437,8 +502,8 @@ export class InstagramSearchEngine {
       try {
         searchResults = await this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
           queries: searchQuery,
-          maxPagesPerQuery: 2,
-          resultsPerPage: 10,
+          maxPagesPerQuery: 1,
+          resultsPerPage: 100,
         }, onLog);
       } catch (e: unknown) {
         onLog('[STEP 1] Google Search error: ' + (e instanceof Error ? e.message : String(e)));
@@ -470,14 +535,61 @@ export class InstagramSearchEngine {
           allOrganicResults.push(item); // fallback: top-level item already has url
         }
       }
-      const rawHandles = allOrganicResults
-        .map(item => {
-          const url = ((item.url as string) || (item.link as string) || '').toLowerCase();
-          const match = url.match(/instagram\.com\/([^/?#\s]+)/);
-          return match ? match[1].trim() : '';
-        })
-        .filter(h => h && !SKIP_HANDLES.has(h) && !seenHandles.has(h));
-      const novelHandles = [...new Set(rawHandles)].slice(0, Math.min(30, needed * 4));
+      // Build snippet map and extract handles with platform tag (Instagram + TikTok)
+      const handleToSnippet = new Map<string, string>();
+      const rawHandlesWithPlatform: HandleWithPlatform[] = [];
+      for (const item of allOrganicResults) {
+        const url = ((item.url as string) || (item.link as string) || '').toLowerCase();
+        const snippet = ((item.description as string) || (item.snippet as string) || (item.title as string) || '');
+        const igMatch = url.match(/instagram\.com\/([^/?#\s]+)/);
+        if (igMatch) {
+          const h = igMatch[1].trim();
+          if (h && !SKIP_HANDLES.has(h) && !seenHandles.has(h)) {
+            rawHandlesWithPlatform.push({ handle: h, platform: 'instagram' });
+            if (snippet) handleToSnippet.set(h, snippet);
+          }
+        } else {
+          const ttMatch = url.match(/tiktok\.com\/@([^/?#\s]+)/);
+          if (ttMatch) {
+            const h = ttMatch[1].trim();
+            if (h && !TIKTOK_SKIP_HANDLES.has(h) && !seenHandles.has(h)) {
+              rawHandlesWithPlatform.push({ handle: h, platform: 'tiktok' });
+              if (snippet) handleToSnippet.set(h, snippet);
+            }
+          }
+        }
+      }
+
+      // Deduplicate (keep first occurrence per handle)
+      const seenRaw = new Set<string>();
+      const uniqueRawHandles = rawHandlesWithPlatform.filter(({ handle }) => {
+        if (seenRaw.has(handle)) return false;
+        seenRaw.add(handle);
+        return true;
+      });
+
+      // Snippet follower pre-filter: free discard before expensive profile scraping
+      let snippetFiltered = 0;
+      let snippetPassed = 0;
+      let snippetUnknown = 0;
+      const novelHandles: HandleWithPlatform[] = [];
+      for (const item of uniqueRawHandles.slice(0, Math.min(50, needed * 5))) {
+        const snippet = handleToSnippet.get(item.handle) || '';
+        const snippetFollowers = this.extractFollowersFromSnippet(snippet);
+        if (snippetFollowers !== null) {
+          if (snippetFollowers < minFollowers || snippetFollowers > maxFollowers) {
+            snippetFiltered++;
+            continue;
+          }
+          snippetPassed++;
+        } else {
+          snippetUnknown++;
+        }
+        novelHandles.push(item);
+      }
+      if (snippetFiltered > 0 || snippetPassed > 0) {
+        onLog(`[PRE-FILTER] Snippet regex: ${snippetFiltered} descartados pre-scrape, ${snippetPassed} pasan, ${snippetUnknown} sin dato`);
+      }
 
       onLog('🔎 STEP 1/4 ✓ — ' + searchResults.length + ' items (' + allOrganicResults.length + ' organic) → ' + novelHandles.length + ' handles nuevos');
       console.log('[InstagramEngine] Attempt', attempt, '| novel handles:', novelHandles.length, 'from', allOrganicResults.length, 'organic results');
@@ -494,16 +606,34 @@ export class InstagramSearchEngine {
       }
 
       // Mark ALL novel handles as seen immediately (prevents parallel re-processing)
-      for (const h of novelHandles) seenHandles.add(h);
+      for (const { handle } of novelHandles) seenHandles.add(handle);
       consecutiveZeros = 0; // reset — fresh handles found
 
-      // ── STEP 2: Full profile scrape ──────────────────────────────────────────
-      onLog('👤 STEP 2/4 — Fetching ' + novelHandles.length + ' full profiles...');
+      // ── STEP 2: Full profile scrape — parallel by platform ──────────────────────
+      const igHandles = novelHandles.filter(h => h.platform === 'instagram').map(h => h.handle);
+      const ttHandles = novelHandles.filter(h => h.platform === 'tiktok').map(h => h.handle);
+      onLog(`👤 STEP 2/4 — Fetching profiles: ${igHandles.length} Instagram, ${ttHandles.length} TikTok`);
       let profiles: unknown[];
       try {
-        profiles = await this.callApifyActor(INSTAGRAM_PROFILE_SCRAPER, {
-          usernames: novelHandles,
-        }, onLog);
+        const scrapePromises: Promise<unknown[]>[] = [];
+        if (igHandles.length > 0) {
+          scrapePromises.push(
+            this.callApifyActor(INSTAGRAM_PROFILE_SCRAPER, { usernames: igHandles }, onLog),
+          );
+        }
+        if (ttHandles.length > 0 && icpType === 'faceless_clipper') {
+          scrapePromises.push(
+            this.callApifyActor(
+              TIKTOK_PROFILE_SCRAPER,
+              { profiles: ttHandles.map(h => `https://www.tiktok.com/@${h}`) },
+              onLog,
+            ).then(ttProfiles =>
+              (ttProfiles as Record<string, unknown>[]).map(p => this.normalizeTikTokProfile(p)),
+            ),
+          );
+        }
+        const results = await Promise.all(scrapePromises);
+        profiles = results.flat();
       } catch (e: unknown) {
         onLog('👤 STEP 2/4 ✗ Profile scraper error: ' + (e instanceof Error ? e.message : String(e)));
         // Don't count as zero — we did get handles, scraper just failed temporarily
@@ -583,9 +713,10 @@ export class InstagramSearchEngine {
           }
         }
 
+        const platformTag = (p.__platform as string) === 'tiktok' ? 'tiktok' : 'instagram';
         candidates.push({
-          id: 'ig-' + handle + '-' + Date.now(),
-          source: 'instagram',
+          id: platformTag + '-' + handle + '-' + Date.now(),
+          source: platformTag as 'instagram' | 'tiktok',
           ig_handle: handle,
           follower_count: followers,
           niche,
@@ -597,7 +728,9 @@ export class InstagramSearchEngine {
             name: fullName || '@' + handle,
             role: 'Content Creator',
             email,
-            instagram: 'https://instagram.com/' + handle,
+            instagram: platformTag === 'tiktok'
+              ? 'https://tiktok.com/@' + handle
+              : 'https://instagram.com/' + handle,
           },
           aiAnalysis: {
             summary: bio,
@@ -645,16 +778,26 @@ export class InstagramSearchEngine {
       const slotsRemaining = targetCount - accepted.length;
       const toDiscover = dbDeduped.slice(0, Math.max(slotsRemaining * 8, dbDeduped.length));
       onLog('📧 STEP 3b — Email discovery para ' + toDiscover.length + ' candidatos (antes de gastar IA)...');
-      await Promise.all(toDiscover.map(async (lead) => {
-        if (!this.isRunning) return;
-        const discovered = await emailDiscoveryService.discoverEmail(
-          lead.decisionMaker?.email || '',
-          lead.website || '',
-          lead.ig_handle || '',
-          onLog,
-        );
-        if (discovered && lead.decisionMaker) lead.decisionMaker.email = discovered;
-      }));
+      for (const chunk of this.chunkArray(toDiscover, 8)) {
+        if (!this.isRunning) break;
+        await Promise.all(chunk.map(async (lead) => {
+          if (!this.isRunning) return;
+          const discovered = lead.source === 'tiktok'
+            ? await emailDiscoveryService.discoverEmailForTikTok(
+                lead.decisionMaker?.email || '',
+                lead.website || '',
+                lead.ig_handle || '',
+                onLog,
+              )
+            : await emailDiscoveryService.discoverEmail(
+                lead.decisionMaker?.email || '',
+                lead.website || '',
+                lead.ig_handle || '',
+                onLog,
+              );
+          if (discovered && lead.decisionMaker) lead.decisionMaker.email = discovered;
+        }));
+      }
       const withEmail = toDiscover.filter(l => l.decisionMaker?.email);
       const withoutEmail = toDiscover.filter(l => !l.decisionMaker?.email);
       onLog('📧 STEP 3b ✓ — ' + withEmail.length + '/' + toDiscover.length + ' tienen email | ' +
@@ -702,28 +845,33 @@ export class InstagramSearchEngine {
 
       // ── STEP 4b: AI analysis for ICP-verified leads with email ───────────────
       onLog('✍ STEP 4b — Generando análisis IA para ' + toProcess.length + ' creadores (con email + ICP ✓)...');
-      const analyzed = (await Promise.all(toProcess.map(async (lead) => {
-        if (!this.isRunning) return null;
-        try {
-          const a = await this.generateCreatorAnalysis(lead);
-          lead.aiAnalysis = {
-            summary: a.summary,
-            painPoints: [],
-            generatedIcebreaker: a.vslPitch,
-            coldEmailSubject: a.coldEmailSubject,
-            coldEmailBody: a.coldEmailBody,
-            vslPitch: a.vslPitch,
-            fullAnalysis: a.psychologicalProfile + ' | ' + a.engagementSignal,
-            psychologicalProfile: a.psychologicalProfile,
-            engagementSignal: a.engagementSignal,
-            salesAngle: a.salesAngle,
-          };
-          lead.status = 'ready';
-        } catch {
-          lead.status = 'ready';
-        }
-        return lead;
-      }))).filter((l): l is Lead => l !== null);
+      const analyzed: Lead[] = [];
+      for (const chunk of this.chunkArray(toProcess, 5)) {
+        if (!this.isRunning) break;
+        const chunkResults = await Promise.all(chunk.map(async (lead) => {
+          if (!this.isRunning) return null;
+          try {
+            const a = await this.generateCreatorAnalysis(lead);
+            lead.aiAnalysis = {
+              summary: a.summary,
+              painPoints: [],
+              generatedIcebreaker: a.vslPitch,
+              coldEmailSubject: a.coldEmailSubject,
+              coldEmailBody: a.coldEmailBody,
+              vslPitch: a.vslPitch,
+              fullAnalysis: a.psychologicalProfile + ' | ' + a.engagementSignal,
+              psychologicalProfile: a.psychologicalProfile,
+              engagementSignal: a.engagementSignal,
+              salesAngle: a.salesAngle,
+            };
+            lead.status = 'ready';
+          } catch {
+            lead.status = 'ready';
+          }
+          return lead;
+        }));
+        analyzed.push(...chunkResults.filter((l): l is Lead => l !== null));
+      }
 
       // Accept all analyzed leads (with or without email)
       for (const lead of analyzed) {

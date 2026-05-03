@@ -5,6 +5,24 @@ export type VslSentStatus = 'pending' | 'sent' | 'opened' | 'clicked' | 'convert
 export type AudienceTier = 'nano' | 'micro' | 'mid' | 'macro';
 export type ICPType = 'personal_brand' | 'faceless_clipper';
 
+// ── Content Verification ─────────────────────────────────────────────────────
+/** A single video/post item collected from Instagram or TikTok for analysis */
+export interface VideoItem {
+  thumbnailUrl: string;
+  transcript?: string;  // caption (IG) or description (TikTok) — best available proxy for audio content
+  platform: 'instagram' | 'tiktok';
+}
+
+/** Result of deep multimodal content analysis for one creator */
+export interface ContentVerificationResult {
+  overall_score: number;        // 0–100 average across analyzed videos
+  is_icp_match: boolean;        // overall_score >= SCORE_THRESHOLD (65)
+  analyzed_videos: number;
+  analyzed_at: string;          // ISO timestamp
+  reasoning: string;            // brief explanation from the LLM
+}
+// ────────────────────────────────────────────────────────────────────────────
+
 // ── AI Setter Module ────────────────────────────────────────────────────────
 export type SetterStatus = 'pending_review' | 'approved' | 'rejected' | 'corrected' | 'sent';
 export type IntentType = 'interested' | 'objection' | 'question' | 'not_interested' | 'unsubscribe' | 'unknown';
@@ -115,8 +133,14 @@ export interface Lead {
   };
   vsl_sent_status?: VslSentStatus;
   email_status?: 'pending' | 'sent' | 'bounced' | 'replied';
-  status: 'scraped' | 'enriched' | 'ready' | 'contacted' | 'replied' | 'discarded';
+  status: 'scraped' | 'enriched' | 'ready' | 'contacted' | 'replied' | 'discarded' | 'pending_content_verification';
   icp_verified?: boolean;
+  content_alignment_score?: number;            // 0–100 set by ContentVerificationService
+  content_verification_details?: ContentVerificationResult;
+  /** Transient: populated during search, serialized into DB JSONB, consumed by cron job */
+  _videoItemsForVerification?: VideoItem[];
+  /** Transient: icpType stored alongside the lead so the cron job can use it without re-querying the campaign */
+  _icpType?: ICPType;
 }
 
 export interface AdvancedFilter {

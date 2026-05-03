@@ -10,7 +10,7 @@
  *   - MAX_RETRIES scales with the target, capped at 100
  */
 
-import { Lead, SearchConfigState, AudienceTier, ICPType } from '../../lib/types';
+import { Lead, SearchConfigState, AudienceTier, ICPType, VideoItem } from '../../lib/types';
 import { deduplicationService } from '../deduplication/DeduplicationService';
 import { PROJECT_CONFIG } from '../../config/project';
 import { icpEvaluator, RawApifyProfile } from './ICPEvaluator';
@@ -997,47 +997,38 @@ export class InstagramSearchEngine {
         continue;
       }
 
-      // ── STEP 3c: Post Vision Verifier (faceless_clipper only) ────────────────
-      // Fetch the 3 most recent posts and use GPT-4o vision to verify that at
-      // least 2 match the clipper/faceless/motivational archetype BEFORE spending
-      // credits on email discovery or AI analysis.
-      let postVerifiedCandidates = dbDeduped;
+      // ── STEP 3c: Post Data Collection (faceless_clipper only) ───────────────
+      // Collect recent post thumbnails + captions for IG handles so they are
+      // available to the async ContentVerificationService cron job later.
+      // The sync vision analysis has been removed — all dbDeduped candidates
+      // proceed to email discovery, and faceless_clipper leads exit with
+      // status 'pending_content_verification' for deep analysis in the background.
+      const postVerifiedCandidates = dbDeduped;
       if (icpType === 'faceless_clipper') {
-        const igCandidates = dbDeduped.filter(l => l.source !== 'tiktok');
-        const ttCandidates = dbDeduped.filter(l => l.source === 'tiktok');
-        const igHandlesForPosts = igCandidates.map(l => l.ig_handle || '').filter(Boolean);
+        const igCandidatesForPosts = dbDeduped.filter(l => l.source !== 'tiktok');
+        const igHandlesForPosts = igCandidatesForPosts.map(l => l.ig_handle || '').filter(Boolean);
 
-        onLog(`🎬 STEP 3c — Post vision: verificando ${dbDeduped.length} candidatos (últimos 3 posts)...`);
-
-        // Fetch recent posts for IG handles in one batch call
-        const postsMap = igHandlesForPosts.length > 0
-          ? await this.fetchRecentPosts(igHandlesForPosts, onLog)
-          : new Map<string, { caption: string; hashtags: string[]; isVideo: boolean; thumbnailUrl: string }[]>();
-
-        // Analyze IG candidates in fully parallel chunks of 5 (all chunks fire at once)
-        const igVerified: typeof dbDeduped = [];
-        await Promise.all(this.chunkArray(igCandidates, 5).map(async (chunk) => {
-          await Promise.all(chunk.map(async (lead) => {
-            if (!this.isRunning) return;
-            const handle = lead.ig_handle || '';
-            const posts = postsMap.get(handle) ?? [];
-            const result = await this.analyzePostsForFacelessICP(handle, posts, onLog);
-            if (result.approved) {
-              onLog(`[POST VISION] ✓ @${handle} — "${result.reason}" (${result.confidence}%)`);
-              igVerified.push(lead);
-            } else {
-              onLog(`[POST VISION] ✗ @${handle} — "${result.reason}"`);
+        if (igHandlesForPosts.length > 0) {
+          onLog(`🎬 STEP 3c — Recolectando posts recientes para ${igHandlesForPosts.length} candidatos IG (análisis profundo en background)...`);
+          try {
+            const postsMap = await this.fetchRecentPosts(igHandlesForPosts, onLog);
+            // Attach collected VideoItems to each lead — serialized into DB JSONB,
+            // consumed by the ContentVerificationService cron job
+            for (const lead of igCandidatesForPosts) {
+              const handle = lead.ig_handle || '';
+              const posts = postsMap.get(handle) ?? [];
+              if (posts.length > 0) {
+                (lead as Lead)._videoItemsForVerification = posts.map(p => ({
+                  thumbnailUrl: p.thumbnailUrl,
+                  transcript: p.caption || undefined,
+                  platform: 'instagram' as const,
+                } satisfies VideoItem));
+              }
             }
-          }));
-        }));
-
-        // TikTok candidates pass through without post-fetch (latestVideos already in profile)
-        postVerifiedCandidates = [...igVerified, ...ttCandidates];
-        onLog(`[POST VISION] Resultado: ${postVerifiedCandidates.length}/${dbDeduped.length} pasan verificación de posts`);
-
-        if (!postVerifiedCandidates.length) {
-          onLog('⚠ Ningún candidato pasó la verificación de posts. Rotando query...');
-          continue;
+            onLog(`[STEP 3c] ✓ Posts recolectados para ${postsMap.size}/${igHandlesForPosts.length} handles — todos pasan a email discovery`);
+          } catch (e: unknown) {
+            onLog(`[STEP 3c] ⚠ Post collection error (skipping, todos continúan): ${e instanceof Error ? e.message : String(e)}`);
+          }
         }
       }
 
@@ -1134,9 +1125,13 @@ export class InstagramSearchEngine {
                 engagementSignal: a.engagementSignal,
                 salesAngle: a.salesAngle,
               };
-              lead.status = 'ready';
+              // faceless_clipper leads await deep content analysis by the cron job;
+              // personal_brand leads are immediately ready (bio/hashtag filter sufficient)
+              lead.status = icpType === 'faceless_clipper' ? 'pending_content_verification' : 'ready';
+              if (icpType === 'faceless_clipper') lead._icpType = 'faceless_clipper';
             } catch {
-              lead.status = 'ready';
+              lead.status = icpType === 'faceless_clipper' ? 'pending_content_verification' : 'ready';
+              if (icpType === 'faceless_clipper') lead._icpType = 'faceless_clipper';
             }
             return lead;
           }));

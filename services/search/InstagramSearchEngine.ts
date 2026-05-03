@@ -55,21 +55,26 @@ const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
   ['"money mindset"', '"wealth mindset"', '"hustle culture"'],
 ];
 
-// Location suffixes — rotate through US/Canada only (our target market)
-const LOCATION_SUFFIXES = [
+// Location suffixes — split by region so the engine respects the campaign's targetRegions filter.
+// buildSearchQuery() picks the right sub-array at runtime based on icpFilters.regions.
+const LOCATION_SUFFIXES_US = [
   'USA',
-  'Canada',
   'United States',
   'California',
   'New York',
   'Texas',
   'Florida',
-  'Ontario',
-  'British Columbia',
   'American',
-  'Canadian',
   'US',
 ];
+const LOCATION_SUFFIXES_CA = [
+  'Canada',
+  'Ontario',
+  'British Columbia',
+  'Canadian',
+];
+// Fallback when both US and CA are targeted (or no region filter set)
+const LOCATION_SUFFIXES_US_CA = [...LOCATION_SUFFIXES_US, ...LOCATION_SUFFIXES_CA];
 
 // After this many consecutive attempts yielding 0 novel handles → rotate query harder
 const MAX_CONSEC_ZEROS = 5;
@@ -91,7 +96,8 @@ const REGION_MAP: Record<string, string[]> = {
 // Google Search Scraper — queries `site:instagram.com [keywords]`, extracts handles from URLs
 const GOOGLE_SEARCH_SCRAPER = 'nFJndFXA5zjCTuudP';
 const INSTAGRAM_PROFILE_SCRAPER = 'apify~instagram-profile-scraper';
-const TIKTOK_PROFILE_SCRAPER = 'clockworks/tiktok-profile-scraper';
+const TIKTOK_PROFILE_SCRAPER = 'clockworks~tiktok-profile-scraper';
+const INSTAGRAM_POSTS_SCRAPER = 'apify~instagram-scraper';
 
 // TikTok URL path segments that are not profile pages
 const TIKTOK_SKIP_HANDLES = new Set(['tag', 'search', 'discover', 'music', 'video', 'live', 'trending', 'foryou', 't']);
@@ -134,14 +140,21 @@ export class InstagramSearchEngine {
     keywordPool: string[][],
     relaxed: boolean,
     icpType?: ICPType,
+    locationSuffixes?: string[],
   ): string {
+    const locSuffixes = locationSuffixes ?? LOCATION_SUFFIXES_US_CA;
+    // Derive first-attempt location string from active suffixes
+    const hasUS = locSuffixes.some(l => l.toLowerCase().includes('us') || l.toLowerCase().includes('united states') || l.toLowerCase().includes('america'));
+    const hasCA = locSuffixes.some(l => l.toLowerCase().includes('canada') || l.toLowerCase().includes('canadian'));
+    const firstLoc = hasUS && hasCA ? 'USA OR Canada' : hasUS ? 'USA' : 'Canada';
+
     // Faceless & Clipper: build OR-group dorks — alternate Instagram / TikTok by attempt parity
     if (icpType === 'faceless_clipper') {
       const poolIdx = attempt <= 1 ? 0 : (attempt - 2) % keywordPool.length;
-      const locIdx  = attempt <= 1 ? 0 : Math.floor((attempt - 2) / keywordPool.length) % LOCATION_SUFFIXES.length;
+      const locIdx  = attempt <= 1 ? 0 : Math.floor((attempt - 2) / keywordPool.length) % locSuffixes.length;
       const terms = keywordPool[poolIdx];
       const orGroup = '(' + terms.join(' OR ') + ')';
-      const loc = attempt === 1 ? 'USA OR Canada' : LOCATION_SUFFIXES[locIdx];
+      const loc = attempt === 1 ? firstLoc : locSuffixes[locIdx];
       // Odd attempts → Instagram, even → TikTok (multi-platform rotation)
       if (attempt % 2 !== 0) {
         return `site:instagram.com ${orGroup} ${loc} -site:instagram.com/p/ -site:instagram.com/reel/`;
@@ -155,12 +168,12 @@ export class InstagramSearchEngine {
 
     if (attempt === 1) {
       keywords = baseKeywords.slice(0, 2).map(k => k.includes('"') ? k : `"${k}"`);
-      location = 'USA OR Canada';
+      location = firstLoc;
     } else {
       const poolIdx = (attempt - 2) % keywordPool.length;
-      const locIdx  = Math.floor((attempt - 2) / keywordPool.length) % LOCATION_SUFFIXES.length;
+      const locIdx  = Math.floor((attempt - 2) / keywordPool.length) % locSuffixes.length;
       keywords = keywordPool[poolIdx];
-      location = LOCATION_SUFFIXES[locIdx];
+      location = locSuffixes[locIdx];
     }
 
     // Dynamic relaxation: strip surrounding quotes when the niche is too narrow
@@ -378,6 +391,129 @@ export class InstagramSearchEngine {
     return chunks;
   }
 
+  // ── Post Vision Verifier ──────────────────────────────────────────────────────
+
+  /**
+   * Fetches the 3 most recent posts for a batch of IG handles using the
+   * instagram-scraper actor and builds a map handle → PostSummary[].
+   * TikTok handles receive an empty array (their recent videos come from
+   * the profile scraper via normalizeTikTokProfile, handled separately).
+   */
+  private async fetchRecentPosts(
+    igHandles: string[],
+    onLog: LogCallback,
+  ): Promise<Map<string, { caption: string; isVideo: boolean; thumbnailUrl: string }[]>> {
+    const result = new Map<string, { caption: string; isVideo: boolean; thumbnailUrl: string }[]>();
+    if (!igHandles.length) return result;
+
+    try {
+      const items = await this.callApifyActor(INSTAGRAM_POSTS_SCRAPER, {
+        directUrls: igHandles.map(h => `https://www.instagram.com/${h}/`),
+        resultsType: 'posts',
+        resultsLimit: 3,
+      }, onLog);
+
+      for (const item of items as Record<string, unknown>[]) {
+        const owner = ((item.ownerUsername as string) || '').toLowerCase().trim();
+        if (!owner) continue;
+        const caption = ((item.caption as string) || '').substring(0, 400);
+        const isVideo = ((item.type as string) || '').toLowerCase() === 'video';
+        const thumbnailUrl = (item.displayUrl as string) || (item.thumbnailUrl as string) || '';
+        const existing = result.get(owner) ?? [];
+        if (existing.length < 3) {
+          existing.push({ caption, isVideo, thumbnailUrl });
+          result.set(owner, existing);
+        }
+      }
+    } catch (e: unknown) {
+      onLog('[POST VISION] ⚠ Posts scraper error (skipping vision step): ' + (e instanceof Error ? e.message : String(e)));
+    }
+    return result;
+  }
+
+  /**
+   * Sends the last 3 posts (captions + thumbnails) of a creator to GPT-4o vision
+   * and asks whether ≥2 posts match the faceless/clipper/motivational content type.
+   *
+   * Returns approved=true on API error (benefit of the doubt — never block on infra failures).
+   * Returns approved=true when no posts are available (TikTok profiles with no latestVideos).
+   */
+  private async analyzePostsForFacelessICP(
+    handle: string,
+    posts: { caption: string; isVideo: boolean; thumbnailUrl: string }[],
+    onLog: LogCallback,
+  ): Promise<{ approved: boolean; reason: string; confidence: number }> {
+    // No posts available → pass through (benefit of the doubt)
+    if (!posts.length) {
+      return { approved: true, reason: 'No posts available — passed by default', confidence: 50 };
+    }
+
+    const postsContext = posts.map((p, i) =>
+      `Post ${i + 1}: type=${p.isVideo ? 'video' : 'image/carousel'}\nCaption: ${p.caption || '(no caption)'}`
+    ).join('\n\n');
+
+    const systemPrompt =
+      'You are an expert content analyst for a creator outreach agency. ' +
+      'Your task: decide if a creator\'s last 3 posts match the FACELESS / CLIPPER / MOTIVATIONAL content archetype.\n\n' +
+      'APPROVE (approved=true) if AT LEAST 2 of the 3 posts are:\n' +
+      '- Slideshow/carousel: motivational quotes, mindset tips, wealth/success content, gym motivation\n' +
+      '- Clipper: edited clips from known figures (Hormozi, Tate, Gadzhi, etc.) or other motivational speakers\n' +
+      '- Faceless motivation video: no face shown, voiceover + b-roll, entrepreneurship or self-improvement content\n' +
+      '- Online business tips: passive income, make money online, dropshipping, smma, agency growth\n\n' +
+      'REJECT (approved=false) if the majority of posts are:\n' +
+      '- Personal lifestyle with face shown (selfies, vlogs, travel, food)\n' +
+      '- Physical fitness/gym workout demonstrations by a trainer or athlete\n' +
+      '- Entertainment, comedy, or completely unrelated niches\n\n' +
+      'Reply ONLY with valid JSON, no markdown:\n' +
+      '{"approved":true,"confidence":85,"reason":"2 of 3 are Hormozi clip carousels + mindset slideshows"}';
+
+    const userMessage = `Analyze these 3 most recent posts for creator @${handle}:\n\n${postsContext}`;
+    const imageMessages = posts
+      .filter(p => p.thumbnailUrl)
+      .slice(0, 3)
+      .map(p => ({ type: 'image_url' as const, image_url: { url: p.thumbnailUrl } }));
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const response = await fetch('/api/openai', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'gpt-4o',
+            messages: [
+              { role: 'system', content: systemPrompt },
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: userMessage },
+                  ...imageMessages,
+                ],
+              },
+            ],
+            temperature: 0.2,
+            max_tokens: 150,
+          }),
+        });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+        const raw = data.choices?.[0]?.message?.content || '';
+        const jsonMatch = raw.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]) as { approved?: boolean; confidence?: number; reason?: string };
+          return {
+            approved: parsed.approved ?? true,
+            reason: parsed.reason || '',
+            confidence: parsed.confidence ?? 70,
+          };
+        }
+      } catch {
+        if (attempt < 2) await new Promise(r => setTimeout(r, 1000));
+      }
+    }
+    // API failure → pass through
+    return { approved: true, reason: 'Vision API unavailable — passed by default', confidence: 50 };
+  }
+
   /**
    * Normalizes a TikTok profile (clockworks/tiktok-profile-scraper output) into the
    * RawApifyProfile shape expected by ICPEvaluator.applyHardFilter().
@@ -452,6 +588,14 @@ export class InstagramSearchEngine {
     const baseKeywords = this.parseKeywordsFromQuery(config.query);
     const keywordPool  = this.detectKeywordPool(baseKeywords, icpType);
 
+    // Derive location suffixes to use for query rotation based on campaign's targetRegions.
+    // This ensures a US-only campaign never rotates into Canadian location suffixes.
+    const onlyUS = targetRegions.length > 0 && targetRegions.every(r => r === 'US');
+    const onlyCA = targetRegions.length > 0 && targetRegions.every(r => r === 'CA');
+    const activeLocationSuffixes = onlyUS ? LOCATION_SUFFIXES_US
+      : onlyCA ? LOCATION_SUFFIXES_CA
+      : LOCATION_SUFFIXES_US_CA;
+
     // MAX_RETRIES scales with target size — base of 40 so even small targets (1-5) have enough runway
     const MAX_RETRIES = Math.min(75, Math.max(40, targetCount * 5));
 
@@ -490,7 +634,7 @@ export class InstagramSearchEngine {
         console.log('[InstagramEngine] Query relaxation activated at attempt', attempt);
       }
 
-      const searchQuery = this.buildSearchQuery(baseKeywords, attempt, keywordPool, relaxed, icpType);
+      const searchQuery = this.buildSearchQuery(baseKeywords, attempt, keywordPool, relaxed, icpType, activeLocationSuffixes);
 
       onLog('');
       onLog('━━━ ATTEMPT ' + attempt + '/' + MAX_RETRIES + ' ━━━  ' +
@@ -772,11 +916,56 @@ export class InstagramSearchEngine {
         continue;
       }
 
+      // ── STEP 3c: Post Vision Verifier (faceless_clipper only) ────────────────
+      // Fetch the 3 most recent posts and use GPT-4o vision to verify that at
+      // least 2 match the clipper/faceless/motivational archetype BEFORE spending
+      // credits on email discovery or AI analysis.
+      let postVerifiedCandidates = dbDeduped;
+      if (icpType === 'faceless_clipper') {
+        const igCandidates = dbDeduped.filter(l => l.source !== 'tiktok');
+        const ttCandidates = dbDeduped.filter(l => l.source === 'tiktok');
+        const igHandlesForPosts = igCandidates.map(l => l.ig_handle || '').filter(Boolean);
+
+        onLog(`🎬 STEP 3c — Post vision: verificando ${dbDeduped.length} candidatos (últimos 3 posts)...`);
+
+        // Fetch recent posts for IG handles in one batch call
+        const postsMap = igHandlesForPosts.length > 0
+          ? await this.fetchRecentPosts(igHandlesForPosts, onLog)
+          : new Map<string, { caption: string; isVideo: boolean; thumbnailUrl: string }[]>();
+
+        // Analyze IG candidates in chunks of 5 to avoid OpenAI rate limits
+        const igVerified: typeof dbDeduped = [];
+        for (const chunk of this.chunkArray(igCandidates, 5)) {
+          if (!this.isRunning) break;
+          await Promise.all(chunk.map(async (lead) => {
+            if (!this.isRunning) return;
+            const handle = lead.ig_handle || '';
+            const posts = postsMap.get(handle) ?? [];
+            const result = await this.analyzePostsForFacelessICP(handle, posts, onLog);
+            if (result.approved) {
+              onLog(`[POST VISION] ✓ @${handle} — "${result.reason}" (${result.confidence}%)`);
+              igVerified.push(lead);
+            } else {
+              onLog(`[POST VISION] ✗ @${handle} — "${result.reason}"`);
+            }
+          }));
+        }
+
+        // TikTok candidates pass through without post-fetch (latestVideos already in profile)
+        postVerifiedCandidates = [...igVerified, ...ttCandidates];
+        onLog(`[POST VISION] Resultado: ${postVerifiedCandidates.length}/${dbDeduped.length} pasan verificación de posts`);
+
+        if (!postVerifiedCandidates.length) {
+          onLog('⚠ Ningún candidato pasó la verificación de posts. Rotando query...');
+          continue;
+        }
+      }
+
       // ── STEP 3b: Email discovery FIRST — no email = skip AI credits ──────────
       // Rule: discover email before spending OpenAI tokens. Only leads WITH email
       // proceed to ICP soft filter and AI analysis.
       const slotsRemaining = targetCount - accepted.length;
-      const toDiscover = dbDeduped.slice(0, Math.max(slotsRemaining * 8, dbDeduped.length));
+      const toDiscover = postVerifiedCandidates.slice(0, Math.max(slotsRemaining * 8, postVerifiedCandidates.length));
       onLog('📧 STEP 3b — Email discovery para ' + toDiscover.length + ' candidatos (antes de gastar IA)...');
       for (const chunk of this.chunkArray(toDiscover, 8)) {
         if (!this.isRunning) break;

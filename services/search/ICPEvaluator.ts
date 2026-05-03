@@ -114,12 +114,9 @@ export class ICPEvaluator {
       }
 
       if (icpType === 'faceless_clipper') {
-        // Require at least one motivation/mindset/clipper keyword
-        const hasFacelessKeyword = FACELESS_CLIPPER_REQUIRED_KEYWORDS.some(kw => fullText.includes(kw));
-        if (!hasFacelessKeyword) {
-          onLog(`[HARD FILTER] 🚫 @${handle} skip: no motivation/mindset/clipper keyword in bio/name`);
-          continue;
-        }
+        // Bio keyword check is intentionally skipped for faceless_clipper:
+        // clipper/faceless accounts rarely put keywords in their bio.
+        // Content verification is handled by STEP 3c (post vision) and the AI soft filter.
       } else {
         // personal_brand: require physical fitness keyword
         const hasFitnessKeyword = FITNESS_REQUIRED_KEYWORDS.some(kw => fullText.includes(kw));

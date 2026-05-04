@@ -10,7 +10,8 @@ interface CampaignCreatorModalProps {
 }
 
 const REGION_OPTIONS = ['US', 'UK', 'CA', 'AU', 'ES', 'MX', 'AR', 'CO', 'DE', 'FR'];
-const CONTENT_TYPE_OPTIONS = ['Fitness', 'Nutrition'];
+const CONTENT_TYPE_OPTIONS_PERSONAL_BRAND = ['Fitness', 'Nutrition'];
+const CONTENT_TYPE_OPTIONS_FACELESS = ['Motivation', 'Clips & Edits', 'Physique', 'Business', 'Fitness', 'Nutrition'];
 const FOLLOWER_PRESETS = [
   { label: 'Nano (10K–50K)', min: 10_000, max: 50_000 },
   { label: 'Micro (50K–200K)', min: 50_000, max: 200_000 },
@@ -26,9 +27,11 @@ function fmt(n: number) {
 }
 
 export function CampaignCreatorModal({ userId, onClose, onCreated }: CampaignCreatorModalProps) {
+  const DEFAULT_HASHTAGS_PERSONAL_BRAND = '#fitnesscoach #mindset #personaldevelopment';
+  const DEFAULT_HASHTAGS_FACELESS = '#motivation #discipline #transformation #natty #physique #mindset #gymtok #noexcuses';
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [hashtagsRaw, setHashtagsRaw] = useState('#fitnesscoach #mindset #personaldevelopment');
+  const [hashtagsRaw, setHashtagsRaw] = useState(DEFAULT_HASHTAGS_PERSONAL_BRAND);
   const [instantlyCampaignId, setInstantlyCampaignId] = useState('');
   const [icpType, setIcpType] = useState<ICPType>('personal_brand');
   const [icp, setIcp] = useState<IcpFilters>({
@@ -166,7 +169,7 @@ export function CampaignCreatorModal({ userId, onClose, onCreated }: CampaignCre
             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">ICP Type *</label>
             <div className="grid grid-cols-2 gap-3">
               <button
-                onClick={() => { setIcpType('personal_brand'); updateIcp({ icpType: 'personal_brand' }); }}
+                onClick={() => { setIcpType('personal_brand'); updateIcp({ icpType: 'personal_brand' }); setHashtagsRaw(DEFAULT_HASHTAGS_PERSONAL_BRAND); }}
                 className={`relative flex flex-col items-start gap-1.5 p-4 rounded-xl border-2 text-left transition-all ${
                   icpType === 'personal_brand'
                     ? 'border-primary bg-primary/5'
@@ -190,7 +193,7 @@ export function CampaignCreatorModal({ userId, onClose, onCreated }: CampaignCre
               </button>
 
               <button
-                onClick={() => { setIcpType('faceless_clipper'); updateIcp({ icpType: 'faceless_clipper' }); }}
+                onClick={() => { setIcpType('faceless_clipper'); updateIcp({ icpType: 'faceless_clipper' }); setHashtagsRaw(DEFAULT_HASHTAGS_FACELESS); }}
                 className={`relative flex flex-col items-start gap-1.5 p-4 rounded-xl border-2 text-left transition-all ${
                   icpType === 'faceless_clipper'
                     ? 'border-primary bg-primary/5'
@@ -206,7 +209,7 @@ export function CampaignCreatorModal({ userId, onClose, onCreated }: CampaignCre
                   </span>
                 </div>
                 <p className="text-xs text-muted-foreground leading-snug">
-                  Cuentas de motivación, clippers de Hormozi/Iman, carruseles mindset/gym.
+                  Clippers, editores, slideshows, physique/natty, páginas faceless de motivación o dinero.
                 </p>
                 {icpType === 'faceless_clipper' && (
                   <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-primary" />
@@ -292,7 +295,7 @@ export function CampaignCreatorModal({ userId, onClose, onCreated }: CampaignCre
               Content Types <span className="text-muted-foreground font-normal">(empty = any)</span>
             </label>
             <div className="flex flex-wrap gap-2">
-              {CONTENT_TYPE_OPTIONS.map(ct => (
+              {(icpType === 'faceless_clipper' ? CONTENT_TYPE_OPTIONS_FACELESS : CONTENT_TYPE_OPTIONS_PERSONAL_BRAND).map(ct => (
                 <button
                   key={ct}
                   onClick={() => toggleContentType(ct)}

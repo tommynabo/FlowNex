@@ -56,20 +56,36 @@ const ANTI_ICP_BIO_KEYWORDS = [
   'boutique', 'retail store', 'e-commerce store', 'physical products',
   'hr consulting', 'corporate leadership', 'corporate coach', 'corporate trainer',
   'dental', 'dentist', 'clinic', 'salon', 'spa', 'franchis',
+  // Spanish-market physical business rejections
+  'restaurante', 'cafetería', 'panadería', 'tienda física', 'local comercial',
+  'inmobiliaria', 'peluquería', 'clínica', 'consulta médica', 'franquicia',
 ];
 
 // Required keywords for faceless/clipper ICP — at least ONE must be present
+// Checked against the combined fullText (bio + name + handle).
+// Expanded to include Spanish-market signals based on ICP reference accounts:
+//   @arys.fitness (mentalidad, entrenamiento), @brian09__ (mejor versión),
+//   @bautibelloso (natty), @finesteditsz (clipper/editor), @moullaga67 (💸 handle)
 const FACELESS_CLIPPER_REQUIRED_KEYWORDS = [
+  // EN — content identity
   'mindset', 'motivation', 'wealth', 'hustle', 'grind', 'entrepreneur',
-  'clips', 'clip', 'money', 'success', 'discipline', 'selfimprovement',
-  'wifimoney', 'passiveincome', 'financialfreedom', 'hormozi', 'gadzhi',
-  'tate', 'daily', 'slideshow', 'mindsetcoach', 'businessmindset',
+  'clips', 'clip', 'clipper', 'editor', 'edits', 'money', 'success',
+  'discipline', 'selfimprovement', 'wifimoney', 'passiveincome',
+  'financialfreedom', 'hormozi', 'gadzhi', 'tate', 'goggins',
+  'daily', 'slideshow', 'mindsetcoach', 'businessmindset',
   'successmindset', 'gymmotivation', 'moneymindset', 'dailymotivation',
   'motivational', 'makemoney', 'onlinebusiness', 'entrepreneurship',
-  // Gym motivation + body transformation category
   'bodytransformation', 'transformation', 'gymtok', 'fitnessmotivation',
   'noexcuses', 'neversettle', 'hardwork', 'nodaysoff', 'grindset',
   'physique', 'gains', 'shredded', 'bulk', 'cutting', 'aesthetics',
+  'natty', 'lifting', 'bestversion',
+  // ES — Spanish-speaking market signals (Spain, Argentina, México, Colombia)
+  'mentalidad', 'motivacion', 'motivación', 'disciplina', 'constancia',
+  'emprendimiento', 'emprendedor', 'dinero', 'riqueza', 'exito', 'éxito',
+  'mejorversion', 'sinexcusas', 'rutina', 'entrenamiento', 'transformacion',
+  'libertadfinanciera', 'negocio', 'crecimiento', 'progreso', 'frases',
+  // Handle-level signals common in faceless/clipper account usernames
+  'daily', 'clips', 'edits', 'motivation', 'mindset', 'fitness', 'gym',
 ];
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -137,9 +153,16 @@ export class ICPEvaluator {
       }
 
       if (icpType === 'faceless_clipper') {
-        // Bio keyword check is intentionally skipped for faceless_clipper:
-        // clipper/faceless accounts rarely put keywords in their bio.
-        // Content verification is handled by STEP 3c (post vision) and the AI soft filter.
+        // Positive signal check: at least ONE faceless/clipper keyword must appear
+        // in the combined fullText (bio + name + handle). Accounts like @bautibelloso
+        // (bio: "natty 🇦🇷") or @moullaga67 (name: "💸💸💸") pass via their handle or name.
+        // Accounts with ZERO relevant signal (pure lifestyle, random personal accounts)
+        // are filtered here before reaching the more expensive AI soft filter.
+        const hasClipperSignal = FACELESS_CLIPPER_REQUIRED_KEYWORDS.some(kw => fullText.includes(kw));
+        if (!hasClipperSignal) {
+          onLog(`[HARD FILTER] 🚫 @${handle} skip: no faceless/clipper signal in bio/name/handle`);
+          continue;
+        }
       } else {
         // personal_brand: require physical fitness keyword
         const hasFitnessKeyword = FITNESS_REQUIRED_KEYWORDS.some(kw => fullText.includes(kw));
@@ -215,37 +238,62 @@ We ONLY want digital-first fitness creators or gym-lifestyle content creators wh
 Reply ONLY with a valid JSON array matching the input order:
 [ { "username": "user1", "is_physical_fitness_creator": true, "confidence": 93, "anti_icp": false, "reason": "Posts daily gym workout videos and lifting content, US-based" }, ... ]`;
 
-    const FACELESS_CLIPPER_SYSTEM_PROMPT = `You are a talent scout for a creator outreach agency targeting US/Canada Instagram accounts in the entrepreneur, motivation, and online business space.
+    const FACELESS_CLIPPER_SYSTEM_PROMPT = `You are a talent scout for a creator outreach agency. Your job is to decide whether each profile belongs to one of the TARGET CREATOR ARCHETYPES below. We target BOTH English-speaking (US/CA/UK) AND Spanish-speaking (Spain, Argentina, México, Colombia) markets.
 
-Your job is to decide whether each profile belongs to a FACELESS, CLIPPER, or MOTIVATION CONTENT CREATOR — this includes accounts without showing a face, pages that clip motivational content from figures like Alex Hormozi, Iman Gadzhi, or Andrew Tate, slideshow/carousel accounts about mindset, wealth, or gym motivation, and individual entrepreneurs with an online-business-focused personal brand.
+TARGET ARCHETYPES — pass if the profile clearly fits ANY of these:
 
-Criteria to PASS (is_human_creator = true) — the profile must fit ONE of these:
-- Faceless motivation page: posts mindset quotes, daily motivation, wealth/success content (even without showing a face or a logo as profile picture)
-- Clipper account: reposts or edits clips from Alex Hormozi, Iman Gadzhi, Andrew Tate, or similar figures
-- Slideshow/carousel account: creates content about mindset, gym motivation, self-improvement, wealth, discipline
-- Entrepreneur personal brand: individual focused on making money online, wifi money, passive income, business tips
-- Individual gym motivation account: posts motivational gym content, body transformation, hustle/grind content — even without being a certified coach
+1. CLIPPER / VIDEO EDITOR
+   - Explicitly identifies as "clipper", "editor", "edits" in bio or name
+   - Reposts or edits clips from figures like Hormozi, Tate, Goggins, Gadzhi, etc.
+   - Example: bio "Inspiring clipper and editor / Dm for Promos" + payhip.com link
+   - Strong approval signal: bio contains "dm for promos", "payhip", "gumroad", "edits"
 
-They must ALSO be:
-- Active content creators (not completely inactive or suspended-looking accounts)
-- Based in US or Canada (or appear to be, based on language/references)
+2. FACELESS MOTIVATION / MINDSET PAGE
+   - Posts motivation, discipline, mindset quotes — does NOT show a face
+   - Name/handle often contains: noexcuses, daily, mindset, discipline, motivation
+   - May have minimal or no bio — accept if handle/name signals motivation content
+   - Example: @nofexcuses with name "NoExcusesClub" and bio "be the best version of yourself"
 
-Criteria to FAIL (is_human_creator = false) — ANY of these → reject:
-- Large official brand accounts, media companies, or entertainment studios
+3. PHYSIQUE / NATTY / GYM PROGRESSION CREATOR
+   - Young individuals posting gym progress, body transformation, natty journey
+   - Bio often contains: weight/height stats, "natty", flag emoji, age — very minimal
+   - Example: @bautibelloso bio "18 86kg 1.81cm 🇦🇷natty" — this is a PERFECT ICP match
+   - Accept creators who show their physique and tag gym/fitness content
+
+4. ES/LATAM FITNESS & LIFESTYLE CREATOR (Spanish-speaking market)
+   - Creates content in Spanish about fitness, lifestyle, mentality, daily motivation
+   - Bio signals: "mentalidad", "entrenamiento", "mejor versión", "disciplina", "estilo de vida"
+   - Example: @arys.fitness "🇬🇶🇪🇸 Fitness. Estilo de vida. Mentalidad" + linktr.ee
+   - Example: @brian09__ "Consigue tu mejor versión 1:1 conmigo" + forms.gle link
+
+5. MONEY / WEALTH FACELESS ACCOUNT
+   - Emoji-heavy name (💸, 🤑, 💰), minimal or no bio
+   - Handle may contain: money, wealth, dinero, finance
+   - Accept if username + name context clearly signal money/finance/hustle niche
+   - Example: @moullaga67 with name "💸💸💸" and no bio — VALID if handle suggests finance
+
+AUTO-APPROVE SIGNALS (approve with confidence ≥ 88, skip lengthy analysis):
+- Bio contains "clipper" or "editor" or "edits": auto-approve
+- Bio contains "dm for promos" or "dm for collab": auto-approve
+- Bio contains "payhip.com" or "gumroad.com" or "forms.gle": auto-approve
+- Bio contains "linktr.ee" AND niche keywords (fitness/motivation/mindset): auto-approve
+- Username/handle contains: clips, edits, clipper, daily, motivation, mindset, noexcuses, natty, physique, mentalidad, disciplina, motivacion
+
+REJECT (is_human_creator = false):
+- Large official brand accounts, media companies, entertainment studios
 - Accounts with zero relevance to motivation, mindset, wealth, gym, or entrepreneurship
 - Spam or bot accounts with gibberish bios
-- Sports teams, corporations, or government accounts
+- Pure personal lifestyle (selfies, travel, food, pets) with NO hustle/fitness/motivation angle
+- Traditional life coaches, therapists, HR consultants with no digital/fitness angle
 
-IMPORTANT: Faceless accounts (no profile photo showing a person, using logos or stock images) are VALID targets. Clippers and repost accounts are VALID targets. Do NOT reject an account just because it lacks a personal face. Accept ANY account that creates or curates content about mindset, motivation, wealth, fitness motivation, or entrepreneurship.
+CRITICAL ANTI-ICP (reject immediately, anti_icp: true):
+- Local physical businesses: restaurants, cafes, tiendas, acai, bakeries, physical retail
+- Corporate/HR consulting, therapists, spiritual coaches (no wealth/fitness angle)
 
-CRITICAL REJECTION CRITERIA (ANTI-ICP): You MUST immediately reject (is_human_creator: false, confidence: 95, anti_icp: true) if the account falls into ANY of these categories:
-1. Local Physical Businesses: restaurants, cafes, retail stores, acai/smoothie/juice brands, food trucks, food franchises, e-commerce selling physical products.
-2. Generic/Corporate Coaching: traditional life coaches (no wealth/hustle/digital angle), HR consulting, generic corporate leadership consultants, therapists, spiritual coaches.
-3. Standard Personal Diaries/Lifestyle: everyday people posting selfies, pets, daily life, travel WITHOUT a hustle/wealth/entrepreneurship angle.
-We ONLY want digital-first creators, faceless channels, hustle/wealth/stoicism aesthetic, video editors, or young digital entrepreneurs.
+IMPORTANT LANGUAGE NOTE: Spanish-language profiles are FULLY VALID targets. Do not penalize accounts for being in Spanish. "natty", "mentalidad", "entrenamiento", "mejor versión", "disciplina" are strong ICP signals.
 
 Reply ONLY with a valid JSON array matching the input order:
-[ { "username": "user1", "is_human_creator": true, "confidence": 93, "anti_icp": false, "reason": "Faceless motivation page posting Hormozi clips and mindset quotes" }, ... ]`;
+[ { "username": "user1", "is_human_creator": true, "confidence": 91, "anti_icp": false, "reason": "Physique/natty creator, bio shows stats and natty flag, Argentina" }, ... ]`;
 
     const SYSTEM_PROMPT = icpType === 'faceless_clipper' ? FACELESS_CLIPPER_SYSTEM_PROMPT : FITNESS_SYSTEM_PROMPT;
 

@@ -40,26 +40,39 @@ const KEYWORD_POOLS: string[][] = [
 ];
 
 // ── Faceless & Clipper keyword pool ────────────────────────────────────────
-// Behavior-based dorks targeting motivational/clipper/faceless accounts.
-// Avoids celebrity names (they surface official verified accounts instead of
-// clipper pages). Uses engagement patterns to find page-owner profiles.
+// 13 archetype-specific groups derived from ICP reference accounts:
+//   @finesteditsz (clipper), @nofexcuses (EN motivation), @arys.fitness (ES fitness),
+//   @brian09__ (ES gym creator), @bautibelloso (physique/natty), @moullaga67 (money faceless)
 // Each inner array is one OR-group per search attempt.
+// NOTE: "link in bio" is NOT required here — many ICP accounts have minimal bios.
+// It is only injected on combined-platform queries (mod===0) in buildSearchQuery.
 const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
-  // Core motivation + entrepreneur intent
-  ['"link in bio"', '"DM me"', '"mentorship"'],
-  ['"wifi money"', '"daily clips"', '"wealth"'],
-  ['"motivation"', '"hustle"', '"entrepreneur clips"'],
-  ['"passive income"', '"financial freedom"', '"mindset"'],
-  ['"make money online"', '"online business"', '"success"'],
-  ['"daily motivation"', '"discipline"', '"self improvement"'],
-  ['"motivational content"', '"entrepreneur mindset"'],
-  ['"money mindset"', '"wealth mindset"', '"hustle culture"'],
-  // CTA & behavior signals — targets accounts that explicitly use these patterns
-  ['"edits"', '"discipline"', '"mindset"'],
-  ['"success"', '"wealth"', '"motivation"'],
-  ['"linktr.ee"', '"DM for collab"', '"link in bio"'],
-  ['"DM for promo"', '"coaching"', '"entrepreneur"'],
-  ['"mindset coach"', '"success mindset"', '"grind"'],
+  // 1. Clipper / editor identity — explicit self-identification
+  ['"clipper"', '"editor"', '"edits"', '"daily clips"', '"dm for promos"'],
+  // 2. EN motivation / no-excuses archetype
+  ['"no excuses"', '"best version"', '"discipline"', '"hard work"'],
+  // 3. EN hustle / wealth / online business
+  ['"passive income"', '"wifi money"', '"make money online"', '"online business"'],
+  // 4. EN gym motivation / physique
+  ['"no days off"', '"body transformation"', '"physique"', '"gains"', '"natty"'],
+  // 5. EN mindset / stoicism / grindset
+  ['"mindset"', '"stoic"', '"grindset"', '"self improvement"', '"discipline"'],
+  // 6. ES motivation / mentalidad — Spanish-speaking market
+  ['"mentalidad"', '"motivación"', '"disciplina"', '"sin excusas"'],
+  // 7. ES gym / fitness / physique in Spanish
+  ['"natty"', '"rutina"', '"entrenamiento"', '"mejor versión"', '"physique"'],
+  // 8. ES hustle / emprendimiento
+  ['"emprendimiento"', '"dinero online"', '"libertad financiera"', '"mentalidad ganadora"'],
+  // 9. CTA / creator-intent signals — links to payhip, gumroad, forms.gle, linktr.ee
+  ['"payhip"', '"gumroad"', '"forms.gle"', '"linktr.ee"'],
+  // 10. Slideshow / carousel / frases — content format signals
+  ['"slideshow"', '"frases"', '"quotes"', '"tips diarios"', '"desliza"'],
+  // 11. Transformation / progress content
+  ['"transformation"', '"gymtok"', '"cutting"', '"bulking"', '"progreso"'],
+  // 12. Figure-clip accounts (editors of Hormozi, Tate, Goggins etc.)
+  ['"hormozi"', '"goggins"', '"tate"', '"gadzhi"', '"david goggins"'],
+  // 13. Finance / money faceless accounts (emoji names, minimal bios)
+  ['"dinero"', '"riqueza"', '"financial freedom"', '"money"', '"wealth"'],
 ];
 
 // Location suffixes — split by region so the engine respects the campaign's targetRegions filter.
@@ -80,8 +93,26 @@ const LOCATION_SUFFIXES_CA = [
   'British Columbia',
   'Canadian',
 ];
+// Spanish-speaking markets — Spain + LatAm
+const LOCATION_SUFFIXES_ES = [
+  'España',
+  'Spain',
+  'Madrid',
+  'Barcelona',
+  'Valencia',
+];
+const LOCATION_SUFFIXES_LATAM = [
+  'Argentina',
+  'México',
+  'Colombia',
+  'Buenos Aires',
+  'Ciudad de México',
+  'Medellín',
+  'Latino',
+];
 // Fallback when both US and CA are targeted (or no region filter set)
 const LOCATION_SUFFIXES_US_CA = [...LOCATION_SUFFIXES_US, ...LOCATION_SUFFIXES_CA];
+const LOCATION_SUFFIXES_ES_LATAM = [...LOCATION_SUFFIXES_ES, ...LOCATION_SUFFIXES_LATAM];
 
 // After this many consecutive attempts yielding 0 novel handles → rotate query harder
 const MAX_CONSEC_ZEROS = 5;
@@ -160,32 +191,41 @@ export class InstagramSearchEngine {
     // Derive first-attempt location string from active suffixes
     const hasUS = locSuffixes.some(l => l.toLowerCase().includes('us') || l.toLowerCase().includes('united states') || l.toLowerCase().includes('america'));
     const hasCA = locSuffixes.some(l => l.toLowerCase().includes('canada') || l.toLowerCase().includes('canadian'));
-    const firstLoc = hasUS && hasCA ? 'USA OR Canada' : hasUS ? 'USA' : 'Canada';
+    const hasES = locSuffixes.some(l => l.toLowerCase().includes('spain') || l.toLowerCase().includes('españa') || l.toLowerCase().includes('madrid'));
+    const hasLatam = locSuffixes.some(l => ['argentina','méxico','colombia','latino'].some(x => l.toLowerCase().includes(x)));
+    const firstLoc = hasES || hasLatam
+      ? (hasES && hasLatam ? 'España OR Argentina OR México OR Colombia' : hasES ? 'España' : 'Argentina OR México OR Colombia')
+      : (hasUS && hasCA ? 'USA OR Canada' : hasUS ? 'USA' : 'Canada');
 
-    // Faceless & Clipper: build OR-group dorks — rotate across 3 query modes:
-    //   attempt % 3 === 1  → Instagram-only  (site:instagram.com)
-    //   attempt % 3 === 2  → TikTok-only     (site:tiktok.com)
-    //   attempt % 3 === 0  → Combined        (site:tiktok.com OR site:instagram.com) + CTA group
-    // This gives 3x more surface area than the old binary toggle and captures accounts
-    // that appear in both platforms or that would only surface via combined queries.
+    // Faceless & Clipper: 4-cycle rotation — TikTok-first (2:1 over Instagram).
+    //   mod === 0  → Combined  (site:tiktok.com OR site:instagram.com) + CTA group
+    //   mod === 1  → TikTok only  (no "link in bio" — many ICP accounts have minimal bios)
+    //   mod === 2  → TikTok only  (different keyword group)
+    //   mod === 3  → Instagram only
+    // "link in bio" is ONLY injected on combined-platform queries (mod===0).
+    // Single-platform queries use the raw OR-group to avoid filtering out @bautibelloso-style
+    // accounts with minimal bios.
     if (icpType === 'faceless_clipper') {
       const poolIdx = attempt <= 1 ? 0 : (attempt - 2) % keywordPool.length;
       const locIdx  = attempt <= 1 ? 0 : Math.floor((attempt - 2) / keywordPool.length) % locSuffixes.length;
       const terms = keywordPool[poolIdx];
       const orGroup = '(' + terms.join(' OR ') + ')';
       const loc = attempt === 1 ? firstLoc : locSuffixes[locIdx];
-      // CTA group — injected only on combined-platform queries to narrow intent without
-      // over-restricting single-platform queries that already use behavior keywords
-      const ctaGroup = '("link in bio" OR "DM for promo" OR "linktr.ee" OR "DM me")';
-      const mod = attempt % 3;
+      // CTA group — injected only on combined-platform queries to narrow intent
+      const ctaGroup = '("link in bio" OR "DM for promo" OR "linktr.ee" OR "payhip" OR "forms.gle")';
+      const mod = attempt % 4;
       if (mod === 0) {
-        // Combined: broadest reach, CTA-narrowed to exclude random tagged posts
-        // "link in bio" is mandatory — forces creator-intentionality signal on every query
-        return `(site:tiktok.com OR site:instagram.com) "link in bio" ${orGroup} ${ctaGroup} ${loc} -site:instagram.com/p/ -site:instagram.com/reel/ -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`;
+        // Combined: broadest reach, CTA-narrowed to force creator-intent signal
+        return `(site:tiktok.com OR site:instagram.com) ${orGroup} ${ctaGroup} ${loc} -site:instagram.com/p/ -site:instagram.com/reel/ -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`;
       } else if (mod === 1) {
-        return `site:instagram.com "link in bio" ${orGroup} ${loc} -site:instagram.com/p/ -site:instagram.com/reel/ ${ANTI_ICP_NEGATIVES}`;
+        // TikTok-only — no "link in bio" requirement: finds minimal-bio creators
+        return `site:tiktok.com ${orGroup} ${loc} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`;
+      } else if (mod === 2) {
+        // TikTok-only with CTA signal — second TikTok cycle per 4-attempt rotation
+        return `site:tiktok.com ${orGroup} ("dm for promo" OR "linktr.ee" OR "payhip") ${loc} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`;
       } else {
-        return `site:tiktok.com "link in bio" ${orGroup} ${loc} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`;
+        // Instagram-only — no "link in bio" requirement
+        return `site:instagram.com ${orGroup} ${loc} -site:instagram.com/p/ -site:instagram.com/reel/ ${ANTI_ICP_NEGATIVES}`;
       }
     }
 
@@ -297,11 +337,21 @@ export class InstagramSearchEngine {
 
   private detectNiche(bio: string, username: string, fullName: string): string {
     const text = (bio + ' ' + username + ' ' + fullName).toLowerCase();
+    // Clipper / editor — highest specificity, check first
+    if (/clipper|editor\b|edits|daily.?clips|dm.?for.?promo/.test(text)) return 'Clips & Edits';
+    // Physique / natty — gym progression creators
+    if (/natty|physique|cutting|bulking|gains|aesthetics|body.?transformation|shredded/.test(text)) return 'Physique';
+    // Finance / wealth faceless
+    if (/wifi.?money|passive.?income|financial.?freedom|make.?money|dinero|riqueza|libertad.?financiera/.test(text)) return 'Business';
+    // Motivation / mindset (EN + ES)
+    if (/mindset|motivation|discipline|no.?excuses|grindset|hard.?work|mentalidad|motivaci[oó]n|disciplina|sin.?excusas/.test(text)) return 'Motivation';
+    // Fitness (EN)
     if (/fitness|gym|workout|bodybuilding|strength|crossfit/.test(text)) return 'Fitness';
+    // Fitness (ES)
+    if (/entrenamiento|rutina|ejercicio|forma.?f[ií]sica/.test(text)) return 'Fitness';
     if (/yoga|meditation|mindfulness|wellness|breathwork/.test(text)) return 'Wellness';
-    if (/nutrition|diet|healthyfood|mealprep|weightloss/.test(text)) return 'Nutrition';
-    if (/mindset|personaldevelopment|selfimprovement|motivation|lifecoach/.test(text)) return 'Personal Dev';
-    if (/entrepreneur|business|startup|marketing|sales/.test(text)) return 'Business';
+    if (/nutrition|diet|healthyfood|mealprep|weightloss|nutrici[oó]n/.test(text)) return 'Nutrition';
+    if (/entrepreneur|business|startup|marketing|sales|emprendimiento/.test(text)) return 'Business';
     if (/running|marathon|triathlon|cycling|endurance/.test(text)) return 'Endurance';
     return 'Other';
   }
@@ -884,11 +934,17 @@ export class InstagramSearchEngine {
     const keywordPool  = this.detectKeywordPool(baseKeywords, icpType);
 
     // Derive location suffixes to use for query rotation based on campaign's targetRegions.
-    // This ensures a US-only campaign never rotates into Canadian location suffixes.
+    // This ensures a US-only campaign never rotates into Canadian location suffixes,
+    // and a Spanish-language campaign uses ES/LatAm suffixes instead of US/CA.
     const onlyUS = targetRegions.length > 0 && targetRegions.every(r => r === 'US');
     const onlyCA = targetRegions.length > 0 && targetRegions.every(r => r === 'CA');
-    const activeLocationSuffixes = onlyUS ? LOCATION_SUFFIXES_US
+    const hasEsRegion = targetRegions.some(r => ['ES', 'MX', 'AR', 'CO'].includes(r));
+    const hasEnRegion = targetRegions.some(r => ['US', 'CA', 'UK', 'AU'].includes(r));
+    const activeLocationSuffixes =
+      onlyUS ? LOCATION_SUFFIXES_US
       : onlyCA ? LOCATION_SUFFIXES_CA
+      : (hasEsRegion && !hasEnRegion) ? LOCATION_SUFFIXES_ES_LATAM
+      : (hasEsRegion && hasEnRegion) ? [...LOCATION_SUFFIXES_US_CA, ...LOCATION_SUFFIXES_ES_LATAM]
       : LOCATION_SUFFIXES_US_CA;
 
     // MAX_RETRIES scales with target size — base of 40 so even small targets (1-5) have enough runway

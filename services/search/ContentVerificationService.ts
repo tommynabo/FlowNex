@@ -177,9 +177,11 @@ export class ContentVerificationService {
     item: VideoItem,
     icpType: ICPType,
   ): Promise<SingleVideoAnalysis> {
-    // No data at all → pass by default
+    // No data at all → pass by default.
+    // Score 70 (above CONTENT_SCORE_THRESHOLD=65) ensures the aggregated average
+    // also passes when ALL items have no data — prevents false negatives.
     if (!item.thumbnailUrl && !item.transcript) {
-      return { content_alignment_score: 50, is_icp_match: true, reasoning: 'No data available — passed by default' };
+      return { content_alignment_score: 70, is_icp_match: true, reasoning: 'No data available — passed by default' };
     }
 
     const systemPrompt = this.buildSystemPrompt(icpType);

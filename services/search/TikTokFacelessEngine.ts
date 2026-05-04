@@ -328,11 +328,19 @@ export class TikTokFacelessEngine {
         if (!profileMap.has(handle)) profileMap.set(handle, { meta, isProfileMode: false, videos: [] });
         const entry = profileMap.get(handle)!;
         if (entry.videos.length < 5) {
+          // clockworks~tiktok-scraper uses item.text for captions and item.videoMeta.coverUrl for thumbnails
+          // clockworks~tiktok-profile-scraper (old) used item.desc and item.covers[]
+          const videoMeta = item.videoMeta as Record<string, unknown> | undefined;
           entry.videos.push({
             thumbnailUrl:
+              (videoMeta?.coverUrl as string) ||
+              (videoMeta?.cover as string) ||
               (Array.isArray(item.covers) ? (item.covers as string[])[0] : '') ||
               (item.thumbnail as string) || '',
-            desc: (item.desc as string) || (item.description as string) || '',
+            desc:
+              (item.text as string) ||
+              (item.desc as string) ||
+              (item.description as string) || '',
           });
         }
       }

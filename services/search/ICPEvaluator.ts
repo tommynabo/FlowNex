@@ -135,14 +135,15 @@ export class ICPEvaluator {
       const fullText = `${bioLower} ${nameLower} ${handle}`;
       const followers = profile.followersCount || 0;
 
-      // Follower range
+      // Follower range — TikTok faceless/clipper accounts scale much higher than Instagram personal brands
+      const maxFollowers = icpType === 'faceless_clipper' ? 1_000_000 : HARD_FILTER_MAX_FOLLOWERS;
       if (followers < HARD_FILTER_MIN_FOLLOWERS) {
         onLog(`[HARD FILTER] ↓ @${handle} skip: ${followers.toLocaleString()} < min ${HARD_FILTER_MIN_FOLLOWERS.toLocaleString()} followers`);
         rejections.followerLow++;
         continue;
       }
-      if (followers > HARD_FILTER_MAX_FOLLOWERS) {
-        onLog(`[HARD FILTER] ↑ @${handle} skip: ${followers.toLocaleString()} > max ${HARD_FILTER_MAX_FOLLOWERS.toLocaleString()} followers`);
+      if (followers > maxFollowers) {
+        onLog(`[HARD FILTER] ↑ @${handle} skip: ${followers.toLocaleString()} > max ${maxFollowers.toLocaleString()} followers`);
         rejections.followerHigh++;
         continue;
       }

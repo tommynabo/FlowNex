@@ -205,75 +205,87 @@ export class TikTokFacelessEngine {
     return items;
   }
 
-  // ── TikTok profile normalization ──────────────────────────────────────────────
+  // ── TikTok profile grouping ──────────────────────────────────────────────────
 
   /**
-   * Normalizes a clockworks~tiktok-profile-scraper output item into the
-   * RawApifyProfile shape expected by ICPEvaluator.applyHardFilter().
-   * Also extracts latestVideos[] for inline Lean Content Analysis.
+   * clockworks~tiktok-profile-scraper returns VIDEO items — not profile objects.
+   * Each item represents one video; the profile data lives in authorMeta.
+   * Key fields:
+   *   item.author          → handle (string)
+   *   item.authorMeta.name → handle (string) — same as item.author
+   *   item.authorMeta.nickName → display name
+   *   item.authorMeta.signature → bio
+   *   item.authorMeta.fans → follower count
+   *   item.authorMeta.region → country code
+   *   item.authorMeta.bioLink → string URL or { link: string }
+   *   item.desc            → video caption (used as latestVideo)
+   *   item.covers[]        → thumbnail URLs
+   *
+   * This function groups items by author → one RawApifyProfile per creator.
+   * The first 3 videos per creator are stored in _latestVideos for inline
+   * Lean Content Analysis (zero extra Apify calls).
    */
-  private normalizeTikTokProfile(p: Record<string, unknown>): RawApifyProfile & {
-    _latestVideos: { thumbnailUrl: string; desc: string }[];
-  } {
-    const meta = (p.authorMeta as Record<string, unknown>) || {};
-    const bioLink = (p.bioLink as Record<string, unknown>) || {};
-    const website =
-      (typeof bioLink.link === 'string' ? bioLink.link : '') ||
-      (p.bioLink as string) ||
-      (p.website as string) ||
-      (meta.bioLink as string) || '';
-    const regionCode = ((p.region as string) || (p.countryCode as string) || (meta.region as string) || '').toUpperCase();
-    const username = (
-      (p.uniqueId as string) ||
-      (p.username as string) ||
-      (meta.uniqueId as string) ||
-      (meta.username as string) ||
-      ''
-    ).toLowerCase().trim();
-    const followersCount = (
-      (p.fans as number) ||
-      (p.followerCount as number) ||
-      (p.follower_count as number) ||
-      (meta.fans as number) ||
-      (meta.followerCount as number) ||
-      0
-    );
-    const biography = (
-      (p.signature as string) ||
-      (p.bio as string) ||
-      (p.desc as string) ||
-      (meta.signature as string) ||
-      (meta.bio as string) ||
-      ''
-    );
-    const fullName = (
-      (p.nickname as string) ||
-      (p.displayName as string) ||
-      (p.name as string) ||
-      (meta.nickname as string) ||
-      (meta.displayName as string) ||
-      ''
-    );
+  private groupTikTokItemsByProfile(
+    items: Record<string, unknown>[],
+  ): Array<RawApifyProfile & { _latestVideos: { thumbnailUrl: string; desc: string }[] }> {
+    type Entry = {
+      meta: Record<string, unknown>;
+      videos: { thumbnailUrl: string; desc: string }[];
+    };
+    const profileMap = new Map<string, Entry>();
 
-    // Extract latest videos for inline Lean Content Analysis
-    const latestVideos = Array.isArray(p.latestVideos) ? p.latestVideos as Record<string, unknown>[] : [];
-    const _latestVideos = latestVideos.slice(0, 3).map(v => ({
-      thumbnailUrl: (v.covers as string[] | undefined)?.[0] || (v.thumbnail as string) || (v.thumbnailUrl as string) || '',
-      desc: (v.desc as string) || (v.description as string) || (v.text as string) || '',
-    }));
+    for (const item of items) {
+      const meta = (item.authorMeta as Record<string, unknown>) || {};
+      // authorMeta.name is the @handle; item.author is the same value at the top level
+      const handle = (
+        (meta.name as string) ||
+        (item.author as string) ||
+        (item.uniqueId as string) ||
+        (meta.uniqueId as string) ||
+        ''
+      ).toLowerCase().replace(/^@/, '').trim();
+      if (!handle) continue;
 
-    return {
-      username,
-      followersCount,
-      biography,
-      fullName,
-      externalUrl: website,
-      publicEmail: (p.email as string) || (meta.email as string) || '',
-      countryCode: regionCode,
-      country: regionCode === 'US' ? 'United States' : regionCode === 'CA' ? 'Canada' : regionCode,
-      __platform: 'tiktok',
-      _latestVideos,
-    } as RawApifyProfile & { _latestVideos: { thumbnailUrl: string; desc: string }[] };
+      if (!profileMap.has(handle)) {
+        profileMap.set(handle, { meta, videos: [] });
+      }
+      const entry = profileMap.get(handle)!;
+      if (entry.videos.length < 5) {
+        const thumbnailUrl =
+          (Array.isArray(item.covers) ? (item.covers as string[])[0] : '') ||
+          (item.thumbnail as string) || (item.thumbnailUrl as string) || '';
+        entry.videos.push({
+          thumbnailUrl,
+          desc: (item.desc as string) || (item.description as string) || '',
+        });
+      }
+    }
+
+    const results: Array<RawApifyProfile & { _latestVideos: { thumbnailUrl: string; desc: string }[] }> = [];
+    for (const [handle, { meta, videos }] of profileMap) {
+      // bioLink may be a plain string or an object { link: "url" }
+      const bioLinkRaw = meta.bioLink;
+      const bioLink =
+        typeof bioLinkRaw === 'string' ? bioLinkRaw :
+        (bioLinkRaw && typeof (bioLinkRaw as Record<string, unknown>).link === 'string')
+          ? (bioLinkRaw as Record<string, unknown>).link as string : '';
+
+      const regionCode = ((meta.region as string) || '').toUpperCase();
+      results.push({
+        username: handle,
+        followersCount: (meta.fans as number) || (meta.followerCount as number) || 0,
+        biography: (meta.signature as string) || (meta.bio as string) || '',
+        // authorMeta.nickName is the display name (capital N is correct for clockworks)
+        fullName: (meta.nickName as string) || (meta.nickname as string) || (meta.displayName as string) || '',
+        externalUrl: bioLink,
+        publicEmail: (meta.email as string) || '',
+        countryCode: regionCode,
+        country: regionCode,
+        __platform: 'tiktok',
+        _latestVideos: videos,
+      } as RawApifyProfile & { _latestVideos: { thumbnailUrl: string; desc: string }[] });
+    }
+    return results;
   }
 
   // ── Utility helpers ───────────────────────────────────────────────────────────
@@ -713,7 +725,7 @@ export class TikTokFacelessEngine {
       try {
         searchResults = await this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
           queries: searchQuery,
-          maxPagesPerQuery: 2,
+          maxPagesPerQuery: 1,
           resultsPerPage: 100,
         }, onLog);
       } catch (e: unknown) {
@@ -784,14 +796,15 @@ export class TikTokFacelessEngine {
       consecutiveZeros = 0;
 
       // ── STEP 2: TikTok profile scraper ───────────────────────────────────────
-      // ⚠️ BUG FIX: payload is { profiles: string[] } — NOT { usernames: string[] }.
-      // `usernames` causes HTTP 400 from clockworks~tiktok-profile-scraper.
+      // clockworks~tiktok-profile-scraper returns video items (not profile objects).
+      // Payload key MUST be `profiles` (not `usernames` — that causes HTTP 400).
+      // maxPostsPerProfile:3 limits to 3 videos per handle for speed (vs 87 default).
       onLog('👤 STEP 2/4 — Fetching ' + novelHandles.length + ' TikTok profiles...');
       let rawTikTokProfiles: unknown[];
       try {
         rawTikTokProfiles = await this.callApifyActor(
           TIKTOK_PROFILE_SCRAPER,
-          { profiles: novelHandles },
+          { profiles: novelHandles, maxPostsPerProfile: 3 },
           onLog,
         );
       } catch (e: unknown) {
@@ -799,15 +812,12 @@ export class TikTokFacelessEngine {
         continue;
       }
 
-      // Normalize, deduplicate by username
-      const seenNorm = new Set<string>();
-      const normalizedProfiles = (rawTikTokProfiles as Record<string, unknown>[])
-        .map(p => this.normalizeTikTokProfile(p))
-        .filter(p => {
-          if (!p.username || seenNorm.has(p.username)) return false;
-          seenNorm.add(p.username);
-          return true;
-        });
+      // Group video items by author → one RawApifyProfile per unique creator.
+      // The scraper returns ~N*maxPostsPerProfile items; groupTikTokItemsByProfile
+      // collapses them to one profile per handle and stores videos for LCA.
+      const normalizedProfiles = this.groupTikTokItemsByProfile(
+        rawTikTokProfiles as Record<string, unknown>[],
+      );
 
       onLog('👤 STEP 2/4 ✓ — ' + rawTikTokProfiles.length + ' raw items → ' + normalizedProfiles.length + ' unique profiles');
 

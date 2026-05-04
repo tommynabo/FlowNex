@@ -92,9 +92,11 @@ const REGION_MAP: Record<string, string[]> = {
 // Google Search Scraper
 const GOOGLE_SEARCH_SCRAPER = 'nFJndFXA5zjCTuudP';
 
-// ⚠️ BUG FIX: payload key must be `profiles` (NOT `usernames`) for clockworks~tiktok-profile-scraper.
-// Using `usernames` returns HTTP 400. Confirmed with clockworks actor documentation.
-const TIKTOK_PROFILE_SCRAPER = 'clockworks~tiktok-profile-scraper';
+// clockworks~tiktok-scraper is the general-purpose clockworks TikTok actor (170K+ users, 4.7★).
+// It stores datasets under the CALLER's account (no 403 permission issues unlike tiktok-profile-scraper).
+// Output format: video items with `authorMeta` nested object → handled by MODE B in groupTikTokItemsByProfile.
+// Input: { profiles: ["handle"], resultsPerPage: 1 } → 1 video item per creator = minimal cost ($1.70/1K).
+const TIKTOK_PROFILE_SCRAPER = 'clockworks~tiktok-scraper';
 
 // Anti-ICP negative keywords — purge local businesses and off-target content
 const ANTI_ICP_NEGATIVES = '-restaurant -cafe -clinic -store -food -apparel -"life coach" -corporate -consulting -boutique -"shop now" -"dance" -"beauty" -"makeup" -"cooking"';
@@ -940,19 +942,24 @@ export class TikTokFacelessEngine {
         onLog('👤 STEP 2/4 — Fetching ' + ttBatch.length + ' TikTok profiles (batch capped at ' + MAX_TT_BATCH + ')...');
         let rawTikTokProfiles: unknown[];
         try {
+          // clockworks~tiktok-scraper: 1 video item per profile → cheapest way to get authorMeta.
+          // resultsPerPage:1 + shouldDownload*:false → minimal cost, datasets stored under caller's account.
           rawTikTokProfiles = await this.callApifyActor(
             TIKTOK_PROFILE_SCRAPER,
             {
               profiles: ttBatch,
-              resultsType: 'profiles',
-              maxResultsPerProfile: 1,
-              maxPostsPerProfile: 1,
-              maxItems: ttBatch.length,
+              resultsPerPage: 1,
+              profileScrapeSections: ['videos'],
+              maxProfilesPerQuery: ttBatch.length,
               shouldDownloadVideos: false,
               shouldDownloadCovers: false,
+              shouldDownloadAvatars: false,
+              shouldDownloadSubtitles: false,
+              shouldDownloadSlideshowImages: false,
+              shouldDownloadMusicCovers: false,
             },
             onLog,
-            ttBatch.length * 5,
+            ttBatch.length * 3,
           );
           ttScraperConsecFails = 0;
           normalizedProfiles = this.groupTikTokItemsByProfile(

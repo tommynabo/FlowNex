@@ -283,18 +283,24 @@ export class InstagramSearchEngine {
     if (!runId || !datasetId) throw new Error('Apify: missing runId or datasetId');
     onLog('[APIFY] Run ' + runId.substring(0, 8) + ' iniciado');
 
-    // Poll until done
+    // Poll until done — adaptive interval: 1500ms first poll, 2000ms thereafter.
+    // Google Search actors finish in 2-4s → caught on poll 2 at ~3.5s total elapsed.
+    // Profile scrapers finish in 3-8s → caught on polls 2-4 at 3.5-7.5s total.
+    // Old fixed 5000ms delay wasted 3-4s per actor call regardless of actual run time.
     let done = false;
     let polls = 0;
+    let elapsedMs = 0;
     while (!done && this.isRunning && polls < 600) {
-      await new Promise(r => setTimeout(r, 5000));
+      const delay = polls === 0 ? 1500 : 2000;
+      await new Promise(r => setTimeout(r, delay));
+      elapsedMs += delay;
       polls++;
       try {
         const sd = await this.apifyRequest(`acts/${actorId}/runs/${runId}`, 'GET') as {
           data?: { status?: string };
         };
         const status = sd.data?.status ?? '';
-        if (polls % 3 === 1) onLog('[APIFY] ' + status + ' (' + polls * 5 + 's)');
+        if (polls % 3 === 1) onLog('[APIFY] ' + status + ' (' + Math.round(elapsedMs / 1000) + 's)');
         if (status === 'SUCCEEDED') done = true;
         else if (status === 'FAILED' || status === 'ABORTED') throw new Error('Actor ' + status);
       } catch (pe: unknown) {
@@ -303,7 +309,7 @@ export class InstagramSearchEngine {
       }
     }
 
-    if (!done) throw new Error('Apify timeout after ' + polls * 5 + 's');
+    if (!done) throw new Error('Apify timeout after ' + Math.round(elapsedMs / 1000) + 's');
     if (!this.isRunning) return [];
 
     // Download results

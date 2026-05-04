@@ -117,6 +117,7 @@ export class ICPEvaluator {
    */
   applyHardFilter(profiles: RawApifyProfile[], onLog: LogCallback, icpType: ICPType = 'personal_brand'): RawApifyProfile[] {
     const passed: RawApifyProfile[] = [];
+    const rejections = { followerLow: 0, followerHigh: 0, brand: 0, antiIcp: 0, noSignal: 0, mental: 0, nonGymSport: 0 };
 
     for (const profile of profiles) {
       const handle = (profile.username || '').toLowerCase().trim();
@@ -128,10 +129,12 @@ export class ICPEvaluator {
       // Follower range
       if (followers < HARD_FILTER_MIN_FOLLOWERS) {
         onLog(`[HARD FILTER] ↓ @${handle} skip: ${followers.toLocaleString()} < min ${HARD_FILTER_MIN_FOLLOWERS.toLocaleString()} followers`);
+        rejections.followerLow++;
         continue;
       }
       if (followers > HARD_FILTER_MAX_FOLLOWERS) {
         onLog(`[HARD FILTER] ↑ @${handle} skip: ${followers.toLocaleString()} > max ${HARD_FILTER_MAX_FOLLOWERS.toLocaleString()} followers`);
+        rejections.followerHigh++;
         continue;
       }
 
@@ -141,6 +144,7 @@ export class ICPEvaluator {
       );
       if (brandKeyword) {
         onLog(`[HARD FILTER] 🏷 @${handle} skip: "${brandKeyword}" brand keyword in name/username`);
+        rejections.brand++;
         continue;
       }
 
@@ -149,6 +153,7 @@ export class ICPEvaluator {
       const antiIcpKw = ANTI_ICP_BIO_KEYWORDS.find(kw => fullText.includes(kw));
       if (antiIcpKw) {
         onLog(`[HARD FILTER] 🚫 @${handle} skip: Anti-ICP keyword "${antiIcpKw}" detected in bio/name`);
+        rejections.antiIcp++;
         continue;
       }
 
@@ -161,6 +166,7 @@ export class ICPEvaluator {
         const hasClipperSignal = FACELESS_CLIPPER_REQUIRED_KEYWORDS.some(kw => fullText.includes(kw));
         if (!hasClipperSignal) {
           onLog(`[HARD FILTER] 🚫 @${handle} skip: no faceless/clipper signal in bio/name/handle`);
+          rejections.noSignal++;
           continue;
         }
       } else {
@@ -168,6 +174,7 @@ export class ICPEvaluator {
         const hasFitnessKeyword = FITNESS_REQUIRED_KEYWORDS.some(kw => fullText.includes(kw));
         if (!hasFitnessKeyword) {
           onLog(`[HARD FILTER] 🚫 @${handle} skip: no physical fitness keyword in bio/name`);
+          rejections.noSignal++;
           continue;
         }
 
@@ -175,6 +182,7 @@ export class ICPEvaluator {
         const mentalKeyword = MENTAL_COACH_REJECT_KEYWORDS.find(kw => fullText.includes(kw));
         if (mentalKeyword) {
           onLog(`[HARD FILTER] 🧠 @${handle} skip: mental/spiritual keyword "${mentalKeyword}" found`);
+          rejections.mental++;
           continue;
         }
 
@@ -184,12 +192,27 @@ export class ICPEvaluator {
           const hasGymOverride = GYM_FITNESS_OVERRIDE_KEYWORDS.some(kw => fullText.includes(kw));
           if (!hasGymOverride) {
             onLog(`[HARD FILTER] 🚴 @${handle} skip: non-gym sport "${nonGymSport}" detected, no fitness override`);
+            rejections.nonGymSport++;
             continue;
           }
         }
       }
 
       passed.push(profile);
+    }
+
+    // Rejection summary — helps diagnose which criteria are killing the most profiles
+    const rejected = profiles.length - passed.length;
+    if (rejected > 0) {
+      const parts: string[] = [];
+      if (rejections.followerLow)  parts.push(`${rejections.followerLow} follower↓`);
+      if (rejections.followerHigh) parts.push(`${rejections.followerHigh} follower↑`);
+      if (rejections.brand)        parts.push(`${rejections.brand} brand`);
+      if (rejections.antiIcp)      parts.push(`${rejections.antiIcp} anti-icp`);
+      if (rejections.noSignal)     parts.push(`${rejections.noSignal} no-signal`);
+      if (rejections.mental)       parts.push(`${rejections.mental} mental`);
+      if (rejections.nonGymSport)  parts.push(`${rejections.nonGymSport} non-gym`);
+      onLog(`[HARD FILTER] Summary: ${profiles.length} in → ${passed.length} passed, ${rejected} rejected (${parts.join(', ')})`);
     }
 
     return passed;
@@ -303,9 +326,10 @@ Reply ONLY with a valid JSON array matching the input order:
       batches.push(leads.slice(i, i + ICP_SOFT_FILTER_BATCH_SIZE));
     }
 
-    // Process each batch sequentially to avoid hammering the API
-    for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
-      const batch = batches[batchIdx];
+    // Process all batches concurrently — each batch mutates a disjoint slice of leads,
+    // so parallel execution is safe. OpenAI rate limits for gpt-4o-mini are generous
+    // and ≤3 concurrent calls are well within quota.
+    await Promise.all(batches.map(async (batch, batchIdx) => {
       const batchLabel = `batch ${batchIdx + 1}/${batches.length}`;
 
       const profilesPayload = batch.map(lead => ({
@@ -382,7 +406,7 @@ Reply ONLY with a valid JSON array matching the input order:
           lead.icp_verified = false;
         }
       }
-    }
+    }));
 
     const totalVerified = leads.filter(l => l.icp_verified).length;
     onLog(`[ICP SOFT] Total: ${totalVerified}/${leads.length} ICP verified (${leads.length - totalVerified} unverified but kept)`);

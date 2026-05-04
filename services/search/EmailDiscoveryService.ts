@@ -106,18 +106,15 @@ export class EmailDiscoveryService {
       return existingEmail;
     }
 
-    // Stage 2: website / bio-link page (server-side, no CORS)
-    if (website) {
-      const websiteEmail = await this.findViaWebsite(website, handle, onLog);
-      if (websiteEmail && isStrictlyValidEmail(websiteEmail)) return websiteEmail;
-    }
-
-    // Stage 3: TikTok profile page source HTML (server-side)
-    const ttEmail = await this.findViaTikTokSource(handle, onLog);
-    if (ttEmail && isStrictlyValidEmail(ttEmail)) return ttEmail;
-
-    onLog(`[EMAIL] @${handle} (TikTok) → no email found across all 3 stages`);
-    return '';
+    // Stage 2 + Stage 3 run concurrently — both are independent network calls.
+    // Running them in parallel halves the latency when Stage 2 finds nothing.
+    const [websiteEmail, ttEmail] = await Promise.all([
+      website ? this.findViaWebsite(website, handle, onLog) : Promise.resolve(''),
+      this.findViaTikTokSource(handle, onLog),
+    ]);
+    const result = [websiteEmail, ttEmail].find(e => e && isStrictlyValidEmail(e)) ?? '';
+    if (!result) onLog(`[EMAIL] @${handle} (TikTok) → no email found across all 3 stages`);
+    return result;
   }
 
   /**
@@ -142,18 +139,15 @@ export class EmailDiscoveryService {
       return existingEmail;
     }
 
-    // Stage 2: website / Linktree / bio-link (all server-side, no CORS)
-    if (website) {
-      const websiteEmail = await this.findViaWebsite(website, handle, onLog);
-      if (websiteEmail && isStrictlyValidEmail(websiteEmail)) return websiteEmail;
-    }
-
-    // Stage 3: Instagram source HTML (server-side)
-    const igEmail = await this.findViaInstagramSource(handle, onLog);
-    if (igEmail && isStrictlyValidEmail(igEmail)) return igEmail;
-
-    onLog(`[EMAIL] @${handle} → no email found across all 3 stages`);
-    return '';
+    // Stage 2 + Stage 3 run concurrently — both are independent network calls.
+    // Running them in parallel halves the latency when Stage 2 finds nothing.
+    const [websiteEmail, igEmail] = await Promise.all([
+      website ? this.findViaWebsite(website, handle, onLog) : Promise.resolve(''),
+      this.findViaInstagramSource(handle, onLog),
+    ]);
+    const result = [websiteEmail, igEmail].find(e => e && isStrictlyValidEmail(e)) ?? '';
+    if (!result) onLog(`[EMAIL] @${handle} → no email found across all 3 stages`);
+    return result;
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────

@@ -159,12 +159,34 @@ export class TikTokFacelessEngine {
     });
     if (!res.ok) {
       const err = await res.text();
+      // Detect quota exceeded — throw sentinel so the engine aborts immediately
+      if (res.status === 403) {
+        try {
+          const parsed = JSON.parse(err) as Record<string, unknown>;
+          const rawDetails = parsed.details;
+          const details = typeof rawDetails === 'string'
+            ? JSON.parse(rawDetails) as Record<string, unknown>
+            : rawDetails as Record<string, unknown>;
+          const apifyError = details?.error as Record<string, unknown> | undefined;
+          const errType = apifyError?.type as string || '';
+          const errMsg  = apifyError?.message as string || '';
+          if (
+            errType === 'platform-feature-disabled' ||
+            errType === 'actor-disabled' ||
+            errMsg.includes('Monthly usage hard limit')
+          ) {
+            throw new Error('APIFY_QUOTA_EXCEEDED: ' + (errMsg || 'Monthly limit exceeded — upgrade your Apify plan.'));
+          }
+        } catch (pe) {
+          if (pe instanceof Error && pe.message.startsWith('APIFY_QUOTA_EXCEEDED')) throw pe;
+        }
+      }
       throw new Error(`/api/apify ${res.status}: ${err.substring(0, 300)}`);
     }
     return res.json();
   }
 
-  private async callApifyActor(actorId: string, input: unknown, onLog: LogCallback): Promise<unknown[]> {
+  private async callApifyActor(actorId: string, input: unknown, onLog: LogCallback, itemsLimit?: number): Promise<unknown[]> {
     onLog('[APIFY] Lanzando ' + actorId.split('~').pop() + '...');
     const startData = await this.apifyRequest(`acts/${actorId}/runs`, 'POST', input) as {
       data?: { id?: string; defaultDatasetId?: string };
@@ -199,7 +221,10 @@ export class TikTokFacelessEngine {
     if (!this.isRunning) return [];
 
     onLog('[APIFY] Descargando resultados...');
-    const items = await this.apifyRequest(`datasets/${datasetId}/items`, 'GET') as unknown[];
+    const datasetPath = itemsLimit
+      ? `datasets/${datasetId}/items?limit=${itemsLimit}`
+      : `datasets/${datasetId}/items`;
+    const items = await this.apifyRequest(datasetPath, 'GET') as unknown[];
     if (!Array.isArray(items)) throw new Error('Dataset is not an array');
     onLog('[APIFY] ✓ ' + items.length + ' items descargados');
     return items;
@@ -225,57 +250,86 @@ export class TikTokFacelessEngine {
    * The first 3 videos per creator are stored in _latestVideos for inline
    * Lean Content Analysis (zero extra Apify calls).
    */
+  /**
+   * Handles BOTH output shapes of clockworks~tiktok-profile-scraper:
+   *
+   * MODE A — resultsType:'profiles' (preferred, 1 item per creator):
+   *   item.uniqueId / item.username  → handle
+   *   item.fans                      → followers
+   *   item.signature                 → bio
+   *   item.nickName                  → display name
+   *   item.region                    → country code
+   *   item.bioLink                   → website
+   *   Detection: item.authorMeta is absent
+   *
+   * MODE B — default video-item output (1 item per video, N videos per creator):
+   *   item.author / item.authorMeta.name → handle
+   *   item.authorMeta.fans               → followers
+   *   item.authorMeta.signature          → bio
+   *   item.authorMeta.nickName           → display name
+   *   item.authorMeta.region             → country code
+   *   item.authorMeta.bioLink            → website
+   *   item.desc / item.covers[]          → video data for LCA
+   *   Detection: item.authorMeta is present
+   */
   private groupTikTokItemsByProfile(
     items: Record<string, unknown>[],
   ): Array<RawApifyProfile & { _latestVideos: { thumbnailUrl: string; desc: string }[] }> {
     type Entry = {
       meta: Record<string, unknown>;
+      isProfileMode: boolean;
       videos: { thumbnailUrl: string; desc: string }[];
     };
     const profileMap = new Map<string, Entry>();
 
     for (const item of items) {
-      const meta = (item.authorMeta as Record<string, unknown>) || {};
-      // authorMeta.name is the @handle; item.author is the same value at the top level
-      const handle = (
-        (meta.name as string) ||
-        (item.author as string) ||
-        (item.uniqueId as string) ||
-        (meta.uniqueId as string) ||
-        ''
-      ).toLowerCase().replace(/^@/, '').trim();
-      if (!handle) continue;
+      const hasMeta = item.authorMeta && typeof item.authorMeta === 'object';
 
-      if (!profileMap.has(handle)) {
-        profileMap.set(handle, { meta, videos: [] });
-      }
-      const entry = profileMap.get(handle)!;
-      if (entry.videos.length < 5) {
-        const thumbnailUrl =
-          (Array.isArray(item.covers) ? (item.covers as string[])[0] : '') ||
-          (item.thumbnail as string) || (item.thumbnailUrl as string) || '';
-        entry.videos.push({
-          thumbnailUrl,
-          desc: (item.desc as string) || (item.description as string) || '',
-        });
+      if (!hasMeta) {
+        // ── MODE A: profile object ────────────────────────────────────────────
+        const handle = (
+          (item.uniqueId as string) ||
+          (item.username as string) ||
+          (item.name as string) ||
+          ''
+        ).toLowerCase().replace(/^@/, '').trim();
+        if (!handle || profileMap.has(handle)) continue;
+        profileMap.set(handle, { meta: item, isProfileMode: true, videos: [] });
+      } else {
+        // ── MODE B: video item ────────────────────────────────────────────────
+        const meta = item.authorMeta as Record<string, unknown>;
+        const handle = (
+          (meta.name as string) ||
+          (item.author as string) ||
+          (meta.uniqueId as string) ||
+          ''
+        ).toLowerCase().replace(/^@/, '').trim();
+        if (!handle) continue;
+        if (!profileMap.has(handle)) profileMap.set(handle, { meta, isProfileMode: false, videos: [] });
+        const entry = profileMap.get(handle)!;
+        if (entry.videos.length < 5) {
+          entry.videos.push({
+            thumbnailUrl:
+              (Array.isArray(item.covers) ? (item.covers as string[])[0] : '') ||
+              (item.thumbnail as string) || '',
+            desc: (item.desc as string) || (item.description as string) || '',
+          });
+        }
       }
     }
 
     const results: Array<RawApifyProfile & { _latestVideos: { thumbnailUrl: string; desc: string }[] }> = [];
     for (const [handle, { meta, videos }] of profileMap) {
-      // bioLink may be a plain string or an object { link: "url" }
       const bioLinkRaw = meta.bioLink;
       const bioLink =
         typeof bioLinkRaw === 'string' ? bioLinkRaw :
         (bioLinkRaw && typeof (bioLinkRaw as Record<string, unknown>).link === 'string')
           ? (bioLinkRaw as Record<string, unknown>).link as string : '';
-
-      const regionCode = ((meta.region as string) || '').toUpperCase();
+      const regionCode = ((meta.region as string) || (meta.countryCode as string) || '').toUpperCase();
       results.push({
         username: handle,
         followersCount: (meta.fans as number) || (meta.followerCount as number) || 0,
         biography: (meta.signature as string) || (meta.bio as string) || '',
-        // authorMeta.nickName is the display name (capital N is correct for clockworks)
         fullName: (meta.nickName as string) || (meta.nickname as string) || (meta.displayName as string) || '',
         externalUrl: bioLink,
         publicEmail: (meta.email as string) || '',
@@ -729,7 +783,12 @@ export class TikTokFacelessEngine {
           resultsPerPage: 100,
         }, onLog);
       } catch (e: unknown) {
-        onLog('[STEP 1] Google Search error: ' + (e instanceof Error ? e.message : String(e)));
+        const errMsg = e instanceof Error ? e.message : String(e);
+        if (errMsg.startsWith('APIFY_QUOTA_EXCEEDED')) {
+          onLog('[ENGINE] ⛔ Apify quota agotada — ' + errMsg.replace('APIFY_QUOTA_EXCEEDED: ', '') + ' Abortando inmediatamente.');
+          break;
+        }
+        onLog('[STEP 1] Google Search error: ' + errMsg);
         consecutiveZeros++;
         if (consecutiveZeros >= MAX_CONSEC_ZEROS) { onLog('[ENGINE] ' + consecutiveZeros + ' consecutive failures — aborting.'); break; }
         continue;
@@ -796,25 +855,42 @@ export class TikTokFacelessEngine {
       consecutiveZeros = 0;
 
       // ── STEP 2: TikTok profile scraper ───────────────────────────────────────
-      // clockworks~tiktok-profile-scraper returns video items (not profile objects).
-      // Payload key MUST be `profiles` (not `usernames` — that causes HTTP 400).
-      // maxPostsPerProfile:3 limits to 3 videos per handle for speed (vs 87 default).
-      onLog('👤 STEP 2/4 — Fetching ' + novelHandles.length + ' TikTok profiles...');
+      // Batch to 5 handles max per call — caps cost even if the scraper ignores
+      // per-profile limits. We send multiple param names because the clockworks
+      // actor has changed its schema across versions.
+      // resultsType:'profiles' requests one profile object per handle (no videos).
+      // If unsupported, items fall back to video items handled by groupTikTokItemsByProfile.
+      const MAX_TT_BATCH = 5;
+      const ttBatch = novelHandles.slice(0, MAX_TT_BATCH);
+      onLog('👤 STEP 2/4 — Fetching ' + ttBatch.length + ' TikTok profiles (batch capped at ' + MAX_TT_BATCH + ')...');
       let rawTikTokProfiles: unknown[];
       try {
         rawTikTokProfiles = await this.callApifyActor(
           TIKTOK_PROFILE_SCRAPER,
-          { profiles: novelHandles, maxPostsPerProfile: 3 },
+          {
+            profiles: ttBatch,
+            resultsType: 'profiles',
+            maxResultsPerProfile: 1,
+            maxPostsPerProfile: 1,
+            maxItems: ttBatch.length,
+            shouldDownloadVideos: false,
+            shouldDownloadCovers: false,
+          },
           onLog,
+          ttBatch.length * 5,
         );
       } catch (e: unknown) {
-        onLog('👤 STEP 2/4 ✗ TikTok profile scraper failed: ' + (e instanceof Error ? e.message : String(e)));
+        const errMsg2 = e instanceof Error ? e.message : String(e);
+        if (errMsg2.startsWith('APIFY_QUOTA_EXCEEDED')) {
+          onLog('[ENGINE] ⛔ Apify quota agotada — ' + errMsg2.replace('APIFY_QUOTA_EXCEEDED: ', '') + ' Abortando inmediatamente.');
+          break;
+        }
+        onLog('👤 STEP 2/4 ✗ TikTok profile scraper failed: ' + errMsg2);
         continue;
       }
 
-      // Group video items by author → one RawApifyProfile per unique creator.
-      // The scraper returns ~N*maxPostsPerProfile items; groupTikTokItemsByProfile
-      // collapses them to one profile per handle and stores videos for LCA.
+      // Group items → one RawApifyProfile per creator.
+      // Handles both resultsType:'profiles' (1 item/handle) and default video-item mode.
       const normalizedProfiles = this.groupTikTokItemsByProfile(
         rawTikTokProfiles as Record<string, unknown>[],
       );

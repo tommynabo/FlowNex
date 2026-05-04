@@ -297,16 +297,18 @@ CRITICAL REJECTION CRITERIA (ANTI-ICP): Score 0 immediately if the content shows
 If ANY of these apply, return content_alignment_score: 0 and is_icp_match: false.
 
 APPROVE (score ≥ 65) if the content matches ANY of these patterns:
-- Faceless motivation: no face shown, voiceover + b-roll, discipline, entrepreneurship, self-improvement
-- Clipper/reposter: edited clips from known figures (Hormozi, Tate, Gadzhi, Goggins, etc.)
-- Slideshow/carousel: motivational quotes, mindset tips, wealth/success, hustle, grind culture
-- Gym motivation: body transformation, before/after physique, "no days off", "no excuses" WITH motivational message
-- Online business tips: passive income, make money online, dropshipping, SMMA, agency growth, wifi money
+- Clipper/reposter: edited clips from Hormozi, Tate, Gadzhi, Goggins, David Goggins, or any known entrepreneur/mindset figure — this is the IDEAL ICP
+- TikTok carousel/slideshow at scale: motivational quote slides, body transformation sequences, "CTA of sympathy" format ("my ex 1yr ago / 2yrs ago / now"), fitness tip lists, daily discipline slides — this is the PRIMARY target format
+- Faceless motivation: no face shown, voiceover + b-roll, discipline, entrepreneurship, self-improvement — even with low production value
+- Gym motivation: body transformation, before/after physique, "no days off", "no excuses", natty journey WITH motivational message
+- Online business / entrepreneurship: SMMA, agency growth, make money online, passive income, wifi money, Skool/WOP community content — even without a gym element
+- Digital hustle: entrepreneur beginner content, "building my brand", "road to financial freedom", daily grind content
 
 REJECT (score < 65) if the majority of content is:
 - Personal face-forward lifestyle (selfies, daily vlogs, food/travel) with no motivational angle
 - Pure gym tutorial/form-check by a certified trainer (educational instruction, NOT motivation)
-- Entertainment, comedy, gaming, or niches unrelated to motivation/mindset/fitness/business`.trim();
+- Entertainment, comedy, gaming, or niches completely unrelated to motivation/mindset/fitness/business
+- Sports performance content (running, cycling, swimming) without entrepreneurship/motivation angle`.trim();
 
     const personalBrandCriteria = `
 APPROVE (score ≥ 65) if the content shows:

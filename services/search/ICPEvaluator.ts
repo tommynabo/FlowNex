@@ -68,33 +68,33 @@ const ANTI_ICP_BIO_KEYWORDS = [
 ];
 
 // Required keywords for faceless/clipper ICP — at least ONE must be present
-// Checked against the combined fullText (bio + name + handle).
-// Expanded to include Spanish-market signals based on ICP reference accounts:
-//   @arys.fitness (mentalidad, entrenamiento), @brian09__ (mejor versión),
-//   @bautibelloso (natty), @finesteditsz (clipper/editor), @moullaga67 (💸 handle)
+// Checked against combined fullText (bio + name + handle).
+// Precision-tuned for 7 real ICP archetypes from client call:
+//   Clippers (@finesteditsz), EN motivation (@nofexcuses), Figure-clip entrepreneurs (Hormozi/Gadzhi),
+//   Carousel/slideshow creators, Physique/natty (@bautibelloso),
+//   ES market (@brian09__, @arys.fitness), Money faceless (@moullaga67 — emoji-only name)
 const FACELESS_CLIPPER_REQUIRED_KEYWORDS = [
-  // EN — content identity
-  'mindset', 'motivation', 'wealth', 'hustle', 'grind', 'entrepreneur',
-  'clips', 'clip', 'clipper', 'editor', 'edits', 'money', 'success',
-  'discipline', 'selfimprovement', 'wifimoney', 'passiveincome',
-  'financialfreedom', 'hormozi', 'gadzhi', 'tate', 'goggins',
-  'daily', 'slideshow', 'mindsetcoach', 'businessmindset',
-  'successmindset', 'gymmotivation', 'moneymindset', 'dailymotivation',
-  'motivational', 'makemoney', 'onlinebusiness', 'entrepreneurship',
-  'bodytransformation', 'transformation', 'gymtok', 'fitnessmotivation',
-  'noexcuses', 'neversettle', 'hardwork', 'nodaysoff', 'grindset',
+  // EN — content identity signals
+  'mindset', 'motivation', 'motivational', 'wealth', 'hustle', 'grind',
+  'entrepreneur', 'entrepreneurship', 'clips', 'clip', 'clipper', 'editor', 'edits',
+  'money', 'success', 'discipline', 'hardwork', 'noexcuses', 'neversettle',
+  'nodaysoff', 'grindset', 'bestversion', 'selfimprovement',
+  'wifimoney', 'passiveincome', 'financialfreedom', 'makemoney', 'onlinebusiness',
+  'hormozi', 'gadzhi', 'tate', 'goggins', 'smma',
+  'daily', 'slideshow', 'carousel', 'wop', 'skool',
+  'gymmotivation', 'moneymindset', 'dailymotivation', 'fitnessmotivation',
+  'bodytransformation', 'transformation', 'gymtok',
   'physique', 'gains', 'shredded', 'bulk', 'cutting', 'aesthetics',
-  'natty', 'lifting', 'bestversion',
+  'natty', 'lifting', 'gym', 'fitness',
+  // Emoji-only name signals — money/hustle niche indicators (e.g. @moullaga67 name "💸💸💸")
+  '💸', '💰', '🤑',
   // ES — Spanish-speaking market signals (Spain, Argentina, México, Colombia)
   'mentalidad', 'motivacion', 'motivación', 'disciplina', 'constancia',
   'emprendimiento', 'emprendedor', 'dinero', 'riqueza', 'exito', 'éxito',
   'mejorversion', 'sinexcusas', 'rutina', 'entrenamiento', 'transformacion',
   'libertadfinanciera', 'negocio', 'crecimiento', 'progreso', 'frases',
-  // Handle-level signals common in faceless/clipper account usernames
-  'daily', 'clips', 'edits', 'motivation', 'mindset', 'fitness', 'gym',
-  // Generic creator/business terms — broadened net to avoid rejecting legitimate faceless accounts
-  'creador', 'creator', 'video', 'content', 'tips', 'coach', 'lifestyle', 'growth',
-  'crecimiento', 'habits', 'habitos', 'agency', 'agencia', 'marca', 'brand', 'business',
+  // Creator economy specific terms
+  'coach', 'business', 'habits', 'habitos',
 ];
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -305,12 +305,28 @@ TARGET ARCHETYPES — pass if the profile clearly fits ANY of these:
    - Accept if username + name context clearly signal money/finance/hustle niche
    - Example: @moullaga67 with name "💸💸💸" and no bio — VALID if handle suggests finance
 
+6. CAROUSEL / SLIDESHOW CREATOR AT SCALE
+   - Posts TikTok carousels/slideshows in high volume (100s–1000s of videos per month)
+   - Content: motivational quote slides, body transformation sequences, "CTA of sympathy" format
+     ("my ex 1yr ago / 2yrs ago / now"), fitness tip lists, daily discipline slides
+   - This is the PRIMARY target archetype: "banger seguro, hay un montón en TikTok"
+   - Business model: high-volume content factory looking for scalable revenue streams
+   - Signals: many videos, "slideshow" or "carousel" in bio, high like-to-follower ratio
+
+7. ENTREPRENEUR BEGINNER / DIGITAL HUSTLE
+   - Obsessed with making money online, follows Hormozi/Gadzhi content
+   - May be in Skool or WOP communities, references SMMA, agency, digital business
+   - Bio signals: "building my empire", "SMMA", "agency owner", "digital creator", "content for hire"
+   - May not be successful yet — the entrepreneurial obsession and creator habit are what matter
+   - Strong signals: mentions Skool, WOP, SMMA, or references known entrepreneur figures
+
 AUTO-APPROVE SIGNALS (approve with confidence ≥ 88, skip lengthy analysis):
 - Bio contains "clipper" or "editor" or "edits": auto-approve
-- Bio contains "dm for promos" or "dm for collab": auto-approve
+- Bio contains "dm for promo" or "dm for promos" or "dm for collab": auto-approve
 - Bio contains "payhip.com" or "gumroad.com" or "forms.gle": auto-approve
-- Bio contains "linktr.ee" AND niche keywords (fitness/motivation/mindset): auto-approve
-- Username/handle contains: clips, edits, clipper, daily, motivation, mindset, noexcuses, natty, physique, mentalidad, disciplina, motivacion
+- Bio contains "linktr.ee" AND niche keywords (fitness/motivation/mindset/smma): auto-approve
+- Bio contains "skool" or "wop" or "smma": auto-approve (entrepreneur community member)
+- Username/handle contains: clips, edits, clipper, daily, motivation, mindset, noexcuses, natty, physique, mentalidad, disciplina, motivacion, slideshow, carousel
 
 REJECT (is_human_creator = false):
 - Large official brand accounts, media companies, entertainment studios

@@ -35,44 +35,42 @@ import { contentVerificationService } from './ContentVerificationService';
 import type { LogCallback, ResultCallback } from './SearchService';
 
 // ── Faceless & Clipper keyword pool ─────────────────────────────────────────
-// 13 archetype-specific groups derived from ICP reference accounts:
-//   @finesteditsz (clipper), @nofexcuses (EN motivation), @arys.fitness (ES fitness),
-//   @brian09__ (ES gym creator), @bautibelloso (physique/natty), @moullaga67 (money faceless)
+// 9 precision pools targeting the client's real ICP archetypes:
+//   Clippers (@finesteditsz), EN motivation (@nofexcuses), Figure-clip entrepreneurs (Hormozi/Gadzhi),
+//   Carousel/slideshow creators, EN wealth/hustle, Physique/natty (@bautibelloso),
+//   ES motivation/entrepreneurship (@brian09__), ES gym/physique, Community (WOP/Skool/clipping)
 const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
-  // 1. Clipper / editor identity — explicit self-identification
-  ['"clipper"', '"editor"', '"edits"', '"daily clips"', '"dm for promos"'],
-  // 2. EN motivation / no-excuses archetype
-  ['"no excuses"', '"best version"', '"discipline"', '"hard work"'],
-  // 3. EN hustle / wealth / online business
-  ['"passive income"', '"wifi money"', '"make money online"', '"online business"'],
-  // 4. EN gym motivation / physique
-  ['"no days off"', '"body transformation"', '"physique"', '"gains"', '"natty"'],
-  // 5. EN mindset / stoicism / grindset
-  ['"mindset"', '"stoic"', '"grindset"', '"self improvement"', '"discipline"'],
-  // 6. ES motivation / mentalidad — Spanish-speaking market
-  ['"mentalidad"', '"motivación"', '"disciplina"', '"sin excusas"'],
+  // 0. Clipper / editor identity — highest precision, explicit self-identification
+  ['"clipper"', '"editor"', '"edits"', '"daily clips"', '"dm for promo"', '"payhip"', '"gumroad"'],
+  // 1. EN faceless motivation / no-excuses archetype
+  ['"no excuses"', '"best version"', '"discipline"', '"mindset"', '"hard work"', '"self improvement"'],
+  // 2. Figure-clip / entrepreneur clipper — Hormozi, Gadzhi, Goggins editors
+  ['"hormozi"', '"iman gadzhi"', '"goggins"', '"david goggins"', '"tate"', '"make money online"'],
+  // 3. Carousel / slideshow creator at scale — "banger seguro" per client (most common ICP format)
+  ['"slideshow"', '"carousel"', '"frases"', '"top 5"', '"body transformation"', '"desliza"'],
+  // 4. EN hustle / wealth / online business
+  ['"passive income"', '"wifi money"', '"online business"', '"financial freedom"', '"smma"', '"agency growth"'],
+  // 5. Physique / natty / gym progression creator
+  ['"natty"', '"physique"', '"gains"', '"cutting"', '"bulking"', '"no days off"', '"gymtok"'],
+  // 6. ES motivation / entrepreneurship — Spanish-speaking market
+  ['"mentalidad"', '"disciplina"', '"emprendimiento"', '"dinero online"', '"libertad financiera"', '"mejor versión"'],
   // 7. ES gym / fitness / physique in Spanish
-  ['"natty"', '"rutina"', '"entrenamiento"', '"mejor versión"', '"physique"'],
-  // 8. ES hustle / emprendimiento
-  ['"emprendimiento"', '"dinero online"', '"libertad financiera"', '"mentalidad ganadora"'],
-  // 9. CTA / creator-intent signals — links to payhip, gumroad, forms.gle, linktr.ee
-  ['"payhip"', '"gumroad"', '"forms.gle"', '"linktr.ee"'],
-  // 10. Slideshow / carousel / frases — content format signals
-  ['"slideshow"', '"frases"', '"quotes"', '"tips diarios"', '"desliza"'],
-  // 11. Transformation / progress content
-  ['"transformation"', '"gymtok"', '"cutting"', '"bulking"', '"progreso"'],
-  // 12. Figure-clip accounts (editors of Hormozi, Tate, Goggins etc.)
-  ['"hormozi"', '"goggins"', '"tate"', '"gadzhi"', '"david goggins"'],
-  // 13. Finance / money faceless accounts
-  ['"dinero"', '"riqueza"', '"financial freedom"', '"money"', '"wealth"'],
+  ['"rutina"', '"entrenamiento"', '"natty"', '"progreso"', '"transformacion"', '"physique"'],
+  // 8. Community / WOP / Skool / clipping networks — burst every 5th attempt
+  ['"skool"', '"clipping"', '"wop"', '"dm for collab"', '"content agency"', '"reel editor"'],
 ];
 
-const LOCATION_SUFFIXES_US = ['USA', 'United States', 'California', 'New York', 'Texas', 'Florida', 'American', 'US'];
-const LOCATION_SUFFIXES_CA = ['Canada', 'Ontario', 'British Columbia', 'Canadian'];
-const LOCATION_SUFFIXES_ES = ['España', 'Spain', 'Madrid', 'Barcelona', 'Valencia'];
-const LOCATION_SUFFIXES_LATAM = ['Argentina', 'México', 'Colombia', 'Buenos Aires', 'Ciudad de México', 'Medellín', 'Latino'];
-const LOCATION_SUFFIXES_US_CA = [...LOCATION_SUFFIXES_US, ...LOCATION_SUFFIXES_CA];
-const LOCATION_SUFFIXES_ES_LATAM = [...LOCATION_SUFFIXES_ES, ...LOCATION_SUFFIXES_LATAM];
+// Maps campaign region codes to Google Search location terms (appended as soft hint to queries)
+const REGION_QUERY_TERMS: Record<string, string[]> = {
+  US: ['"United States"', 'USA', 'American'],
+  CA: ['Canada', 'Canadian'],
+  UK: ['England', '"United Kingdom"'],
+  AU: ['Australia', 'Australian'],
+  ES: ['España', 'Spain'],
+  MX: ['México', 'Mexico'],
+  AR: ['Argentina'],
+  CO: ['Colombia'],
+};
 
 const MAX_CONSEC_ZEROS = 5;
 
@@ -116,38 +114,65 @@ export class TikTokFacelessEngine {
 
   /**
    * Builds a site:tiktok.com Google Search query for the given attempt.
-   * 4-cycle rotation — TikTok-first (3:1 over combined):
-   *   mod === 0  → site:tiktok.com + CTA dorks (business-online intent signal)
-   *   mod === 1  → site:tiktok.com only (minimal-bio creators — no CTA required)
-   *   mod === 2  → site:tiktok.com + specific CTA group (DM for promo / linktr.ee)
-   *   mod === 3  → site:tiktok.com + business dorks ("curso" / "programa" / "link in bio")
-   * All queries are location-independent to maximise reach.
+   *
+   * 6-cycle rotation through 8 main ICP keyword pools (0–7):
+   *   mod === 0  → Pool + DM/CTA signal (clipper identity, highest precision)
+   *   mod === 1  → Pool only — no CTA (minimal-bio creators: slideshow, physique, @moullaga67 type)
+   *   mod === 2  → Pool + figure names (Hormozi/Gadzhi clips community)
+   *   mod === 3  → Pool + DM/linktree CTA
+   *   mod === 4  → Pool only (natty/physique progressors typically skip CTAs)
+   *   mod === 5  → Pool + Spanish/EN business dorks (ES market rotation)
+   *
+   * Community burst: every 5th attempt uses Pool 8 (WOP/Skool/clipping networks).
+   * Location: when targetRegions ≤ 3 regions, a soft location hint is appended.
    */
-  private buildSearchQuery(
-    attempt: number,
-  ): string {
-    const poolIdx = attempt <= 1 ? 0 : (attempt - 2) % FACELESS_CLIPPER_KEYWORD_POOLS.length;
+  private buildSearchQuery(attempt: number, targetRegions: string[] = []): string {
+    // Build optional location suffix from campaign regions (soft hint, ≤3 regions only)
+    const locationSuffix = (() => {
+      if (!targetRegions.length || targetRegions.length > 3) return '';
+      const allTerms = targetRegions.flatMap(r => REGION_QUERY_TERMS[r] ?? []);
+      return allTerms.length ? '(' + allTerms.join(' OR ') + ')' : '';
+    })();
+    const withLoc = (q: string) => locationSuffix ? `${q} ${locationSuffix}` : q;
+
+    // Community burst — every 5th attempt targets WOP/Skool/clipping networks
+    if (attempt % 5 === 0) {
+      const pool8 = FACELESS_CLIPPER_KEYWORD_POOLS[8];
+      const group8 = '(' + pool8.join(' OR ') + ')';
+      const clipperBoost = '("clipper" OR "editor" OR "clipping" OR "dm for promo")';
+      return withLoc(`site:tiktok.com ${group8} ${clipperBoost} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+    }
+
+    // Normal rotation: cycle through pools 0–7
+    const poolIdx = attempt <= 1 ? 0 : (attempt - 2) % 8;
     const terms = FACELESS_CLIPPER_KEYWORD_POOLS[poolIdx];
     const orGroup = '(' + terms.join(' OR ') + ')';
 
     const ctaGroup = '("link in bio" OR "DM for promo" OR "linktr.ee" OR "payhip" OR "forms.gle")';
-    const businessGroup = '("curso" OR "programa" OR "link in bio" OR "coaching" OR "mentoria")';
     const dmCtaGroup = '("dm for promo" OR "linktr.ee" OR "payhip" OR "gumroad")';
+    const businessGroup = '("curso" OR "programa" OR "smma" OR "coaching" OR "online business")';
+    const hormoziFigures = '("hormozi" OR "iman gadzhi" OR "goggins" OR "tate")';
 
-    const mod = attempt % 4;
+    const mod = attempt % 6;
 
     if (mod === 0) {
-      // TikTok + CTA — narrowed to force creator-intent signal
-      return `site:tiktok.com ${orGroup} ${ctaGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`;
+      // Pool + DM/CTA — forces creator-intent signal
+      return withLoc(`site:tiktok.com ${orGroup} ${ctaGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     } else if (mod === 1) {
-      // TikTok only — no CTA: finds minimal-bio creators
-      return `site:tiktok.com ${orGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`;
+      // Pool only — no CTA: finds minimal-bio creators
+      return withLoc(`site:tiktok.com ${orGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     } else if (mod === 2) {
-      // TikTok + DM/linktree CTA — second TikTok cycle
-      return `site:tiktok.com ${orGroup} ${dmCtaGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`;
+      // Pool + figure names — targets editors of Hormozi/Gadzhi/Goggins content
+      return withLoc(`site:tiktok.com ${orGroup} ${hormoziFigures} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+    } else if (mod === 3) {
+      // Pool + DM/linktree CTA — second CTA cycle
+      return withLoc(`site:tiktok.com ${orGroup} ${dmCtaGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+    } else if (mod === 4) {
+      // Pool only — natty/physique progressors typically skip CTAs
+      return withLoc(`site:tiktok.com ${orGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     } else {
-      // TikTok + Spanish/EN business dorks
-      return `site:tiktok.com ${orGroup} ${businessGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`;
+      // Pool + Spanish/EN business dorks — ES market rotation
+      return withLoc(`site:tiktok.com ${orGroup} ${businessGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     }
   }
 
@@ -844,7 +869,7 @@ export class TikTokFacelessEngine {
     while (accepted.length < targetCount && this.isRunning && attempt < MAX_RETRIES) {
       attempt++;
       const needed = targetCount - accepted.length;
-      const searchQuery = this.buildSearchQuery(attempt);
+      const searchQuery = this.buildSearchQuery(attempt, targetRegions);
 
       onLog('');
       onLog('━━━ ATTEMPT ' + attempt + '/' + MAX_RETRIES + ' ━━━  ' + needed + ' lead(s) still needed');

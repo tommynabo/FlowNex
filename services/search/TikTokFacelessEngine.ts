@@ -29,7 +29,7 @@
 import { Lead, SearchConfigState, AudienceTier, VideoItem } from '../../lib/types';
 import { deduplicationService } from '../deduplication/DeduplicationService';
 import { PROJECT_CONFIG } from '../../config/project';
-import { icpEvaluator, RawApifyProfile } from './ICPEvaluator';
+import { icpEvaluator, RawApifyProfile, HARD_FILTER_MIN_FOLLOWERS } from './ICPEvaluator';
 import { emailDiscoveryService } from './EmailDiscoveryService';
 import { contentVerificationService } from './ContentVerificationService';
 import type { LogCallback, ResultCallback } from './SearchService';
@@ -159,28 +159,46 @@ export class TikTokFacelessEngine {
     });
     if (!res.ok) {
       const err = await res.text();
-      // Detect quota exceeded — throw sentinel so the engine aborts immediately
-      if (res.status === 403) {
+
+      // Helper: parse Apify error body regardless of nesting
+      const parseApifyError = (raw: string): { type: string; message: string } => {
         try {
-          const parsed = JSON.parse(err) as Record<string, unknown>;
+          const parsed = JSON.parse(raw) as Record<string, unknown>;
           const rawDetails = parsed.details;
           const details = typeof rawDetails === 'string'
             ? JSON.parse(rawDetails) as Record<string, unknown>
-            : rawDetails as Record<string, unknown>;
-          const apifyError = details?.error as Record<string, unknown> | undefined;
-          const errType = apifyError?.type as string || '';
-          const errMsg  = apifyError?.message as string || '';
-          if (
-            errType === 'platform-feature-disabled' ||
-            errType === 'actor-disabled' ||
-            errMsg.includes('Monthly usage hard limit')
-          ) {
-            throw new Error('APIFY_QUOTA_EXCEEDED: ' + (errMsg || 'Monthly limit exceeded — upgrade your Apify plan.'));
-          }
-        } catch (pe) {
-          if (pe instanceof Error && pe.message.startsWith('APIFY_QUOTA_EXCEEDED')) throw pe;
+            : (rawDetails as Record<string, unknown>) ?? parsed;
+          const apifyError = (details?.error ?? details) as Record<string, unknown> | undefined;
+          return {
+            type: (apifyError?.type as string) || '',
+            message: (apifyError?.message as string) || '',
+          };
+        } catch {
+          return { type: '', message: '' };
+        }
+      };
+
+      // ── 402: not enough usage credits ────────────────────────────────────────
+      if (res.status === 402) {
+        const { message } = parseApifyError(err);
+        throw new Error('APIFY_QUOTA_EXCEEDED: ' + (message || 'Insufficient Apify credits — top up or upgrade plan.'));
+      }
+
+      // ── 403: check for quota OR actor-forbidden errors ────────────────────────
+      if (res.status === 403) {
+        const { type, message } = parseApifyError(err);
+        if (
+          type === 'platform-feature-disabled' ||
+          type === 'actor-disabled' ||
+          message.includes('Monthly usage hard limit')
+        ) {
+          throw new Error('APIFY_QUOTA_EXCEEDED: ' + (message || 'Monthly limit exceeded — upgrade your Apify plan.'));
+        }
+        if (type === 'insufficient-permissions') {
+          throw new Error('APIFY_ACTOR_FORBIDDEN: ' + (message || 'Token lacks permissions for this actor/dataset.'));
         }
       }
+
       throw new Error(`/api/apify ${res.status}: ${err.substring(0, 300)}`);
     }
     return res.json();
@@ -392,6 +410,50 @@ export class TikTokFacelessEngine {
     const chunks: T[][] = [];
     for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));
     return chunks;
+  }
+
+  /**
+   * SNIPPET MODE — builds RawApifyProfile objects from Google Search result data.
+   * Used as fallback when clockworks~tiktok-profile-scraper is unavailable (403 forbidden).
+   * Extracts follower count from title/snippet text, email from snippet, bio from snippet.
+   * When follower count cannot be determined, defaults to HARD_FILTER_MIN_FOLLOWERS (1 000)
+   * so the profile passes the hard filter — accounts found by keyword search are likely creators.
+   */
+  private buildProfilesFromSnippets(
+    handles: string[],
+    handleToSnippet: Map<string, string>,
+    handleToTitle: Map<string, string>,
+  ): Array<RawApifyProfile & { _latestVideos: { thumbnailUrl: string; desc: string }[] }> {
+    const defaultFollowers = HARD_FILTER_MIN_FOLLOWERS;
+
+    return handles.map(handle => {
+      const snippet = handleToSnippet.get(handle) || '';
+      const title   = handleToTitle.get(handle) || '';
+      const combined = title + ' ' + snippet;
+
+      // Followers from title or snippet
+      const followers = this.extractFollowersFromSnippet(combined) ?? defaultFollowers;
+
+      // Email from snippet
+      const emailMatch = combined.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
+      const publicEmail = emailMatch ? emailMatch[0].toLowerCase().trim() : '';
+
+      // Bio is the snippet text (best approximation without profile scraping)
+      const biography = snippet.substring(0, 300);
+
+      return {
+        username: handle,
+        fullName: '',
+        biography,
+        followersCount: followers,
+        externalUrl: '',
+        publicEmail,
+        countryCode: '',
+        country: '',
+        __platform: 'tiktok' as const,
+        _latestVideos: [],
+      } as RawApifyProfile & { _latestVideos: { thumbnailUrl: string; desc: string }[] };
+    });
   }
 
   private parseKeywordsFromQuery(query: string): string[] {
@@ -752,7 +814,8 @@ export class TikTokFacelessEngine {
     const targetRegions = icpFilters?.regions ?? [];
     const targetCount = Math.max(1, config.maxResults);
 
-    const MAX_RETRIES = Math.min(75, Math.max(40, targetCount * 5));
+    // Reduced from 40-75 to 8-15 to avoid credit burn when scraper is down
+    const MAX_RETRIES = Math.min(15, Math.max(8, targetCount * 3));
 
     onLog('[TT-FC] ICP Type: faceless_clipper (TikTok only)');
     onLog('[TT-FC] Keyword pool: ' + FACELESS_CLIPPER_KEYWORD_POOLS.length + ' variantes | site:tiktok.com');
@@ -764,6 +827,9 @@ export class TikTokFacelessEngine {
     const seenHandles = new Set<string>(existingIgHandles);
     let attempt = 0;
     let consecutiveZeros = 0;
+    // Snippet fallback state — activated after 2 consecutive TikTok scraper 403s
+    let ttScraperConsecFails = 0;
+    let skipTtScraper = false;
 
     while (accepted.length < targetCount && this.isRunning && attempt < MAX_RETRIES) {
       attempt++;
@@ -810,16 +876,19 @@ export class TikTokFacelessEngine {
       }
 
       const handleToSnippet = new Map<string, string>();
+      const handleToTitle   = new Map<string, string>();
       const rawHandles: string[] = [];
       for (const item of allOrganicResults) {
-        const url = ((item.url as string) || (item.link as string) || '').toLowerCase();
-        const snippet = ((item.description as string) || (item.snippet as string) || (item.title as string) || '');
+        const url     = ((item.url as string) || (item.link as string) || '').toLowerCase();
+        const snippet = ((item.description as string) || (item.snippet as string) || '');
+        const title   = (item.title as string) || '';
         const ttMatch = url.match(/tiktok\.com\/@([^/?#\s]+)/);
         if (ttMatch) {
           const h = ttMatch[1].trim();
           if (h && !TIKTOK_SKIP_HANDLES.has(h) && !seenHandles.has(h)) {
             rawHandles.push(h);
             if (snippet) handleToSnippet.set(h, snippet);
+            if (title)   handleToTitle.set(h, title);
           }
         }
       }
@@ -854,48 +923,65 @@ export class TikTokFacelessEngine {
       for (const h of novelHandles) seenHandles.add(h);
       consecutiveZeros = 0;
 
-      // ── STEP 2: TikTok profile scraper ───────────────────────────────────────
-      // Batch to 5 handles max per call — caps cost even if the scraper ignores
-      // per-profile limits. We send multiple param names because the clockworks
-      // actor has changed its schema across versions.
-      // resultsType:'profiles' requests one profile object per handle (no videos).
-      // If unsupported, items fall back to video items handled by groupTikTokItemsByProfile.
+      // ── STEP 2: TikTok profile fetch (with snippet fallback) ─────────────────
+      // skipTtScraper is set after 2 consecutive 403 ACTOR_FORBIDDEN errors.
+      // In snippet mode: 0 extra Apify calls — profiles are built from Google data.
       const MAX_TT_BATCH = 5;
       const ttBatch = novelHandles.slice(0, MAX_TT_BATCH);
-      onLog('👤 STEP 2/4 — Fetching ' + ttBatch.length + ' TikTok profiles (batch capped at ' + MAX_TT_BATCH + ')...');
-      let rawTikTokProfiles: unknown[];
-      try {
-        rawTikTokProfiles = await this.callApifyActor(
-          TIKTOK_PROFILE_SCRAPER,
-          {
-            profiles: ttBatch,
-            resultsType: 'profiles',
-            maxResultsPerProfile: 1,
-            maxPostsPerProfile: 1,
-            maxItems: ttBatch.length,
-            shouldDownloadVideos: false,
-            shouldDownloadCovers: false,
-          },
-          onLog,
-          ttBatch.length * 5,
-        );
-      } catch (e: unknown) {
-        const errMsg2 = e instanceof Error ? e.message : String(e);
-        if (errMsg2.startsWith('APIFY_QUOTA_EXCEEDED')) {
-          onLog('[ENGINE] ⛔ Apify quota agotada — ' + errMsg2.replace('APIFY_QUOTA_EXCEEDED: ', '') + ' Abortando inmediatamente.');
-          break;
+      let normalizedProfiles: ReturnType<typeof this.groupTikTokItemsByProfile>;
+
+      if (skipTtScraper) {
+        // ── Snippet mode ──────────────────────────────────────────────────────
+        onLog('👤 STEP 2/4 — Snippet mode (TikTok scraper skipped, 0 Apify credits): ' + ttBatch.length + ' handles');
+        normalizedProfiles = this.buildProfilesFromSnippets(ttBatch, handleToSnippet, handleToTitle);
+        onLog('👤 STEP 2/4 ✓ — ' + normalizedProfiles.length + ' profiles built from Google snippets');
+      } else {
+        // ── Live TikTok scraper ───────────────────────────────────────────────
+        onLog('👤 STEP 2/4 — Fetching ' + ttBatch.length + ' TikTok profiles (batch capped at ' + MAX_TT_BATCH + ')...');
+        let rawTikTokProfiles: unknown[];
+        try {
+          rawTikTokProfiles = await this.callApifyActor(
+            TIKTOK_PROFILE_SCRAPER,
+            {
+              profiles: ttBatch,
+              resultsType: 'profiles',
+              maxResultsPerProfile: 1,
+              maxPostsPerProfile: 1,
+              maxItems: ttBatch.length,
+              shouldDownloadVideos: false,
+              shouldDownloadCovers: false,
+            },
+            onLog,
+            ttBatch.length * 5,
+          );
+          ttScraperConsecFails = 0;
+          normalizedProfiles = this.groupTikTokItemsByProfile(
+            rawTikTokProfiles as Record<string, unknown>[],
+          );
+          onLog('👤 STEP 2/4 ✓ — ' + rawTikTokProfiles.length + ' raw items → ' + normalizedProfiles.length + ' unique profiles');
+        } catch (e: unknown) {
+          const errMsg2 = e instanceof Error ? e.message : String(e);
+          if (errMsg2.startsWith('APIFY_QUOTA_EXCEEDED')) {
+            onLog('[ENGINE] ⛔ Apify quota agotada — ' + errMsg2.replace('APIFY_QUOTA_EXCEEDED: ', '') + ' Abortando inmediatamente.');
+            break;
+          }
+          // 403 insufficient-permissions or other scraper error → snippet fallback
+          if (errMsg2.startsWith('APIFY_ACTOR_FORBIDDEN')) {
+            ttScraperConsecFails++;
+            if (ttScraperConsecFails >= 2) {
+              skipTtScraper = true;
+              onLog('👤 STEP 2/4 ⚠ TikTok scraper: 2 consecutive 403s — activando modo snippets para el resto de la sesión.');
+            } else {
+              onLog('👤 STEP 2/4 ⚠ TikTok scraper 403 (#' + ttScraperConsecFails + ') — usando snippets este attempt.');
+            }
+          } else {
+            onLog('👤 STEP 2/4 ✗ TikTok scraper error — usando snippets este attempt: ' + errMsg2);
+          }
+          // Fall back to snippet profiles instead of skipping the whole attempt
+          normalizedProfiles = this.buildProfilesFromSnippets(ttBatch, handleToSnippet, handleToTitle);
+          onLog('👤 STEP 2/4 — ' + normalizedProfiles.length + ' profiles from Google snippets (fallback)');
         }
-        onLog('👤 STEP 2/4 ✗ TikTok profile scraper failed: ' + errMsg2);
-        continue;
       }
-
-      // Group items → one RawApifyProfile per creator.
-      // Handles both resultsType:'profiles' (1 item/handle) and default video-item mode.
-      const normalizedProfiles = this.groupTikTokItemsByProfile(
-        rawTikTokProfiles as Record<string, unknown>[],
-      );
-
-      onLog('👤 STEP 2/4 ✓ — ' + rawTikTokProfiles.length + ' raw items → ' + normalizedProfiles.length + ' unique profiles');
 
       // ── STEP 3: Hard ICP filter ──────────────────────────────────────────────
       onLog('🔍 STEP 3/4 — Applying hard ICP filters (' + normalizedProfiles.length + ' profiles)...');

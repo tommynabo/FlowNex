@@ -1132,45 +1132,60 @@ export class InstagramSearchEngine {
       const igHandles = novelHandles.filter(h => h.platform === 'instagram').map(h => h.handle);
       const ttHandles = novelHandles.filter(h => h.platform === 'tiktok').map(h => h.handle);
       onLog(`👤 STEP 2/4 — Fetching profiles: ${igHandles.length} Instagram, ${ttHandles.length} TikTok`);
-      let profiles: unknown[];
-      try {
-        const scrapePromises: Promise<unknown[]>[] = [];
-        if (igHandles.length > 0) {
-          scrapePromises.push(
-            this.callApifyActor(INSTAGRAM_PROFILE_SCRAPER, { usernames: igHandles }, onLog),
-          );
+      // ── STEP 2: Profile scrapers — partial results via Promise.allSettled ───
+      // Promise.allSettled ensures a TikTok scraper failure does NOT discard
+      // Instagram results that already completed. Each scraper is independent;
+      // we collect fulfilled results and log individual failures.
+      const scrapeJobs: { label: string; promise: Promise<unknown[]> }[] = [];
+      if (igHandles.length > 0) {
+        scrapeJobs.push({
+          label: 'Instagram',
+          promise: this.callApifyActor(INSTAGRAM_PROFILE_SCRAPER, { usernames: igHandles }, onLog),
+        });
+      }
+      if (ttHandles.length > 0 && icpType === 'faceless_clipper') {
+        scrapeJobs.push({
+          label: 'TikTok',
+          promise: this.callApifyActor(
+            TIKTOK_PROFILE_SCRAPER,
+            // maxItems:1 — fetch only the profile object, not the video feed
+            { usernames: ttHandles, maxItems: 1 },
+            onLog,
+          ).then(ttProfiles => {
+            const normalized = (ttProfiles as Record<string, unknown>[])
+              .map(p => this.normalizeTikTokProfile(p))
+              .filter(p => p.username !== ''); // discard video-feed items with no username
+            // Deduplicate by username (video-feed items can repeat the same profile)
+            const seen = new Set<string>();
+            const deduped = normalized.filter(p => {
+              if (seen.has(p.username)) return false;
+              seen.add(p.username);
+              return true;
+            });
+            onLog(`[TIKTOK] ${ttProfiles.length} raw items → ${deduped.length} unique profiles after normalization`);
+            return deduped;
+          }),
+        });
+      }
+      const scrapeSettled = await Promise.allSettled(scrapeJobs.map(j => j.promise));
+      const profiles: unknown[] = [];
+      let allScrapersFailed = true;
+      for (let si = 0; si < scrapeSettled.length; si++) {
+        const r = scrapeSettled[si];
+        if (r.status === 'fulfilled') {
+          profiles.push(...r.value);
+          allScrapersFailed = false;
+        } else {
+          const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+          onLog(`👤 STEP 2/4 ⚠ ${scrapeJobs[si].label} scraper failed: ${msg}`);
         }
-        if (ttHandles.length > 0 && icpType === 'faceless_clipper') {
-          scrapePromises.push(
-            this.callApifyActor(
-              TIKTOK_PROFILE_SCRAPER,
-              // maxItems:1 — fetch only the profile object, not the video feed
-              { usernames: ttHandles, maxItems: 1 },
-              onLog,
-            ).then(ttProfiles => {
-              const normalized = (ttProfiles as Record<string, unknown>[])
-                .map(p => this.normalizeTikTokProfile(p))
-                .filter(p => p.username !== ''); // discard video-feed items with no username
-              // Deduplicate by username (video-feed items can repeat the same profile)
-              const seen = new Set<string>();
-              const deduped = normalized.filter(p => {
-                if (seen.has(p.username)) return false;
-                seen.add(p.username);
-                return true;
-              });
-              onLog(`[TIKTOK] ${ttProfiles.length} raw items → ${deduped.length} unique profiles after normalization`);
-              return deduped;
-            }),
-          );
-        }
-        const results = await Promise.all(scrapePromises);
-        profiles = results.flat();
-      } catch (e: unknown) {
-        onLog('👤 STEP 2/4 ✗ Profile scraper error: ' + (e instanceof Error ? e.message : String(e)));
-        // Don't count as zero — we did get handles, scraper just failed temporarily
+      }
+      if (allScrapersFailed) {
+        onLog('👤 STEP 2/4 ✗ All scrapers failed — rotating query...');
         continue;
       }
-      onLog('👤 STEP 2/4 ✓ — ' + profiles.length + ' profiles received');
+      onLog('👤 STEP 2/4 ✓ — ' + profiles.length + ' profiles received' +
+        (allScrapersFailed ? '' : scrapeSettled.some(r => r.status === 'rejected') ? ' (partial — some scrapers failed)' : ''));
 
       // ── STEP 3: Hard ICP filter ──────────────────────────────────────────────
       onLog('🔍 STEP 3/4 — Aplicando filtros ICP duros (' + profiles.length + ' perfiles)...');
@@ -1304,41 +1319,27 @@ export class InstagramSearchEngine {
       }
 
       // ── STEP 3c: Post Data Collection (faceless_clipper only) ───────────────
-      // Collect recent post thumbnails + captions for IG handles so they are
-      // available to the async ContentVerificationService cron job later.
-      // The sync vision analysis has been removed — all dbDeduped candidates
-      // proceed to email discovery, and faceless_clipper leads exit with
-      // status 'pending_content_verification' for deep analysis in the background.
+      // CONCURRENCY: fire this Apify call immediately and DON'T await it here.
+      // Email discovery (Step 3b) runs in parallel. Posts (10-30s) and email
+      // discovery (1-5s) overlap; we await results just before saving leads.
       const postVerifiedCandidates = dbDeduped;
+      type PostItem3c = { caption: string; hashtags: string[]; isVideo: boolean; thumbnailUrl: string };
+      let postsPromise: Promise<Map<string, PostItem3c[]>> = Promise.resolve(new Map());
+      let igCandidatesForPosts: Lead[] = [];
       if (icpType === 'faceless_clipper') {
-        const igCandidatesForPosts = dbDeduped.filter(l => l.source !== 'tiktok');
+        igCandidatesForPosts = dbDeduped.filter(l => l.source !== 'tiktok');
         const igHandlesForPosts = igCandidatesForPosts.map(l => l.ig_handle || '').filter(Boolean);
-
         if (igHandlesForPosts.length > 0) {
-          onLog(`🎬 STEP 3c — Recolectando posts recientes para ${igHandlesForPosts.length} candidatos IG (análisis profundo en background)...`);
-          try {
-            const postsMap = await this.fetchRecentPosts(igHandlesForPosts, onLog);
-            // Attach collected VideoItems to each lead — serialized into DB JSONB,
-            // consumed by the ContentVerificationService cron job
-            for (const lead of igCandidatesForPosts) {
-              const handle = lead.ig_handle || '';
-              const posts = postsMap.get(handle) ?? [];
-              if (posts.length > 0) {
-                (lead as Lead)._videoItemsForVerification = posts.map(p => ({
-                  thumbnailUrl: p.thumbnailUrl,
-                  transcript: p.caption || undefined,
-                  platform: 'instagram' as const,
-                } satisfies VideoItem));
-              }
-            }
-            onLog(`[STEP 3c] ✓ Posts recolectados para ${postsMap.size}/${igHandlesForPosts.length} handles — todos pasan a email discovery`);
-          } catch (e: unknown) {
-            onLog(`[STEP 3c] ⚠ Post collection error (skipping, todos continúan): ${e instanceof Error ? e.message : String(e)}`);
-          }
+          onLog(`🎬 STEP 3c — Recolectando posts para ${igHandlesForPosts.length} candidatos IG (en paralelo con email discovery)...`);
+          postsPromise = this.fetchRecentPosts(igHandlesForPosts, onLog).catch((e: unknown) => {
+            onLog(`[STEP 3c] ⚠ Post collection error (skipping): ${e instanceof Error ? e.message : String(e)}`);
+            return new Map<string, PostItem3c[]>();
+          });
         }
       }
 
       // ── STEP 3b: Email discovery FIRST — no email = skip AI credits ──────────
+      // Runs concurrently with Step 3c post collection above.
       // Rule: discover email before spending OpenAI tokens. Only leads WITH email
       // proceed to ICP soft filter and AI analysis.
       const slotsRemaining = targetCount - accepted.length;
@@ -1438,6 +1439,28 @@ export class InstagramSearchEngine {
       // pass if PROJECT_CONFIG.flownextConfig.usePremiumModel = true.
       // Falls back to individual calls if the batch request fails.
       await this.generateCreatorAnalysisBatch(toProcess, onLog, icpType);
+
+      // ── Await Step 3c posts (started concurrently with email discovery) ────
+      // By this point email discovery (~1-5s) + soft filter (~2s) + AI (~2s)
+      // have already elapsed. Posts collection (10-30s) is likely still running
+      // for the first portion; we wait only for whatever remains.
+      if (igCandidatesForPosts.length > 0) {
+        const postsMap = await postsPromise;
+        if (postsMap.size > 0) {
+          for (const lead of igCandidatesForPosts) {
+            const handle = lead.ig_handle || '';
+            const posts = postsMap.get(handle) ?? [];
+            if (posts.length > 0) {
+              (lead as Lead)._videoItemsForVerification = posts.map(p => ({
+                thumbnailUrl: p.thumbnailUrl,
+                transcript: p.caption || undefined,
+                platform: 'instagram' as const,
+              } satisfies VideoItem));
+            }
+          }
+          onLog(`[STEP 3c] ✓ Posts recolectados para ${postsMap.size}/${igCandidatesForPosts.length} handles`);
+        }
+      }
 
       // Set lead status and stream each lead to the UI immediately (Pilar 4: Streaming)
       // onLeadFound fires per lead as soon as analysis is done — the screen populates

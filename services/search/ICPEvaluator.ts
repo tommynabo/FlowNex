@@ -92,6 +92,9 @@ const FACELESS_CLIPPER_REQUIRED_KEYWORDS = [
   'libertadfinanciera', 'negocio', 'crecimiento', 'progreso', 'frases',
   // Handle-level signals common in faceless/clipper account usernames
   'daily', 'clips', 'edits', 'motivation', 'mindset', 'fitness', 'gym',
+  // Generic creator/business terms — broadened net to avoid rejecting legitimate faceless accounts
+  'creador', 'creator', 'video', 'content', 'tips', 'coach', 'lifestyle', 'growth',
+  'crecimiento', 'habits', 'habitos', 'agency', 'agencia', 'marca', 'brand', 'business',
 ];
 
 // ── Types ─────────────────────────────────────────────────────────────────────

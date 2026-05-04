@@ -135,8 +135,8 @@ const REGION_MAP: Record<string, string[]> = {
 const GOOGLE_SEARCH_SCRAPER = 'nFJndFXA5zjCTuudP';
 const INSTAGRAM_PROFILE_SCRAPER = 'apify~instagram-profile-scraper';
 // apify~tiktok-profile-scraper returns one profile object per username (not a video feed).
-// The old clockworks~free-tiktok-scraper was returning errors within 2 seconds, replaced by the official actor.
-const TIKTOK_PROFILE_SCRAPER = 'apify~tiktok-profile-scraper';
+// clockworks~tiktok-profile-scraper is the active actor (apify~ slug returns 404).
+const TIKTOK_PROFILE_SCRAPER = 'clockworks~tiktok-profile-scraper';
 const INSTAGRAM_POSTS_SCRAPER = 'apify~instagram-scraper';
 
 // TikTok URL path segments that are not profile pages
@@ -207,25 +207,23 @@ export class InstagramSearchEngine {
     // accounts with minimal bios.
     if (icpType === 'faceless_clipper') {
       const poolIdx = attempt <= 1 ? 0 : (attempt - 2) % keywordPool.length;
-      const locIdx  = attempt <= 1 ? 0 : Math.floor((attempt - 2) / keywordPool.length) % locSuffixes.length;
       const terms = keywordPool[poolIdx];
       const orGroup = '(' + terms.join(' OR ') + ')';
-      const loc = attempt === 1 ? firstLoc : locSuffixes[locIdx];
       // CTA group — injected only on combined-platform queries to narrow intent
       const ctaGroup = '("link in bio" OR "DM for promo" OR "linktr.ee" OR "payhip" OR "forms.gle")';
       const mod = attempt % 4;
       if (mod === 0) {
-        // Combined: broadest reach, CTA-narrowed to force creator-intent signal
-        return `(site:tiktok.com OR site:instagram.com) ${orGroup} ${ctaGroup} ${loc} -site:instagram.com/p/ -site:instagram.com/reel/ -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`;
+        // Combined: broadest reach, CTA-narrowed to force creator-intent signal — location-independent
+        return `(site:tiktok.com OR site:instagram.com) ${orGroup} ${ctaGroup} -site:instagram.com/p/ -site:instagram.com/reel/ -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`;
       } else if (mod === 1) {
-        // TikTok-only — no "link in bio" requirement: finds minimal-bio creators
-        return `site:tiktok.com ${orGroup} ${loc} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`;
+        // TikTok-only — no "link in bio" requirement: finds minimal-bio creators — location-independent
+        return `site:tiktok.com ${orGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`;
       } else if (mod === 2) {
-        // TikTok-only with CTA signal — second TikTok cycle per 4-attempt rotation
-        return `site:tiktok.com ${orGroup} ("dm for promo" OR "linktr.ee" OR "payhip") ${loc} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`;
+        // TikTok-only with CTA signal — second TikTok cycle per 4-attempt rotation — location-independent
+        return `site:tiktok.com ${orGroup} ("dm for promo" OR "linktr.ee" OR "payhip") -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`;
       } else {
-        // Instagram-only — no "link in bio" requirement
-        return `site:instagram.com ${orGroup} ${loc} -site:instagram.com/p/ -site:instagram.com/reel/ ${ANTI_ICP_NEGATIVES}`;
+        // Instagram-only — no "link in bio" requirement — location-independent
+        return `site:instagram.com ${orGroup} -site:instagram.com/p/ -site:instagram.com/reel/ ${ANTI_ICP_NEGATIVES}`;
       }
     }
 

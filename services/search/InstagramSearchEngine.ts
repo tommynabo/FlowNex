@@ -134,9 +134,9 @@ const REGION_MAP: Record<string, string[]> = {
 // Google Search Scraper — queries `site:instagram.com [keywords]`, extracts handles from URLs
 const GOOGLE_SEARCH_SCRAPER = 'nFJndFXA5zjCTuudP';
 const INSTAGRAM_PROFILE_SCRAPER = 'apify~instagram-profile-scraper';
-// clockworks~free-tiktok-scraper returns one profile object per username (not a video feed).
-// The old clockworks~tiktok-profile-scraper returned 500+ video items per call, draining credits.
-const TIKTOK_PROFILE_SCRAPER = 'clockworks~free-tiktok-scraper';
+// apify~tiktok-profile-scraper returns one profile object per username (not a video feed).
+// The old clockworks~free-tiktok-scraper was returning errors within 2 seconds, replaced by the official actor.
+const TIKTOK_PROFILE_SCRAPER = 'apify~tiktok-profile-scraper';
 const INSTAGRAM_POSTS_SCRAPER = 'apify~instagram-scraper';
 
 // TikTok URL path segments that are not profile pages
@@ -1583,10 +1583,19 @@ export class InstagramSearchEngine {
    *   - Plain keyword queries (fitness coach, yoga) → returns as-is
    *   - Boolean queries ("coach" OR "trainer") → strips operators, returns phrases
    */
-  private parseKeywordsFromQuery(_query: string): string[] {
-    // Always use fitness/gym base keywords — target is gym/fitness creators only
-    // The keyword pool handles all variation via KEYWORD_POOLS rotation
-    return ['fitness coach', 'personal trainer'];
+  private parseKeywordsFromQuery(query: string): string[] {
+    const defaults = ['mindset', 'motivation', 'wifi money', 'clips'];
+    if (!query) return defaults;
+
+    const explicit = query.match(/#[a-zA-Z0-9_]+/g);
+    if (explicit && explicit.length > 0) {
+      return explicit.map(k => k.replace('#', ''));
+    }
+
+    const lower = query.toLowerCase();
+    const keywords = lower.split(' or ').map(k => k.trim().replace(/"/g, ''));
+
+    return keywords.length > 0 ? keywords : defaults;
   }
 }
 

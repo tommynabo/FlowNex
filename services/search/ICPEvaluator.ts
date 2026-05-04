@@ -18,7 +18,10 @@ const NON_GYM_SPORT_KEYWORDS = [
   'triathlon', 'triathlete',
   'swimmer', 'openwater',
   'footballplayer', 'soccerplayer', 'basketballplayer', 'tennisplayer',
-  'golfer', 'rugbyplayer', 'surfer', 'kitesurfer', 'skateboarder', 'snowboarder'
+  'golfer', 'rugbyplayer', 'surfer', 'kitesurfer', 'skateboarder', 'snowboarder',
+  // Combat / contact sports — reject unless gym override present
+  'wrestling', 'wrestler', 'lucha libre', 'mma', 'ufc', 'boxing', 'boxer',
+  'fighter', 'martial arts', 'jiujitsu', 'judo', 'karate'
 ];
 
 // If ANY of these are present alongside a NON_GYM_SPORT_KEYWORD, the profile is kept
@@ -59,6 +62,9 @@ const ANTI_ICP_BIO_KEYWORDS = [
   // Spanish-market physical business rejections
   'restaurante', 'cafetería', 'panadería', 'tienda física', 'local comercial',
   'inmobiliaria', 'peluquería', 'clínica', 'consulta médica', 'franquicia',
+  // Elite athletes and modeling agencies
+  'pro athlete', 'professional athlete', 'championship', 'competitor',
+  'medalist', 'olympian', 'actor', 'actress', 'model agency',
 ];
 
 // Required keywords for faceless/clipper ICP — at least ONE must be present
@@ -308,6 +314,7 @@ REJECT (is_human_creator = false):
 - Spam or bot accounts with gibberish bios
 - Pure personal lifestyle (selfies, travel, food, pets) with NO hustle/fitness/motivation angle
 - Traditional life coaches, therapists, HR consultants with no digital/fitness angle
+- Professional athletes, fighters, wrestlers, or sports competitors (we want digital creators and editors, not physical sports professionals).
 
 CRITICAL ANTI-ICP (reject immediately, anti_icp: true):
 - Local physical businesses: restaurants, cafes, tiendas, acai, bakeries, physical retail

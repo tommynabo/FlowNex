@@ -3,7 +3,8 @@ import { deduplicationService } from '../deduplication/DeduplicationService';
 import { PROJECT_CONFIG } from '../../config/project';
 import { icpEvaluator, RawApifyProfile } from './ICPEvaluator';
 import { emailDiscoveryService } from './EmailDiscoveryService';
-import { instagramSearchEngine } from './InstagramSearchEngine';
+import { instagramPersonalBrandEngine } from './InstagramPersonalBrandEngine';
+import { tikTokFacelessEngine } from './TikTokFacelessEngine';
 
 export type LogCallback = (message: string) => void;
 export type ResultCallback = (leads: Lead[]) => void;
@@ -33,8 +34,9 @@ export class SearchService {
 
     public stop() {
         this.isRunning = false;
-        // Also stop the Instagram engine if it's running
-        instagramSearchEngine.stop();
+        // Stop whichever specialized engine may be running
+        instagramPersonalBrandEngine.stop();
+        tikTokFacelessEngine.stop();
     }
 
     private extractEmailFromBio(bio: string): string {
@@ -218,10 +220,15 @@ export class SearchService {
         this.isRunning = true;
         this.userId = userId || null;
         try {
-            // Instagram searches are handled by InstagramSearchEngine
-            // which implements the "keep going until N" loop with hashtag rotation
+            // ── ROUTER: delegate to the appropriate specialized engine ──────────────
+            // InstagramPersonalBrandEngine → coaches, trainers, personal brand creators
+            // TikTokFacelessEngine         → faceless, clippers, motivation, natty, business
             if (config.source === 'instagram') {
-                await instagramSearchEngine.startSearch(config, onLog, onComplete, userId, onLeadFound);
+                if (config.icpFilters?.icpType === 'faceless_clipper') {
+                    await tikTokFacelessEngine.startSearch(config, onLog, onComplete, userId, onLeadFound);
+                } else {
+                    await instagramPersonalBrandEngine.startSearch(config, onLog, onComplete, userId, onLeadFound);
+                }
                 return;
             }
 

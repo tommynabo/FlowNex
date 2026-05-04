@@ -1,4 +1,12 @@
 /**
+ * @deprecated — Logic has been split into two specialized engines:
+ *   - InstagramPersonalBrandEngine.ts  (icpType: 'personal_brand')
+ *   - TikTokFacelessEngine.ts          (icpType: 'faceless_clipper')
+ *
+ * SearchService.ts now routes directly to those engines and no longer imports this file.
+ * This file is kept as a reference only. Do NOT use instagramSearchEngine in new code.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────────
  * InstagramSearchEngine — "Keep going until N leads found"
  *
  * Architecture mirrors SistemaLinkedin/lib/LinkedInSearchEngineV2.ts:

@@ -2,13 +2,14 @@ import React from 'react';
 import { SearchSession, Campaign } from '../lib/types';
 import {
   Calendar, Search, Mail, Instagram, ArrowRight, User,
-  History, Plus, Rocket, Users, MapPin, Tag
+  History, Plus, Rocket, Users, MapPin, Tag, Trash2
 } from 'lucide-react';
 
 interface CampaignsViewProps {
   campaigns: Campaign[];
   onSelectCampaign: (campaign: Campaign) => void;
   onCreateCampaign: () => void;
+  onDeleteCampaign: (id: string) => void;
 }
 
 function fmt(n: number) {
@@ -17,7 +18,7 @@ function fmt(n: number) {
   return n === 0 ? 'Any' : String(n);
 }
 
-export function CampaignsView({ campaigns, onSelectCampaign, onCreateCampaign }: CampaignsViewProps) {
+export function CampaignsView({ campaigns, onSelectCampaign, onCreateCampaign, onDeleteCampaign }: CampaignsViewProps) {
   return (
     <div className="space-y-6">
 
@@ -63,6 +64,7 @@ export function CampaignsView({ campaigns, onSelectCampaign, onCreateCampaign }:
                     <h4 className="font-bold text-base text-foreground mb-1">{c.name}</h4>
                     {c.description && <p className="text-sm text-muted-foreground line-clamp-2">{c.description}</p>}
                   </div>
+                  <div className="flex items-center gap-2">
                   <span className={`text-xs px-2.5 py-1 rounded-full font-semibold border ${
                     c.status === 'active'
                       ? 'bg-green-500/10 text-green-400 border-green-500/20'
@@ -72,6 +74,14 @@ export function CampaignsView({ campaigns, onSelectCampaign, onCreateCampaign }:
                   }`}>
                     {c.status}
                   </span>
+                  <button
+                    onClick={e => { e.stopPropagation(); onDeleteCampaign(c.id); }}
+                    className="p-1.5 rounded-lg text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                    title="Eliminar campaña"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                  </div>
                 </div>
 
                 {/* ICP badges */}

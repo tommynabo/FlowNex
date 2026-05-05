@@ -85,6 +85,17 @@ function App() {
     }
   };
 
+  const handleDeleteCampaign = async (campaignId: string) => {
+    if (!confirm('¿Seguro que quieres eliminar esta campaña? Esta acción no se puede deshacer.')) return;
+    const { error } = await supabase.from('campaigns').delete().eq('id', campaignId);
+    if (error) {
+      console.error('[CAMPAIGNS] Delete error:', error.message);
+      alert('Error al eliminar la campaña.');
+    } else {
+      setCampaigns(prev => prev.filter(c => c.id !== campaignId));
+    }
+  };
+
   const addSetterLog = (message: string) => {
     setSetterLogs(prev => [...prev, message]);
     setSetterTerminalVisible(true);
@@ -665,6 +676,7 @@ function App() {
                   campaigns={campaigns}
                   onSelectCampaign={handleSelectCampaign}
                   onCreateCampaign={() => setShowCampaignCreator(true)}
+                  onDeleteCampaign={handleDeleteCampaign}
                 />
               )}
             </div>

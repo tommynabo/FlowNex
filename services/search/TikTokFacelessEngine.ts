@@ -1099,6 +1099,7 @@ export class TikTokFacelessEngine {
             lead.website || '',
             lead.ig_handle || '',
             onLog,
+            lead.aiAnalysis?.summary || '',
           );
           if (discovered && lead.decisionMaker) lead.decisionMaker.email = discovered;
         }));

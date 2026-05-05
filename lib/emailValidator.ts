@@ -38,6 +38,15 @@ export function isStrictlyValidEmail(email: string): boolean {
     // kept from previous list
     'wix.com',
     'sentry.io',
+    // Email infrastructure / transactional providers
+    'amazon.com', 'amazonaws.com',
+    'sendgrid.com', 'sendgrid.net',
+    'mailchimp.com', 'mandrillapp.com',
+    'mailgun.org', 'mailgun.net',
+    'klaviyo.com', 'postmarkapp.com', 'sparkpostmail.com',
+    'zendesk.com', 'freshdesk.com', 'hubspot.com', 'salesforce.com', 'intercom.io',
+    'typeform.com', 'jotform.com', 'formspree.io',
+    'netlify.com', 'vercel.com',
   ];
   if (forbiddenDomains.some(d => domain === d || domain.endsWith(`.${d}`))) return false;
 
@@ -53,8 +62,29 @@ export function isStrictlyValidEmail(email: string): boolean {
     'firstname',
     'lastname',
     'admin',
+    // Automated / transactional senders
+    'no-reply',
+    'noreply',
+    'donotreply',
+    'do-not-reply',
+    'bounce',
+    'bounces',
+    'mailer-daemon',
+    'postmaster',
+    'abuse',
+    'notifications',
+    'notification',
+    'system',
+    'automated',
+    'billing',
+    'payments',
+    'invoice',
   ];
   if (forbiddenLocalParts.includes(local)) return false;
+
+  // Prefix-based forbidden local parts (e.g. api-services-support, auto-confirm)
+  const forbiddenLocalPrefixes = ['no-reply', 'noreply', 'api-', 'auto-', 'do-not-reply'];
+  if (forbiddenLocalPrefixes.some(p => local.startsWith(p))) return false;
 
   return true;
 }

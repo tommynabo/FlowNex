@@ -90,6 +90,41 @@ export class EmailDiscoveryService {
   }
 
   /**
+   * Stage 4 (TikTok) — extract an Instagram handle from the TikTok bio and
+   * cross-reference it via /api/ig-email to find the creator's business email.
+   * Many TikTok creators link their Instagram in their bio (e.g. "ig: @handle").
+   */
+  async findViaInstagramCrossRef(bio: string, handle: string, onLog: LogCallback): Promise<string> {
+    if (!bio) return '';
+    // Common patterns: "ig: @handle", "instagram.com/handle", "insta: handle"
+    const igPatterns = [
+      /(?:ig|insta(?:gram)?)\s*:?\s*@?([a-z0-9._]{1,30})/i,
+      /instagram\.com\/([a-z0-9._]{1,30})/i,
+    ];
+    let igHandle = '';
+    for (const pattern of igPatterns) {
+      const m = bio.match(pattern);
+      if (m?.[1]) { igHandle = m[1].replace(/[^a-z0-9._]/gi, ''); break; }
+    }
+    if (!igHandle) return '';
+    try {
+      const response = await fetch('/api/ig-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: igHandle }),
+      });
+      if (!response.ok) return '';
+      const data = await response.json();
+      const email = (data.email || '').toLowerCase().trim();
+      if (email && isStrictlyValidEmail(email)) {
+        onLog(`[EMAIL] @${handle} (TikTok) → found via Instagram cross-ref @${igHandle}`);
+        return email;
+      }
+    } catch { /* graceful fail */ }
+    return '';
+  }
+
+  /**
    * Full 3-stage email discovery for TikTok creators.
    * Mirrors discoverEmail() but uses findViaTikTokSource() for Stage 3
    * instead of the Instagram source HTML endpoint.
@@ -99,6 +134,7 @@ export class EmailDiscoveryService {
     website: string,
     handle: string,
     onLog: LogCallback,
+    bio = '',
   ): Promise<string> {
     // Stage 1 result already in hand
     if (existingEmail && isStrictlyValidEmail(existingEmail)) {
@@ -113,8 +149,14 @@ export class EmailDiscoveryService {
       this.findViaTikTokSource(handle, onLog),
     ]);
     const result = [websiteEmail, ttEmail].find(e => e && isStrictlyValidEmail(e)) ?? '';
-    if (!result) onLog(`[EMAIL] @${handle} (TikTok) → no email found across all 3 stages`);
-    return result;
+    if (result) return result;
+
+    // Stage 4: Instagram cross-reference — extract IG handle from bio and probe ig-email
+    const igEmail = await this.findViaInstagramCrossRef(bio, handle, onLog);
+    if (igEmail) return igEmail;
+
+    onLog(`[EMAIL] @${handle} (TikTok) → no email found across all 4 stages`);
+    return '';
   }
 
   /**

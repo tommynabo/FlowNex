@@ -106,6 +106,18 @@ const BIO_LINK_HOSTS = [
   'solo.to',
   'about.me',
   'contactcard.me',
+  // Creator monetization platforms
+  'stan.store',
+  'payhip.com',
+  'gumroad.com',
+  'koji.to',
+  'msha.ke',
+  'bio.link',
+  'hoo.be',
+  'fanlink.to',
+  'instabio.cc',
+  'snipfeed.co',
+  'withkoji.com',
 ];
 
 function isBioLinkPage(hostname: string): boolean {
@@ -205,21 +217,71 @@ async function fetchRaw(url: string): Promise<string | null> {
 const FALSE_POSITIVE_DOMAINS = [
   'example.com', 'wix.com', 'sentry.io', 'w3.org', 'schema.org',
   'googleapis.com', 'cloudflare.com', 'facebook.com', 'instagram.com',
+  // Email infrastructure / transactional providers
+  'amazon.com', 'amazonaws.com',
+  'sendgrid.com', 'sendgrid.net',
+  'mailchimp.com', 'mandrillapp.com',
+  'mailgun.org', 'mailgun.net',
+  'klaviyo.com', 'postmarkapp.com', 'sparkpostmail.com',
+  'zendesk.com', 'freshdesk.com', 'hubspot.com', 'salesforce.com', 'intercom.io',
+  'typeform.com', 'jotform.com', 'formspree.io',
+  'netlify.com', 'vercel.com',
 ];
 
+// Automated / transactional local-part prefixes — never a personal contact email
+const FALSE_POSITIVE_LOCAL_PREFIXES = [
+  'no-reply', 'noreply', 'donotreply', 'do-not-reply',
+  'bounce', 'bounces', 'mailer-daemon', 'postmaster',
+  'abuse', 'notifications', 'notification',
+  'api-', 'system', 'automated', 'auto-',
+  'billing', 'payments', 'invoice',
+  'help', 'support',
+];
+
+function isFalsePositiveEmail(email: string): boolean {
+  const lower = email.toLowerCase();
+  if (FALSE_POSITIVE_DOMAINS.some(d => lower.includes(d))) return true;
+  const local = lower.split('@')[0];
+  if (FALSE_POSITIVE_LOCAL_PREFIXES.some(p => local.startsWith(p))) return true;
+  return false;
+}
+
+// Contact-intent words that, when near an email address, signal it's a real contact email
+const CONTACT_INTENT_RE = /contact|email\s*(?:me|us)?|reach\s*(?:me|us|out)?|business\s*(?:inquiry|inquiries|email)?|collab|partnerships?|bookings?|mailto/i;
+
 function extractEmail(html: string): string | null {
-  // Strategy A: mailto: links (most reliable)
+  const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/;
+
+  // Strategy A: mailto: links — highest confidence
   const mailtoMatch = html.match(/mailto:([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/);
   if (mailtoMatch) {
     const email = mailtoMatch[1].toLowerCase().trim();
-    if (!FALSE_POSITIVE_DOMAINS.some(d => email.includes(d))) return email;
+    if (!isFalsePositiveEmail(email)) return email;
   }
 
-  // Strategy B: regex on HTML text
-  const emailRegex = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
-  const matches = html.match(emailRegex);
-  if (matches) {
-    const valid = matches.find(e => !FALSE_POSITIVE_DOMAINS.some(d => e.includes(d)));
+  // Strategy B: context-aware scan on stripped HTML
+  // Strip <script>, <style> and HTML comments to avoid scraping backend config values
+  const stripped = html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '');
+
+  // Pass 1: look for emails within 200 chars of a contact-intent word
+  const globalEmailRe = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
+  let m: RegExpExecArray | null;
+  while ((m = globalEmailRe.exec(stripped)) !== null) {
+    const email = m[0].toLowerCase();
+    if (isFalsePositiveEmail(email)) continue;
+    const start = Math.max(0, m.index - 200);
+    const end = Math.min(stripped.length, m.index + email.length + 200);
+    const context = stripped.slice(start, end);
+    if (CONTACT_INTENT_RE.test(context)) return email;
+  }
+
+  // Pass 2: fallback — first non-false-positive email anywhere in stripped HTML
+  const allMatches = stripped.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g);
+  if (allMatches) {
+    const valid = allMatches.find(e => !isFalsePositiveEmail(e.toLowerCase()));
     if (valid) return valid.toLowerCase().trim();
   }
 

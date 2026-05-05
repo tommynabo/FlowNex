@@ -975,6 +975,7 @@ export class TikTokFacelessEngine {
             ttBatch.length * 3,
             65_000, // client-side: 65s backup timeout
             55,     // server-side: Apify kills the actor at 55s no matter what TikTok does
+            1024,   // memory cap: 1024 MB (default 4096 MB would exceed Free plan when parallel)
           );
           ttScraperConsecFails = 0;
           normalizedProfiles = this.groupTikTokItemsByProfile(

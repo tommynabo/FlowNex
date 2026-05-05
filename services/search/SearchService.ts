@@ -149,10 +149,11 @@ export class SearchService {
             'Worth a watch if you are thinking about scaling.';
     }
 
-    private async callApifyActor(actorId: string, input: any, onLog: LogCallback): Promise<any[]> {
+    private async callApifyActor(actorId: string, input: any, onLog: LogCallback, memoryMbytes?: number): Promise<any[]> {
         // Use the /api/apify proxy (configured in vite.config.ts and vercel.json)
         const baseUrl = '/api/apify';
-        const startUrl = baseUrl + '/acts/' + actorId + '/runs?token=' + this.apiKey;
+        const memorySuffix = memoryMbytes ? '&memory=' + memoryMbytes : '';
+        const startUrl = baseUrl + '/acts/' + actorId + '/runs?token=' + this.apiKey + memorySuffix;
         onLog('[APIFY] Launching ' + actorId.split('/').pop() + '...');
 
         let startResponse: Response;
@@ -294,7 +295,7 @@ export class SearchService {
                     hashtags: hashtags.map(h => h.replace(/^#/, '')), // actor expects no #
                     resultsLimit: postFetchLimit,
                     proxy: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] }
-                }, onLog);
+                }, onLog, 1024);
             } catch (e: any) {
                 onLog('[ATTEMPT ' + attempts + '] Hashtag scraper error: ' + e.message);
                 break;
@@ -324,7 +325,7 @@ export class SearchService {
             try {
                 profiles = await this.callApifyActor(INSTAGRAM_PROFILE_SCRAPER, {
                     usernames: uniqueHandles
-                }, onLog);
+                }, onLog, 1024);
             } catch (e: any) {
                 onLog('👤 PASO 2/4 ✗ Error en profile scraper: ' + e.message);
                 break;

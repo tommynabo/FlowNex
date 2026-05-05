@@ -31,8 +31,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: '`path` field required' });
   }
 
-  // Build Apify URL
-  const apifyUrl = `https://api.apify.com/v2/${path}?token=${token}`;
+  // Build Apify URL — use & if path already contains query params (e.g. ?memory=1024)
+  const separator = path.includes('?') ? '&' : '?';
+  const apifyUrl = `https://api.apify.com/v2/${path}${separator}token=${token}`;
 
   console.log(`[api/apify] ${method} ${path}`);
 

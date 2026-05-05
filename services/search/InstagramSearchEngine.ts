@@ -277,11 +277,12 @@ export class InstagramSearchEngine {
     return res.json();
   }
 
-  private async callApifyActor(actorId: string, input: unknown, onLog: LogCallback): Promise<unknown[]> {
+  private async callApifyActor(actorId: string, input: unknown, onLog: LogCallback, memoryMbytes?: number): Promise<unknown[]> {
     onLog('[APIFY] Lanzando ' + actorId.split('~').pop() + '...');
 
     // Start the actor run
-    const startData = await this.apifyRequest(`acts/${actorId}/runs`, 'POST', input) as {
+    const runsPath = memoryMbytes ? `acts/${actorId}/runs?memory=${memoryMbytes}` : `acts/${actorId}/runs`;
+    const startData = await this.apifyRequest(runsPath, 'POST', input) as {
       data?: { id?: string; defaultDatasetId?: string };
     };
     const runId = startData.data?.id;
@@ -724,7 +725,7 @@ export class InstagramSearchEngine {
         directUrls: igHandles.map(h => `https://www.instagram.com/${h}/`),
         resultsType: 'posts',
         resultsLimit: 3,
-      }, onLog);
+      }, onLog, 1024);
 
       for (const item of items as Record<string, unknown>[]) {
         const owner = ((item.ownerUsername as string) || '').toLowerCase().trim();
@@ -1014,7 +1015,7 @@ export class InstagramSearchEngine {
           queries: searchQuery,
           maxPagesPerQuery: 2,  // 2 pages × 100 = up to 200 organic results per attempt
           resultsPerPage: 100,
-        }, onLog);
+        }, onLog, 1024);
       } catch (e: unknown) {
         onLog('[STEP 1] Google Search error: ' + (e instanceof Error ? e.message : String(e)));
         consecutiveZeros++;
@@ -1146,7 +1147,7 @@ export class InstagramSearchEngine {
       if (igHandles.length > 0) {
         scrapeJobs.push({
           label: 'Instagram',
-          promise: this.callApifyActor(INSTAGRAM_PROFILE_SCRAPER, { usernames: igHandles }, onLog),
+          promise: this.callApifyActor(INSTAGRAM_PROFILE_SCRAPER, { usernames: igHandles }, onLog, 1024),
         });
       }
       if (ttHandles.length > 0 && icpType === 'faceless_clipper') {
@@ -1157,6 +1158,7 @@ export class InstagramSearchEngine {
             // maxItems:1 — fetch only the profile object, not the video feed
             { usernames: ttHandles, maxItems: 1 },
             onLog,
+            1024,
           ).then(ttProfiles => {
             const normalized = (ttProfiles as Record<string, unknown>[])
               .map(p => this.normalizeTikTokProfile(p))

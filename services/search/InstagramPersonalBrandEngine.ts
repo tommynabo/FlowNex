@@ -147,9 +147,10 @@ export class InstagramPersonalBrandEngine {
     return res.json();
   }
 
-  private async callApifyActor(actorId: string, input: unknown, onLog: LogCallback): Promise<unknown[]> {
+  private async callApifyActor(actorId: string, input: unknown, onLog: LogCallback, memoryMbytes?: number): Promise<unknown[]> {
     onLog('[APIFY] Lanzando ' + actorId.split('~').pop() + '...');
-    const startData = await this.apifyRequest(`acts/${actorId}/runs`, 'POST', input) as {
+    const runsPath = memoryMbytes ? `acts/${actorId}/runs?memory=${memoryMbytes}` : `acts/${actorId}/runs`;
+    const startData = await this.apifyRequest(runsPath, 'POST', input) as {
       data?: { id?: string; defaultDatasetId?: string };
     };
     const runId = startData.data?.id;
@@ -649,7 +650,7 @@ export class InstagramPersonalBrandEngine {
           queries: searchQuery,
           maxPagesPerQuery: 2,
           resultsPerPage: 100,
-        }, onLog);
+        }, onLog, 1024);
       } catch (e: unknown) {
         onLog('[STEP 1] Google Search error: ' + (e instanceof Error ? e.message : String(e)));
         consecutiveZeros++;
@@ -723,7 +724,7 @@ export class InstagramPersonalBrandEngine {
       onLog('👤 STEP 2/4 — Fetching ' + novelHandles.length + ' Instagram profiles...');
       let profiles: unknown[];
       try {
-        profiles = await this.callApifyActor(INSTAGRAM_PROFILE_SCRAPER, { usernames: novelHandles }, onLog);
+        profiles = await this.callApifyActor(INSTAGRAM_PROFILE_SCRAPER, { usernames: novelHandles }, onLog, 1024);
       } catch (e: unknown) {
         onLog('👤 STEP 2/4 ✗ Profile scraper failed: ' + (e instanceof Error ? e.message : String(e)));
         continue;

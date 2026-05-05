@@ -32,7 +32,8 @@ function apifyDevProxy(apifyToken: string): Plugin {
                 return;
               }
 
-              const url = `https://api.apify.com/v2/${apifyPath}?token=${apifyToken}`;
+              const separator = apifyPath.includes('?') ? '&' : '?';
+              const url = `https://api.apify.com/v2/${apifyPath}${separator}token=${apifyToken}`;
               const fetchOpts: RequestInit = {
                 method,
                 headers: { 'Content-Type': 'application/json' },

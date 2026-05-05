@@ -54,8 +54,9 @@ async function apifyRequest(path: string, method: 'GET' | 'POST', body?: unknown
 }
 
 /** Start an Apify actor, poll until SUCCEEDED, return dataset items */
-async function callApifyActor(actorId: string, input: unknown): Promise<unknown[]> {
-  const startData = await apifyRequest(`acts/${actorId}/runs`, 'POST', input) as {
+async function callApifyActor(actorId: string, input: unknown, memoryMbytes?: number): Promise<unknown[]> {
+  const runsPath = memoryMbytes ? `acts/${actorId}/runs?memory=${memoryMbytes}` : `acts/${actorId}/runs`;
+  const startData = await apifyRequest(runsPath, 'POST', input) as {
     data?: { id?: string; defaultDatasetId?: string };
   };
   const runId    = startData.data?.id;
@@ -100,7 +101,7 @@ export class ContentVerificationService {
       directUrls: handles.map(h => `https://www.instagram.com/${h}/`),
       resultsType: 'posts',
       resultsLimit: 3,
-    });
+    }, 1024);
 
     for (const item of items as Record<string, unknown>[]) {
       const owner = ((item.ownerUsername as string) || '').toLowerCase().trim();
@@ -130,7 +131,7 @@ export class ContentVerificationService {
     const items = await callApifyActor(TIKTOK_PROFILE_SCRAPER, {
       usernames: handles,
       maxItems: 3,
-    });
+    }, 1024);
 
     for (const rawItem of items as Record<string, unknown>[]) {
       // The actor returns one object per username with a latestVideos[] array

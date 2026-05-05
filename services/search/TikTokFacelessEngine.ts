@@ -155,9 +155,11 @@ export class TikTokFacelessEngine {
 
     const ctaGroup = '("link in bio" OR "DM for promo" OR "linktr.ee" OR "payhip" OR "forms.gle")';
     const dmCtaGroup = '("dm for promo" OR "linktr.ee" OR "payhip" OR "gumroad")';
-    const businessGroup = '("content agency" OR "build in public" OR "smma" OR "agency growth" OR "online business")';
     const hormoziFigures = '("hormozi" OR "iman gadzhi" OR "goggins" OR "tate")';
     const volumeSignal = '("slideshow" OR "carousel" OR "daily content" OR "1000 videos" OR "content for hire")';
+    // Email-signal query: Google indexes TikTok bio text — profiles whose bio contains
+    // "gmail.com" or business-inquiry phrases are actively seeking outreach.
+    const emailSignal = '("gmail.com" OR "business inquiries" OR "for business inquiries" OR "business email" OR "dm for business" OR "for collabs")';
 
     const mod = attempt % 6;
 
@@ -181,8 +183,9 @@ export class TikTokFacelessEngine {
       // Pool + volume signal — targets content-factory accounts posting at scale
       return withLoc(`site:tiktok.com ${orGroup} ${volumeSignal} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     } else {
-      // Pool + EN business dorks — SMMA/agency/online business rotation
-      return withLoc(`site:tiktok.com ${orGroup} ${businessGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+      // Pool + email-signal — targets creators whose bio already exposes contact info.
+      // Google indexes bio text; this surfaces profiles we can actually email.
+      return withLoc(`site:tiktok.com ${orGroup} ${emailSignal} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     }
   }
 
@@ -896,9 +899,10 @@ export class TikTokFacelessEngine {
       // ── STEP 2: TikTok profile fetch (with snippet fallback) ─────────────────
       // skipTtScraper is set after 2 consecutive 403 ACTOR_FORBIDDEN errors.
       // In snippet mode: 0 extra Apify calls — profiles are built from Google data.
-      // Batch size: top 35% of ICP-ranked handles (capped 15–25) so the TikTok
-      // scraper budget is spent on the most promising profiles first.
-      const MAX_TT_BATCH = Math.min(25, Math.max(15, Math.ceil(novelHandles.length * 0.35)));
+      // Batch size: take all ICP-ranked handles up to 50 per run.
+      // The TikTok scraper startup cost (~15s) is fixed regardless of batch size —
+      // amortising it over 30-50 profiles instead of 15 doubles yield per Apify credit.
+      const MAX_TT_BATCH = Math.min(50, Math.max(30, novelHandles.length));
       const ttBatch = novelHandles.slice(0, MAX_TT_BATCH);
       let normalizedProfiles: ReturnType<typeof this.groupTikTokItemsByProfile>;
 
@@ -1142,12 +1146,12 @@ export class TikTokFacelessEngine {
         }));
       }));
       const withEmail = toDiscover.filter(l => l.decisionMaker?.email);
-      onLog('📧 STEP 3b ✓ — ' + withEmail.length + '/' + toDiscover.length + ' tienen email (email es enriquecimiento, no gate)');
+      onLog('📧 STEP 3b ✓ — ' + withEmail.length + '/' + toDiscover.length + ' tienen email');
 
-      // Accept ALL ICP-verified + content-passed leads, with or without email.
-      // Leads with email → Instantly. Leads without email → DB for manual DM outreach.
-      const toProcess = contentPassed.slice(0, slotsRemaining);
-      onLog('📧 STEP 3b ✓ — ' + toProcess.length + ' leads ICP verificados listos para análisis IA');
+      if (!withEmail.length) { onLog('⚠ Ningún candidato tiene email. Rotando query...'); continue; }
+
+      const toProcess = withEmail.slice(0, slotsRemaining);
+      onLog('📧 STEP 3b ✓ — ' + toProcess.length + ' leads con email + ICP verificado listos para análisis IA');
 
       // ── STEP 4b: Batch AI analysis ────────────────────────────────────────────
       onLog('✍ STEP 4b — Generando análisis IA (batch) para ' + toProcess.length + ' creadores TikTok...');

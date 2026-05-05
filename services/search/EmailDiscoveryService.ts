@@ -149,14 +149,8 @@ export class EmailDiscoveryService {
       this.findViaTikTokSource(handle, onLog),
     ]);
     const result = [websiteEmail, ttEmail].find(e => e && isStrictlyValidEmail(e)) ?? '';
-    if (result) return result;
-
-    // Stage 4: Instagram cross-reference — extract IG handle from bio and probe ig-email
-    const igEmail = await this.findViaInstagramCrossRef(bio, handle, onLog);
-    if (igEmail) return igEmail;
-
-    onLog(`[EMAIL] @${handle} (TikTok) → no email found across all 4 stages`);
-    return '';
+    if (!result) onLog(`[EMAIL] @${handle} (TikTok) → no email found across all 3 stages`);
+    return result;
   }
 
   /**

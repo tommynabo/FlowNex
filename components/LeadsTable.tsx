@@ -1,6 +1,6 @@
 import React from 'react';
 import { Lead } from '../lib/types';
-import { User, Mail, Instagram, Sparkles, Users, TrendingUp } from 'lucide-react';
+import { User, Mail, Instagram, Sparkles, Users, TrendingUp, ExternalLink } from 'lucide-react';
 
 interface LeadsTableProps {
   leads: Lead[];
@@ -103,9 +103,12 @@ export function LeadsTable({ leads, onViewMessage, onMarkContacted, onMarkDiscar
                       )}
                     </div>
                     {lead.ig_handle && (
-                      <a href={'https://instagram.com/' + lead.ig_handle} target="_blank" rel="noreferrer"
+                      <a href={(lead.source === 'tiktok' ? 'https://tiktok.com/@' : 'https://instagram.com/') + lead.ig_handle} target="_blank" rel="noreferrer"
                         className="flex items-center gap-1 text-xs text-primary hover:underline mt-0.5">
-                        <Instagram className="w-3 h-3" />@{lead.ig_handle}
+                        {lead.source === 'tiktok'
+                          ? <ExternalLink className="w-3 h-3" />
+                          : <Instagram className="w-3 h-3" />}
+                        @{lead.ig_handle}
                       </a>
                     )}
                   </div>

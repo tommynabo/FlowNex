@@ -906,9 +906,14 @@ export class TikTokFacelessEngine {
       const ttBatch = novelHandles.slice(0, MAX_TT_BATCH);
       let normalizedProfiles: ReturnType<typeof this.groupTikTokItemsByProfile>;
 
-      if (skipTtScraper) {
+      // Force snippet mode for tiny batches — the TikTok actor has a fixed ~30s startup
+      // overhead regardless of batch size. For <15 handles the cost is never worth it.
+      const useTinyBatchSnippet = !skipTtScraper && ttBatch.length < 15;
+
+      if (skipTtScraper || useTinyBatchSnippet) {
         // ── Snippet mode ──────────────────────────────────────────────────────
-        onLog('👤 STEP 2/4 — Snippet mode (TikTok scraper skipped, 0 Apify credits): ' + ttBatch.length + ' handles');
+        const reason = skipTtScraper ? 'TikTok scraper skipped' : `batch demasiado pequeño (${ttBatch.length} < 15)`;
+        onLog('👤 STEP 2/4 — Snippet mode (' + reason + ', 0 créditos Apify): ' + ttBatch.length + ' handles');
         normalizedProfiles = this.buildProfilesFromSnippets(ttBatch, handleToSnippet, handleToTitle);
         onLog('👤 STEP 2/4 ✓ — ' + normalizedProfiles.length + ' profiles built from Google snippets');
       } else {

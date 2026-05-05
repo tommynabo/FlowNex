@@ -21,8 +21,9 @@ const MAX_VIDEOS_TO_ANALYZE = 3;
 /** Minimum score (0–100) for a creator to be considered an ICP match (personal_brand) */
 export const CONTENT_SCORE_THRESHOLD = 65;
 
-/** Higher threshold for faceless/clipper ICP — reduces false positives from casual gym/motivation accounts */
-const FACELESS_CLIPPER_CONTENT_SCORE_THRESHOLD = 72;
+/** Threshold for faceless/clipper ICP — matches personal_brand threshold so borderline editors and
+ *  motivation accounts (score 65–71) are not incorrectly discarded before email discovery. */
+const FACELESS_CLIPPER_CONTENT_SCORE_THRESHOLD = 65;
 
 /** Apify actor IDs */
 const INSTAGRAM_POSTS_SCRAPER = 'apify~instagram-scraper';
@@ -301,6 +302,7 @@ CRITICAL REJECTION CRITERIA (ANTI-ICP): Score 0 immediately if the content shows
 If ANY of these apply, return content_alignment_score: 0 and is_icp_match: false.
 
 APPROVE (score ≥ 65) if the content matches ANY of these patterns:
+- Video editor / clipper service provider: edit showcases, portfolio reels, "rate my edit", VFX/transitions demos, editing tutorials, "DM for edits", speed-edits, colour-grade reels — score ≥ 75 immediately, regardless of whether the content has a motivational angle. An editor showing their work IS the ICP.
 - Clipper/reposter: edited clips from Hormozi, Tate, Gadzhi, Goggins, David Goggins, or any known entrepreneur/mindset figure — this is the IDEAL ICP
 - TikTok carousel/slideshow at scale: motivational quote slides, body transformation sequences, "CTA of sympathy" format ("my ex 1yr ago / 2yrs ago / now"), fitness tip lists, daily discipline slides — this is the PRIMARY target format
 - Faceless motivation: no face shown, voiceover + b-roll, discipline, entrepreneurship, self-improvement — even with low production value

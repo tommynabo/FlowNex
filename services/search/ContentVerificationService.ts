@@ -305,16 +305,16 @@ If ANY of these apply, return content_alignment_score: 0 and is_icp_match: false
 APPROVE (score ≥ 65) if the content matches ANY of these patterns:
 - Video editor / clipper service provider: edit showcases, portfolio reels, "rate my edit", VFX/transitions demos, editing tutorials, "DM for edits", speed-edits, colour-grade reels — score ≥ 75 immediately, regardless of whether the content has a motivational angle. An editor showing their work IS the ICP.
 - Clipper/reposter: edited clips from Hormozi, Tate, Gadzhi, Goggins, David Goggins, or any known entrepreneur/mindset figure — this is the IDEAL ICP
-- TikTok carousel/slideshow at scale: motivational quote slides, body transformation sequences, "CTA of sympathy" format ("my ex 1yr ago / 2yrs ago / now"), fitness tip lists, daily discipline slides — this is the PRIMARY target format
+- TikTok carousel/slideshow at scale: motivational quote slides, mindset/wealth sequences, "CTA of sympathy" format ("my ex 1yr ago / 2yrs ago / now"), self-improvement tip lists, daily discipline slides — this is the PRIMARY target format
 - Faceless motivation: no face shown, voiceover + b-roll, discipline, entrepreneurship, self-improvement — even with low production value
-- Gym motivation: body transformation, before/after physique, "no days off", "no excuses", natty journey WITH motivational message
 - Online business / entrepreneurship: SMMA, agency growth, make money online, passive income, wifi money, Skool/WOP community content — even without a gym element
 - Digital hustle: entrepreneur beginner content, "building my brand", "road to financial freedom", daily grind content
 
 REJECT (score < 65) if the majority of content is:
+- Personal fitness content: gym workouts, physique/natty journey, body transformation, workout tutorials, gym motivation — even if it has a motivational angle
 - Personal face-forward lifestyle (selfies, daily vlogs, food/travel) with no motivational angle
 - Pure gym tutorial/form-check by a certified trainer (educational instruction, NOT motivation)
-- Entertainment, comedy, gaming, or niches completely unrelated to motivation/mindset/fitness/business
+- Entertainment, comedy, gaming, or niches completely unrelated to motivation/mindset/business
 - Sports performance content (running, cycling, swimming) without entrepreneurship/motivation angle`.trim();
 
     const personalBrandCriteria = `

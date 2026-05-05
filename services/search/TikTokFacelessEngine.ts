@@ -1,7 +1,7 @@
 /**
  * TikTokFacelessEngine — Dedicated engine for "Faceless / Clipper / Motivación" ICP
  *
- * Scope: Faceless creators, motivational clippers, physique/natty progressors, and
+ * Scope: Faceless creators, motivational clippers, online-business accounts, and
  *        online-business faceless accounts on TikTok.
  *
  * Platform: 100% site:tiktok.com — zero Instagram-specific scraping in this file.
@@ -37,8 +37,8 @@ import type { LogCallback, ResultCallback } from './SearchService';
 // ── Faceless & Clipper keyword pool ─────────────────────────────────────────
 // 9 precision pools targeting the client's real ICP archetypes:
 //   Clippers (@finesteditsz), EN motivation (@nofexcuses), Figure-clip entrepreneurs (Hormozi/Gadzhi),
-//   Carousel/slideshow creators, EN wealth/hustle, Physique/natty (@bautibelloso),
-//   ES motivation/entrepreneurship (@brian09__), ES gym/physique, Community (WOP/Skool/clipping)
+//   Carousel/slideshow creators, EN wealth/hustle, Content-factory volume signals,
+//   ES motivation/entrepreneurship (@brian09__), EN hustle/social proof, Community (WOP/Skool/clipping)
 const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
   // 0. Clipper / editor identity — highest precision, explicit self-identification
   ['"clipper"', '"editor"', '"edits"', '"daily clips"', '"dm for promo"', '"payhip"', '"gumroad"'],
@@ -47,11 +47,11 @@ const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
   // 2. Figure-clip / entrepreneur clipper — Hormozi, Gadzhi, Goggins editors
   ['"hormozi"', '"iman gadzhi"', '"goggins"', '"david goggins"', '"tate"', '"make money online"'],
   // 3. Carousel / slideshow creator at scale — primary ICP format (EN-only)
-  ['"slideshow"', '"carousel"', '"body transformation"', '"top 5"', '"listicle"', '"swipe for more"'],
+  ['"slideshow"', '"carousel"', '"daily discipline"', '"top 5"', '"listicle"', '"swipe for more"'],
   // 4. EN hustle / wealth / online business
   ['"passive income"', '"wifi money"', '"online business"', '"financial freedom"', '"smma"', '"agency growth"'],
-  // 5. Physique / natty / gym progression creator
-  ['"natty"', '"physique"', '"gains"', '"cutting"', '"bulking"', '"no days off"', '"gymtok"'],
+  // 5. Content volume / content-factory signals — high-output posting identity
+  ['"consistency"', '"daily upload"', '"100 videos"', '"going viral"', '"viral clips"', '"short form"', '"repurpose"'],
   // 6. EN anchor-account clipper reference — creators who name or clip known figures
   ['"hormozi clips"', '"iman gadzhi clips"', '"goggins edits"', '"tate clips"', '"alex hormozi"', '"andrew tate clips"'],
   // 7. EN volume / content-factory signals — high-output posting identity
@@ -448,11 +448,8 @@ export class TikTokFacelessEngine {
   private detectNiche(bio: string, username: string, fullName: string): string {
     const text = (bio + ' ' + username + ' ' + fullName).toLowerCase();
     if (/clipper|editor\b|edits|daily.?clips|dm.?for.?promo/.test(text)) return 'Clips & Edits';
-    if (/natty|physique|cutting|bulking|gains|aesthetics|body.?transformation|shredded/.test(text)) return 'Physique';
     if (/wifi.?money|passive.?income|financial.?freedom|make.?money|dinero|riqueza|libertad.?financiera/.test(text)) return 'Business';
     if (/mindset|motivation|discipline|no.?excuses|grindset|hard.?work|mentalidad|motivaci[oó]n|disciplina|sin.?excusas/.test(text)) return 'Motivation';
-    if (/fitness|gym|workout|bodybuilding|strength|crossfit/.test(text)) return 'Fitness';
-    if (/entrenamiento|rutina|ejercicio/.test(text)) return 'Fitness';
     if (/entrepreneur|business|startup|marketing|sales|emprendimiento/.test(text)) return 'Business';
     return 'Other';
   }
@@ -572,7 +569,7 @@ export class TikTokFacelessEngine {
                   'You are an expert cold email copywriter for TikTok faceless/clipper/motivation creator outreach.\n' +
                   'GOAL: Write a cold email pitching a VSL link. Personal, peer-to-peer, not mass blast.\n' +
                   'TONE: Direct, confident, no fluff. English only. Under 120 words. No emojis in subject.\n' +
-                  'Rules: Reference their niche (clips, motivation, physique, etc.). CTA = watch VSL. Subject under 8 words.\n' +
+                  'Rules: Reference their niche (clips, motivation, mindset, wealth, smma, etc.). CTA = watch VSL. Subject under 8 words.\n' +
                   'Respond ONLY with this JSON (no markdown):\n' +
                   '{"coldEmailSubject":"...","coldEmailBody":"...","vslPitch":"One-liner hook max 15 words","psychologicalProfile":"2-sentence assessment","engagementSignal":"inferred signal","salesAngle":"top reason they say yes","summary":"one sentence lead description"}',
               },

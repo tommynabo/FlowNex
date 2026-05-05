@@ -83,10 +83,7 @@ const FACELESS_CLIPPER_TIER2_KEYWORDS = [
   'nodaysoff', 'grindset', 'bestversion', 'selfimprovement',
   'wifimoney', 'passiveincome', 'financialfreedom', 'makemoney', 'onlinebusiness',
   'hormozi', 'gadzhi', 'tate', 'goggins',
-  'daily', 'gymmotivation', 'moneymindset', 'dailymotivation', 'fitnessmotivation',
-  'bodytransformation', 'transformation', 'gymtok',
-  'physique', 'gains', 'shredded', 'bulk', 'cutting', 'aesthetics',
-  'natty', 'lifting', 'gym', 'fitness',
+  'daily', 'moneymindset', 'dailymotivation', 'transformation',
   'business', 'agency',
 ];
 
@@ -302,25 +299,20 @@ TARGET ARCHETYPES — pass if the profile clearly fits ANY of these:
    - May have minimal or no bio — accept if handle/name signals motivation content
    - Example: @nofexcuses with name "NoExcusesClub" and bio "be the best version of yourself"
 
-3. PHYSIQUE / NATTY / GYM PROGRESSION CREATOR
-   - Young individuals posting gym progress, body transformation, natty journey
-   - Bio often contains: weight/height stats, "natty", gym hashtags, or physique references
-   - Accept creators whose content is clearly centered on gym progress and physique content
-
-4. MONEY / WEALTH FACELESS ACCOUNT
+3. MONEY / WEALTH FACELESS ACCOUNT
    - Emoji-heavy name (💸, 🤑, 💰), minimal or no bio
    - Handle may contain: money, wealth, finance, hustle
    - Accept if username + name context clearly signal money/finance/hustle niche in English
 
-5. CAROUSEL / SLIDESHOW CREATOR AT SCALE
+4. CAROUSEL / SLIDESHOW CREATOR AT SCALE
    - Posts TikTok carousels/slideshows in high volume (100s–1000s of videos per month)
-   - Content: motivational quote slides, body transformation sequences, "CTA of sympathy" format
-     ("my ex 1yr ago / 2yrs ago / now"), fitness tip lists, daily discipline slides
+   - Content: motivational quote slides, mindset/wealth sequences, "CTA of sympathy" format
+     ("my ex 1yr ago / 2yrs ago / now"), self-improvement tip lists, daily discipline slides
    - This is the PRIMARY target archetype: high-volume content factory
    - Business model: content factory looking for scalable revenue streams
    - Signals: many videos, "slideshow" or "carousel" in bio, high like-to-follower ratio
 
-6. ENTREPRENEUR BEGINNER / DIGITAL HUSTLE
+5. ENTREPRENEUR BEGINNER / DIGITAL HUSTLE
    - Obsessed with making money online, follows Hormozi/Gadzhi content
    - May be in Skool or WOP communities, references SMMA, agency, digital business
    - Bio signals: "building my empire", "SMMA", "agency owner", "digital creator", "content for hire"
@@ -331,26 +323,27 @@ AUTO-APPROVE SIGNALS (approve with confidence ≥ 88, skip lengthy analysis):
 - Bio contains "clipper" or "editor" or "edits": auto-approve
 - Bio contains "dm for promo" or "dm for promos" or "dm for collab": auto-approve
 - Bio contains "payhip.com" or "gumroad.com" or "forms.gle": auto-approve
-- Bio contains "linktr.ee" AND niche keywords (fitness/motivation/mindset/smma): auto-approve
+- Bio contains "linktr.ee" AND niche keywords (motivation/mindset/smma): auto-approve
 - Bio contains "skool" or "wop" or "smma": auto-approve (entrepreneur community member)
-- Username/handle contains: clips, edits, clipper, daily, motivation, mindset, noexcuses, natty, physique, slideshow, carousel
+- Username/handle contains: clips, edits, clipper, daily, motivation, mindset, noexcuses, slideshow, carousel
 
 REJECT (is_human_creator = false):
 - Large official brand accounts, media companies, entertainment studios
-- Accounts with zero relevance to motivation, mindset, wealth, gym, or entrepreneurship
+- Accounts with zero relevance to motivation, mindset, wealth, or entrepreneurship
 - Spam or bot accounts with gibberish bios
-- Pure personal lifestyle (selfies, travel, food, pets) with NO hustle/fitness/motivation angle
-- Traditional life coaches, therapists, HR consultants with no digital/fitness angle
+- Pure personal lifestyle (selfies, travel, food, pets) with NO hustle/motivation/business angle
+- Traditional life coaches, therapists, HR consultants with no digital/business angle
 - Professional athletes, fighters, wrestlers, or sports competitors (we want digital creators and editors, not physical sports professionals)
 - Accounts posting primarily in a non-English language (Spanish, Portuguese, French, etc.)
 
 CRITICAL ANTI-ICP (reject immediately, anti_icp: true):
+- Personal fitness brands, gym influencers, workout tutorials, body transformation creators, physique/natty journey accounts, fitness coaches. We DO NOT want fitness creators in this category. Reject immediately.
 - Local physical businesses: restaurants, cafes, acai, bakeries, physical retail
 - Corporate/HR consulting, therapists, spiritual coaches (no wealth/fitness angle)
 - Accounts posting primarily in a non-English language
 
 Reply ONLY with a valid JSON array matching the input order:
-[ { "username": "user1", "is_human_creator": true, "confidence": 91, "anti_icp": false, "reason": "Physique/natty creator, gym progression content, EN-speaking" }, ... ]`;
+[ { "username": "user1", "is_human_creator": true, "confidence": 91, "anti_icp": false, "reason": "Clipper/editor with DM-for-promo signal, EN-speaking" }, ... ]`;
 
     const SYSTEM_PROMPT = icpType === 'faceless_clipper' ? FACELESS_CLIPPER_SYSTEM_PROMPT : FITNESS_SYSTEM_PROMPT;
 

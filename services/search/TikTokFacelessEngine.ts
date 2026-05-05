@@ -244,7 +244,7 @@ export class TikTokFacelessEngine {
     return res.json();
   }
 
-  private async callApifyActor(actorId: string, input: unknown, onLog: LogCallback, itemsLimit?: number): Promise<unknown[]> {
+  private async callApifyActor(actorId: string, input: unknown, onLog: LogCallback, itemsLimit?: number, timeoutMs?: number): Promise<unknown[]> {
     onLog('[APIFY] Lanzando ' + actorId.split('~').pop() + '...');
     const startData = await this.apifyRequest(`acts/${actorId}/runs`, 'POST', input) as {
       data?: { id?: string; defaultDatasetId?: string };
@@ -262,6 +262,7 @@ export class TikTokFacelessEngine {
       await new Promise(r => setTimeout(r, delay));
       elapsedMs += delay;
       polls++;
+      if (timeoutMs && elapsedMs >= timeoutMs) break; // hard cap per actor
       try {
         const sd = await this.apifyRequest(`acts/${actorId}/runs/${runId}`, 'GET') as {
           data?: { status?: string };
@@ -275,7 +276,14 @@ export class TikTokFacelessEngine {
         if (msg.includes('FAILED') || msg.includes('ABORTED')) throw pe;
       }
     }
-    if (!done) throw new Error('Apify timeout after ' + Math.round(elapsedMs / 1000) + 's');
+
+    // Abort the Apify run if we exited without success (timeout or user stop)
+    // so it doesn't keep consuming credits on Apify's servers.
+    if (!done) {
+      try { await this.apifyRequest(`acts/${actorId}/runs/${runId}/abort`, 'POST', {}); } catch { /* ignore */ }
+      if (!this.isRunning) return []; // user stopped — silent exit
+      throw new Error('Apify timeout after ' + Math.round(elapsedMs / 1000) + 's');
+    }
     if (!this.isRunning) return [];
 
     onLog('[APIFY] Descargando resultados...');
@@ -939,6 +947,7 @@ export class TikTokFacelessEngine {
             },
             onLog,
             ttBatch.length * 3,
+            60_000, // 60s hard cap — fallback to snippet mode if actor is slow
           );
           ttScraperConsecFails = 0;
           normalizedProfiles = this.groupTikTokItemsByProfile(

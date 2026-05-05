@@ -245,13 +245,15 @@ export class TikTokFacelessEngine {
     return res.json();
   }
 
-  private async callApifyActor(actorId: string, input: unknown, onLog: LogCallback, itemsLimit?: number, timeoutMs?: number, runTimeoutSecs?: number): Promise<unknown[]> {
+  private async callApifyActor(actorId: string, input: unknown, onLog: LogCallback, itemsLimit?: number, timeoutMs?: number, runTimeoutSecs?: number, memoryMbytes?: number): Promise<unknown[]> {
     onLog('[APIFY] Lanzando ' + actorId.split('~').pop() + '...');
     // runTimeoutSecs → ?timeout= tells Apify to kill the actor server-side after N seconds.
+    // memoryMbytes → ?memory= caps RAM per run (default is 4096 MB; use 1024 for lightweight actors).
     // This is the ONLY reliable cap: client-side polling can't stop a running actor.
-    const runsPath = runTimeoutSecs
-      ? `acts/${actorId}/runs?timeout=${runTimeoutSecs}`
-      : `acts/${actorId}/runs`;
+    const params: string[] = [];
+    if (runTimeoutSecs) params.push('timeout=' + runTimeoutSecs);
+    if (memoryMbytes)   params.push('memory=' + memoryMbytes);
+    const runsPath = `acts/${actorId}/runs` + (params.length ? '?' + params.join('&') : '');
     const startData = await this.apifyRequest(runsPath, 'POST', input) as {
       data?: { id?: string; defaultDatasetId?: string };
     };
@@ -824,7 +826,7 @@ export class TikTokFacelessEngine {
               queries: q,
               maxPagesPerQuery: 1,
               resultsPerPage: 40,
-            }, onLog, undefined, 90_000, 80).catch((e: unknown) => {
+            }, onLog, undefined, 90_000, 80, 1024).catch((e: unknown) => {
               const msg = e instanceof Error ? e.message : String(e);
               if (msg.startsWith('APIFY_QUOTA_EXCEEDED')) { quotaExceeded = true; }
               return [] as unknown[];

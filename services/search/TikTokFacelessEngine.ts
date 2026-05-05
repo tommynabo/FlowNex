@@ -585,70 +585,28 @@ export class TikTokFacelessEngine {
   }
 
   /**
-   * BATCH AI ANALYSIS (Pilar 2 + 3)
+   * BATCH AI ANALYSIS (Pilar 2) — summary only.
    * Single /api/openai call for all N leads → eliminates N-1 round-trip latencies.
-   * Pass 2: optional gpt-4o enrichment when PROJECT_CONFIG.usePremiumModel = true.
-   * Mutates each Lead's aiAnalysis field in place.
+   * Generates only a brief creator summary (no cold email, no sales copy).
+   * Mutates each Lead's aiAnalysis.summary in place.
    */
   private async generateCreatorAnalysisBatch(leads: Lead[], onLog: LogCallback): Promise<void> {
     if (!leads.length) return;
 
-    const vslLink = PROJECT_CONFIG.flownextConfig?.vslLink || 'https://flownext.io/vsl';
-    const usePremiumModel = PROJECT_CONFIG.flownextConfig?.usePremiumModel ?? false;
-
     const batch = leads.map(lead => ({
       handle: lead.ig_handle || '',
-      platform: 'tiktok',
       name: lead.decisionMaker?.name || '',
       niche: lead.niche || '',
       followers: this.formatFollowers(lead.follower_count || 0),
       tier: lead.audience_tier || 'nano',
-      email: lead.decisionMaker?.email || 'none',
     }));
 
     const systemPrompt =
-      'You are an expert cold email copywriter for TikTok faceless/clipper/motivation creator outreach.\n' +
-      'You will receive a JSON array of TikTok creator profiles.\n' +
-      'GOAL: For EACH creator, write a cold email pitching a VSL link. Personal, peer-to-peer, not mass blast.\n' +
-      'TONE: Direct, confident, no fluff. English only. Under 120 words per email. No emojis in subject.\n' +
-      'Rules: Reference their niche (clips, motivation, physique, business). CTA = watch VSL. Subject under 8 words.\n' +
-      'VSL Link: ' + vslLink + '\n\n' +
+      'You are a TikTok creator analyst.\n' +
+      'For each creator, write a concise one-sentence summary describing who they are and what content they create.\n' +
       'Respond ONLY with a valid JSON array (no markdown, no wrapping object) in the EXACT same order as the input:\n' +
-      '[{"coldEmailSubject":"...","coldEmailBody":"...","vslPitch":"One-liner hook max 15 words","psychologicalProfile":"2-sentence assessment","engagementSignal":"inferred signal","salesAngle":"top reason they say yes","summary":"one sentence lead description"},...]';
+      '[{"summary":"..."},...]';
 
-    const applyResults = (rawResults: Record<string, string>[], source: 'mini' | 'premium') => {
-      for (let i = 0; i < leads.length; i++) {
-        const lead = leads[i];
-        const r = rawResults[i];
-        if (!r) continue;
-        const followerStr = this.formatFollowers(lead.follower_count || 0);
-        if (source === 'mini') {
-          lead.aiAnalysis = {
-            summary: r.summary || (lead.niche + ' creator with ' + followerStr + ' followers.'),
-            painPoints: [],
-            generatedIcebreaker: r.vslPitch || ('Scale your ' + lead.niche + ' brand without more hours'),
-            coldEmailSubject: r.coldEmailSubject || ('Quick question about your ' + lead.niche + ' content'),
-            coldEmailBody: r.coldEmailBody || this.fallbackEmailBody(lead, vslLink),
-            vslPitch: r.vslPitch || ('Scale your ' + lead.niche + ' brand without more hours'),
-            fullAnalysis: (r.psychologicalProfile || '') + ' | ' + (r.engagementSignal || ''),
-            psychologicalProfile: r.psychologicalProfile || 'Ambitious creator focused on growth.',
-            engagementSignal: r.engagementSignal || 'Active niche audience.',
-            salesAngle: r.salesAngle || 'Monetization opportunity.',
-          };
-        } else {
-          if (!lead.aiAnalysis) return;
-          if (r.coldEmailBody) lead.aiAnalysis.coldEmailBody = r.coldEmailBody;
-          if (r.psychologicalProfile) lead.aiAnalysis.psychologicalProfile = r.psychologicalProfile;
-          if (r.salesAngle) lead.aiAnalysis.salesAngle = r.salesAngle;
-          if (r.summary) lead.aiAnalysis.summary = r.summary;
-          if (r.vslPitch) { lead.aiAnalysis.vslPitch = r.vslPitch; lead.aiAnalysis.generatedIcebreaker = r.vslPitch; }
-          lead.aiAnalysis.fullAnalysis = r.psychologicalProfile + ' | ' + (r.engagementSignal || lead.aiAnalysis.engagementSignal);
-        }
-      }
-    };
-
-    // Pass 1: gpt-4o-mini
-    let batchSucceeded = false;
     try {
       const response = await fetch('/api/openai', {
         method: 'POST',
@@ -657,10 +615,10 @@ export class TikTokFacelessEngine {
           model: 'gpt-4o-mini',
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: 'Analyze these ' + leads.length + ' TikTok creators:\n' + JSON.stringify(batch) },
+            { role: 'user', content: 'Summarize these ' + leads.length + ' TikTok creators:\n' + JSON.stringify(batch) },
           ],
-          temperature: 0.7,
-          max_tokens: Math.min(4096, leads.length * 380),
+          temperature: 0.5,
+          max_tokens: Math.min(2048, leads.length * 80),
         }),
       });
       if (response.ok) {
@@ -669,94 +627,39 @@ export class TikTokFacelessEngine {
         const arrayMatch = raw.match(/\[[\s\S]*\]/);
         if (arrayMatch) {
           const parsed = JSON.parse(arrayMatch[0]) as Record<string, string>[];
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            applyResults(parsed, 'mini');
-            onLog('[BATCH AI] ✓ ' + leads.length + ' perfiles TikTok analizados en 1 llamada gpt-4o-mini (Pilar 2)');
-            batchSucceeded = true;
+          if (Array.isArray(parsed)) {
+            for (let i = 0; i < leads.length; i++) {
+              if (!leads[i].aiAnalysis) {
+                leads[i].aiAnalysis = {
+                  summary: '', painPoints: [], generatedIcebreaker: '',
+                  coldEmailSubject: '', coldEmailBody: '', vslPitch: '',
+                  fullAnalysis: '', psychologicalProfile: '', engagementSignal: '', salesAngle: '',
+                };
+              }
+              if (parsed[i]?.summary) leads[i].aiAnalysis!.summary = parsed[i].summary;
+            }
+            onLog('[BATCH AI] ✓ ' + leads.length + ' summaries generados en 1 llamada gpt-4o-mini (Pilar 2)');
+            return;
           }
         }
       }
     } catch (e) {
-      onLog('[BATCH AI] ⚠ Batch request falló — usando análisis individual como fallback: ' +
-        (e instanceof Error ? e.message : String(e)));
+      onLog('[BATCH AI] ⚠ Batch request falló: ' + (e instanceof Error ? e.message : String(e)));
     }
 
-    if (!batchSucceeded) {
-      onLog('[BATCH AI] Fallback: analizando ' + leads.length + ' perfiles individualmente...');
-      for (const lead of leads) {
-        if (!this.isRunning) break;
-        try {
-          const a = await this.generateCreatorAnalysis(lead);
-          lead.aiAnalysis = {
-            summary: a.summary, painPoints: [], generatedIcebreaker: a.vslPitch,
-            coldEmailSubject: a.coldEmailSubject, coldEmailBody: a.coldEmailBody,
-            vslPitch: a.vslPitch, fullAnalysis: a.psychologicalProfile + ' | ' + a.engagementSignal,
-            psychologicalProfile: a.psychologicalProfile, engagementSignal: a.engagementSignal,
-            salesAngle: a.salesAngle,
-          };
-        } catch { /* generateCreatorAnalysis returns defaults on error */ }
-      }
-      return;
-    }
-
-    // Guard: ensure every lead has aiAnalysis
+    // Fallback: assign summary from existing data (no extra API call)
+    onLog('[BATCH AI] Fallback: asignando summary desde datos existentes...');
     for (const lead of leads) {
       if (!lead.aiAnalysis) {
-        const followerStr = this.formatFollowers(lead.follower_count || 0);
         lead.aiAnalysis = {
-          summary: (lead.niche || 'Creator') + ' with ' + followerStr + ' followers.',
-          painPoints: [], generatedIcebreaker: 'Scale your brand without more hours',
-          coldEmailSubject: 'Quick question about your ' + (lead.niche || 'content'),
-          coldEmailBody: this.fallbackEmailBody(lead, vslLink),
-          vslPitch: 'Scale your brand without more hours', fullAnalysis: 'Ambitious creator.',
-          psychologicalProfile: 'Ambitious creator focused on growth.',
-          engagementSignal: 'Active niche audience.', salesAngle: 'Monetization opportunity.',
+          summary: (lead.niche || 'Creator') + ' with ' + this.formatFollowers(lead.follower_count || 0) + ' followers.',
+          painPoints: [], generatedIcebreaker: '',
+          coldEmailSubject: '', coldEmailBody: '', vslPitch: '',
+          fullAnalysis: '', psychologicalProfile: '', engagementSignal: '', salesAngle: '',
         };
+      } else if (!lead.aiAnalysis.summary) {
+        lead.aiAnalysis.summary = (lead.niche || 'Creator') + ' with ' + this.formatFollowers(lead.follower_count || 0) + ' followers.';
       }
-    }
-
-    // Pass 2: gpt-4o (opt-in, Pilar 3)
-    if (!usePremiumModel) return;
-
-    onLog('[MODEL TIER] 🚀 Enriquecimiento premium con gpt-4o (' + leads.length + ' creadores TikTok)...');
-    const premiumPrompt =
-      'You are a world-class B2B copywriter specializing in TikTok creator economy outreach.\n' +
-      'Rewrite the cold email body and psychological profile for MAXIMUM conversion.\n' +
-      'Be highly specific to each creator\'s niche (clips, motivation, physique, business), audience size, and unique angle.\n' +
-      'Under 150 words per email. Hyper-personalized. B2B peer-to-peer tone.\n' +
-      'VSL Link: ' + vslLink + '\n\n' +
-      'Return ONLY a valid JSON array (same order as input), each item:\n' +
-      '[{"coldEmailBody":"...","psychologicalProfile":"3-sentence deep profile","salesAngle":"specific reason they say yes","summary":"sharp one-liner","vslPitch":"compelling hook max 12 words"},...]';
-
-    try {
-      const resp = await fetch('/api/openai', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'gpt-4o',
-          messages: [
-            { role: 'system', content: premiumPrompt },
-            { role: 'user', content: 'Enrich these ' + leads.length + ' TikTok creators:\n' + JSON.stringify(batch) },
-          ],
-          temperature: 0.8,
-          max_tokens: Math.min(8192, leads.length * 500),
-        }),
-      });
-      if (resp.ok) {
-        const data = await resp.json() as { choices?: Array<{ message?: { content?: string } }> };
-        const raw = data.choices?.[0]?.message?.content || '';
-        const arrayMatch = raw.match(/\[[\s\S]*\]/);
-        if (arrayMatch) {
-          const parsed = JSON.parse(arrayMatch[0]) as Record<string, string>[];
-          if (Array.isArray(parsed)) {
-            applyResults(parsed, 'premium');
-            onLog('[MODEL TIER] ✓ Enriquecimiento gpt-4o completado (' + leads.length + ' creadores TikTok)');
-          }
-        }
-      }
-    } catch (e) {
-      onLog('[MODEL TIER] ⚠ gpt-4o premium pass falló (manteniendo análisis mini): ' +
-        (e instanceof Error ? e.message : String(e)));
     }
   }
 
@@ -1034,58 +937,16 @@ export class TikTokFacelessEngine {
 
       if (!hardFiltered.length) { onLog('⚠ Ningún perfil pasó el hard filter. Rotando query...'); continue; }
 
-      // ── STEP 3a: Lean Content Analysis (inline, Pilar velocidad) ────────────
-      // Extract latestVideos from normalized profiles and pass to ContentVerificationService
-      // as prefetched items — zero extra Apify calls.
-      // Profiles that fail content verification are skipped before email discovery or AI.
-      onLog('🎬 STEP 3a — Lean Content Analysis (últimos 3 videos, 0 Apify extra)...');
-      const contentPassedProfiles: typeof normalizedProfiles[number][] = [];
-
-      for (const profile of normalizedProfiles) {
-        if (!this.isRunning) break;
-        if (!hardFiltered.find(h => h.username === profile.username)) continue; // didn't pass hard filter
-
-        const extProfile = profile as typeof profile & { _latestVideos: { thumbnailUrl: string; desc: string }[] };
-        const latestVideos = extProfile._latestVideos || [];
-
-        if (!latestVideos.length) {
-          // No video data available → pass through (benefit of the doubt)
-          contentPassedProfiles.push(profile);
-          continue;
-        }
-
-        const prefetchedItems: VideoItem[] = latestVideos.map(v => ({
-          thumbnailUrl: v.thumbnailUrl,
-          transcript: v.desc || undefined,
-          platform: 'tiktok' as const,
-        }));
-
-        try {
-          const result = await contentVerificationService.verifyCreatorContent(
-            profile.username,
-            'tiktok',
-            'faceless_clipper',
-            prefetchedItems,
-          );
-          if (result.is_icp_match) {
-            contentPassedProfiles.push(profile);
-            onLog(`[LEAN CONTENT] ✓ @${profile.username} — score ${result.overall_score} — ${result.reasoning}`);
-          } else {
-            onLog(`[LEAN CONTENT] ✗ @${profile.username} — score ${result.overall_score} — ${result.reasoning} — SKIP`);
-          }
-        } catch (e: unknown) {
-          // ContentVerification error → pass through
-          contentPassedProfiles.push(profile);
-          onLog(`[LEAN CONTENT] ⚠ @${profile.username} — verification error, passing by default`);
-        }
+      // Build videosMap for Lean Content Analysis (used after email discovery)
+      const videosMap = new Map<string, { thumbnailUrl: string; desc: string }[]>();
+      for (const p of normalizedProfiles) {
+        const extP = p as typeof p & { _latestVideos: { thumbnailUrl: string; desc: string }[] };
+        videosMap.set(p.username, extP._latestVideos || []);
       }
 
-      onLog('[LEAN CONTENT] ' + contentPassedProfiles.length + '/' + hardFiltered.length + ' pasaron verificación de contenido');
-      if (!contentPassedProfiles.length) { onLog('⚠ Ningún perfil pasó Lean Content Analysis. Rotando query...'); continue; }
-
-      // Build candidate Lead objects
+      // Build candidate Lead objects from hardFiltered profiles
       const candidates: Lead[] = [];
-      for (const profile of contentPassedProfiles) {
+      for (const profile of hardFiltered) {
         if (!this.isRunning) break;
         const handle = profile.username;
         if (!handle) continue;
@@ -1142,7 +1003,7 @@ export class TikTokFacelessEngine {
         });
       }
 
-      onLog('[FUNNEL] ' + candidates.length + '/' + contentPassedProfiles.length + ' pasaron filtros de seguidor/región');
+      onLog('[FUNNEL] ' + candidates.length + '/' + hardFiltered.length + ' pasaron filtros de seguidor/región');
       if (!candidates.length) { onLog('⚠ Ningún candidato pasó los filtros ICP. Rotando query...'); continue; }
 
       // DB-level dedup
@@ -1153,6 +1014,7 @@ export class TikTokFacelessEngine {
       if (!dbDeduped.length) { onLog('⚠ Todos los candidatos ya existen en la BD. Rotando query...'); continue; }
 
       // ── STEP 3b: Email discovery (TikTok) ───────────────────────────────────
+      // Runs BEFORE content analysis — no point verifying content for leads with no email.
       const slotsRemaining = targetCount - accepted.length;
       const toDiscover = dbDeduped.slice(0, Math.max(slotsRemaining * 8, dbDeduped.length));
       onLog('📧 STEP 3b — Email discovery (TikTok) para ' + toDiscover.length + ' candidatos...');
@@ -1173,9 +1035,52 @@ export class TikTokFacelessEngine {
 
       if (!withEmail.length) { onLog('⚠ Ningún candidato tiene email. Rotando query...'); continue; }
 
+      // ── STEP 3a: Lean Content Analysis (inline, after email check) ───────────
+      // Runs ONLY on leads that already have an email — avoids wasting time on
+      // content verification for leads that would be discarded for lack of email.
+      // Strict mode: rejects creators with no video data or verification errors.
+      onLog('🎬 STEP 3a — Lean Content Analysis (últimos 3 videos, 0 Apify extra)...');
+      const contentPassed: Lead[] = [];
+
+      for (const lead of withEmail) {
+        if (!this.isRunning) break;
+        const latestVideos = videosMap.get(lead.ig_handle || '') || [];
+
+        if (!latestVideos.length) {
+          onLog(`[LEAN CONTENT] ✗ @${lead.ig_handle} — sin videos disponibles — SKIP`);
+          continue;
+        }
+
+        const prefetchedItems: VideoItem[] = latestVideos.map(v => ({
+          thumbnailUrl: v.thumbnailUrl,
+          transcript: v.desc || undefined,
+          platform: 'tiktok' as const,
+        }));
+
+        try {
+          const result = await contentVerificationService.verifyCreatorContent(
+            lead.ig_handle || '',
+            'tiktok',
+            'faceless_clipper',
+            prefetchedItems,
+          );
+          if (result.is_icp_match) {
+            contentPassed.push(lead);
+            onLog(`[LEAN CONTENT] ✓ @${lead.ig_handle} — score ${result.overall_score} — ${result.reasoning}`);
+          } else {
+            onLog(`[LEAN CONTENT] ✗ @${lead.ig_handle} — score ${result.overall_score} — ${result.reasoning} — SKIP`);
+          }
+        } catch (e: unknown) {
+          onLog(`[LEAN CONTENT] ✗ @${lead.ig_handle} — verification error — SKIP`);
+        }
+      }
+
+      onLog('[LEAN CONTENT] ' + contentPassed.length + '/' + withEmail.length + ' pasaron verificación de contenido');
+      if (!contentPassed.length) { onLog('⚠ Ningún lead pasó Lean Content Analysis. Rotando query...'); continue; }
+
       // ── STEP 4a: AI Soft Filter ───────────────────────────────────────────────
-      onLog('🤖 STEP 4a — Filtro IA para ' + withEmail.length + ' candidatos (verificando ICP faceless)...');
-      const softFiltered = await icpEvaluator.applySoftFilter(withEmail, onLog, 'faceless_clipper');
+      onLog('🤖 STEP 4a — Filtro IA para ' + contentPassed.length + ' candidatos (verificando ICP faceless)...');
+      const softFiltered = await icpEvaluator.applySoftFilter(contentPassed, onLog, 'faceless_clipper');
       const icpVerified = softFiltered.filter(l => l.icp_verified === true);
       const icpUnverified = softFiltered.filter(l => l.icp_verified !== true);
       onLog('[ICP SOFT] ' + icpVerified.length + ' verificados ✓ | ' + icpUnverified.length + ' no verificados ✗');

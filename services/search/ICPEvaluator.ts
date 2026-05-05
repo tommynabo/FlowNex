@@ -24,12 +24,6 @@ const NON_GYM_SPORT_KEYWORDS = [
   'fighter', 'martial arts', 'jiujitsu', 'judo', 'karate'
 ];
 
-// If ANY of these are present alongside a NON_GYM_SPORT_KEYWORD, the profile is kept
-const GYM_FITNESS_OVERRIDE_KEYWORDS = [
-  'gym', 'fitness', 'workout', 'bodybuilding', 'strength', 'crossfit',
-  'coach', 'trainer', 'hiit', 'weightlifting', 'lifting', 'physique', 'muscle'
-];
-
 // At least ONE strictly physical fitness keyword must be present — broad terms like coach/health excluded
 const FITNESS_REQUIRED_KEYWORDS = [
   'fitness', 'gym', 'workout', 'training', 'crossfit', 'hiit',
@@ -167,6 +161,16 @@ export class ICPEvaluator {
         continue;
       }
 
+      // Non-gym / combat sport check — applies to BOTH icpTypes, no override.
+      // Presence of cycling/mma/agency/etc. causes rejection regardless of
+      // any accompanying gym/fitness keywords.
+      const nonGymSport = NON_GYM_SPORT_KEYWORDS.find(kw => fullText.includes(kw));
+      if (nonGymSport) {
+        onLog(`[HARD FILTER] 🚴 @${handle} skip: non-gym/combat sport "${nonGymSport}" detected`);
+        rejections.nonGymSport++;
+        continue;
+      }
+
       if (icpType === 'faceless_clipper') {
         // Positive signal check: at least ONE faceless/clipper keyword must appear
         // in the combined fullText (bio + name + handle). Accounts like @bautibelloso
@@ -194,17 +198,6 @@ export class ICPEvaluator {
           onLog(`[HARD FILTER] 🧠 @${handle} skip: mental/spiritual keyword "${mentalKeyword}" found`);
           rejections.mental++;
           continue;
-        }
-
-        // Non-gym sport check
-        const nonGymSport = NON_GYM_SPORT_KEYWORDS.find(kw => fullText.includes(kw));
-        if (nonGymSport) {
-          const hasGymOverride = GYM_FITNESS_OVERRIDE_KEYWORDS.some(kw => fullText.includes(kw));
-          if (!hasGymOverride) {
-            onLog(`[HARD FILTER] 🚴 @${handle} skip: non-gym sport "${nonGymSport}" detected, no fitness override`);
-            rejections.nonGymSport++;
-            continue;
-          }
         }
       }
 

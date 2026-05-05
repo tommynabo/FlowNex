@@ -86,21 +86,22 @@ const REGION_MAP: Record<string, string[]> = {
 // Google Search Scraper
 const GOOGLE_SEARCH_SCRAPER = 'nFJndFXA5zjCTuudP';
 
-// clockworks~tiktok-scraper is the general-purpose clockworks TikTok actor (170K+ users, 4.7★).
-// It stores datasets under the CALLER's account (no 403 permission issues unlike tiktok-profile-scraper).
+// clockworks~free-tiktok-scraper — PPR pricing ($2/1K results), charged against standard Apify credits.
+// No x402 external payment required (unlike clockworks~tiktok-scraper which migrated to x402).
 // Output format: video items with `authorMeta` nested object → handled by MODE B in groupTikTokItemsByProfile.
-// Input: { profiles: ["handle"], resultsPerPage: 1 } → 1 video item per creator = minimal cost ($1.70/1K).
-const TIKTOK_PROFILE_SCRAPER = 'clockworks~tiktok-scraper';
+// Input: { profiles: ["handle"], resultsPerPage: 1 } → 1 video item per creator = minimal cost.
+const TIKTOK_PROFILE_SCRAPER = 'clockworks~free-tiktok-scraper';
 
-// Anti-ICP negative keywords — purge local businesses and off-target content
-const ANTI_ICP_NEGATIVES = '-restaurant -cafe -clinic -store -food -apparel -"life coach" -corporate -consulting -boutique -"shop now" -"dance" -"beauty" -"makeup" -"cooking"';
+// Anti-ICP negative keywords — only the 5 most critical terms.
+// Shorter queries avoid Google truncation that caused empty results.
+const ANTI_ICP_NEGATIVES = '-restaurant -store -boutique -cooking -dance';
 
 // TikTok URL path segments that are not profile pages
 const TIKTOK_SKIP_HANDLES = new Set(['tag', 'search', 'discover', 'music', 'video', 'live', 'trending', 'foryou', 't']);
 
-// Number of distinct queries to batch into a single Google Search actor run.
-// The actor accepts newline-separated queries → 5× fewer actor startups per session.
-const GOOGLE_QUERY_BATCH = 5;
+// Number of parallel Google Search actor runs per attempt.
+// Each query launches its own run concurrently → wall-time ≈ single run (~40s) vs serial (~200s).
+const GOOGLE_QUERY_BATCH = 3;
 
 // Max milliseconds spent on email discovery per lead.
 // Caps Stage 2 website scraping + Stage 3/4 deep scraping so the loop never
@@ -263,7 +264,7 @@ export class TikTokFacelessEngine {
     let polls = 0;
     let elapsedMs = 0;
     while (!done && this.isRunning && polls < 600) {
-      const delay = polls === 0 ? 1500 : 2000;
+      const delay = polls === 0 ? 800 : 1500;
       await new Promise(r => setTimeout(r, delay));
       elapsedMs += delay;
       polls++;
@@ -801,22 +802,40 @@ export class TikTokFacelessEngine {
       // joined by newline so the Google Search actor runs them in a single API call.
       // This cuts actor startup cost by ÷GOOGLE_QUERY_BATCH compared to one-query-per-attempt.
       const baseAttempt = (attempt - 1) * GOOGLE_QUERY_BATCH + 1;
-      const searchQuery = Array.from({ length: GOOGLE_QUERY_BATCH }, (_, i) =>
+      // Build GOOGLE_QUERY_BATCH distinct queries, one per parallel run.
+      const queryBatch = Array.from({ length: GOOGLE_QUERY_BATCH }, (_, i) =>
         this.buildSearchQuery(baseAttempt + i, targetRegions)
-      ).join('\n');
+      );
 
       onLog('');
       onLog('━━━ ATTEMPT ' + attempt + '/' + MAX_RETRIES + ' ━━━  ' + needed + ' lead(s) still needed');
-      onLog('🔎 STEP 1/4 — Google Search (' + GOOGLE_QUERY_BATCH + '-query batch, attempt ' + attempt + ')...');
+      onLog('🔎 STEP 1/4 — Google Search (' + GOOGLE_QUERY_BATCH + ' parallel runs, attempt ' + attempt + ')...');
 
-      // ── STEP 1: Google Search site:tiktok.com ────────────────────────────────
+      // ── STEP 1: Google Search site:tiktok.com — parallel runs ────────────────
+      // Each query launches its own Apify run concurrently.
+      // Wall-time ≈ single run (~40s) regardless of GOOGLE_QUERY_BATCH count.
+      // .catch(() => []) — if one run fails the others still deliver results.
       let searchResults: unknown[];
+      let quotaExceeded = false;
       try {
-        searchResults = await this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
-          queries: searchQuery,
-          maxPagesPerQuery: 1,
-          resultsPerPage: 100,
-        }, onLog);
+        const batchResults = await Promise.all(
+          queryBatch.map(q =>
+            this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
+              queries: q,
+              maxPagesPerQuery: 1,
+              resultsPerPage: 40,
+            }, onLog, undefined, 90_000, 80).catch((e: unknown) => {
+              const msg = e instanceof Error ? e.message : String(e);
+              if (msg.startsWith('APIFY_QUOTA_EXCEEDED')) { quotaExceeded = true; }
+              return [] as unknown[];
+            })
+          )
+        );
+        if (quotaExceeded) {
+          onLog('[ENGINE] ⛔ Apify quota agotada — Abortando inmediatamente.');
+          break;
+        }
+        searchResults = batchResults.flat();
       } catch (e: unknown) {
         const errMsg = e instanceof Error ? e.message : String(e);
         if (errMsg.startsWith('APIFY_QUOTA_EXCEEDED')) {
@@ -919,9 +938,9 @@ export class TikTokFacelessEngine {
       const ttBatch = novelHandles.slice(0, MAX_TT_BATCH);
       let normalizedProfiles: ReturnType<typeof this.groupTikTokItemsByProfile>;
 
-      // Force snippet mode for tiny batches — the TikTok actor has a fixed ~30s startup
-      // overhead regardless of batch size. For <15 handles the cost is never worth it.
-      const useTinyBatchSnippet = !skipTtScraper && ttBatch.length < 15;
+      // Force snippet mode for small batches — the TikTok actor has a fixed ~30s startup
+      // overhead regardless of batch size. For <25 handles the cost is never worth it.
+      const useTinyBatchSnippet = !skipTtScraper && ttBatch.length < 25;
 
       if (skipTtScraper || useTinyBatchSnippet) {
         // ── Snippet mode ──────────────────────────────────────────────────────

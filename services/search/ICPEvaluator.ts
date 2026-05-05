@@ -222,6 +222,28 @@ export class ICPEvaluator {
   }
 
   /**
+   * Snippet ICP scorer — runs synchronously on Google Search snippet + title text,
+   * BEFORE paying for the TikTok profile scraper.
+   *
+   * Returns a score indicating how much ICP signal is present:
+   *   3 = Tier-1 hit (explicit creator-economy term) → very likely ICP
+   *   2 = Tier-2 hits ≥ 2 (e.g. "mindset" + "clips")  → probably ICP
+   *   1 = Tier-2 hits = 1 (weak signal)               → uncertain
+   *   0 = no signal                                    → likely non-ICP
+   *
+   * Called with the lowercase snippet+title string to avoid re-lowercasing inside.
+   * Uses FACELESS_CLIPPER_TIER1/TIER2 constants — no duplication with applyHardFilter.
+   */
+  public scoreSnippetIcp(text: string): number {
+    const tier1Hit = FACELESS_CLIPPER_TIER1_KEYWORDS.some(kw => text.includes(kw));
+    if (tier1Hit) return 3;
+    const tier2Hits = FACELESS_CLIPPER_TIER2_KEYWORDS.filter(kw => text.includes(kw));
+    if (tier2Hits.length >= 2) return 2;
+    if (tier2Hits.length === 1) return 1;
+    return 0;
+  }
+
+  /**
    * Soft Filter — AI evaluation via /api/openai.
    * Sends leads in batches of 10 to GPT-4o-mini to determine if each profile
    * is a genuine PHYSICAL FITNESS CREATOR.

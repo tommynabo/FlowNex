@@ -98,6 +98,15 @@ const ANTI_ICP_NEGATIVES = '-restaurant -cafe -clinic -store -food -apparel -"li
 // TikTok URL path segments that are not profile pages
 const TIKTOK_SKIP_HANDLES = new Set(['tag', 'search', 'discover', 'music', 'video', 'live', 'trending', 'foryou', 't']);
 
+// Number of distinct queries to batch into a single Google Search actor run.
+// The actor accepts newline-separated queries → 5× fewer actor startups per session.
+const GOOGLE_QUERY_BATCH = 5;
+
+// Max milliseconds spent on email discovery per lead.
+// Caps Stage 2 website scraping + Stage 3/4 deep scraping so the loop never
+// stalls waiting for slow servers. 7 s covers the fast paths (bio / website).
+const EMAIL_TIMEOUT_MS = 7_000;
+
 export class TikTokFacelessEngine {
   private isRunning = false;
   private userId: string | null = null;
@@ -753,8 +762,7 @@ export class TikTokFacelessEngine {
     const targetRegions = icpFilters?.regions ?? [];
     const targetCount = Math.max(1, config.maxResults);
 
-    // Reduced from 40-75 to 8-15 to avoid credit burn when scraper is down
-    const MAX_RETRIES = Math.min(15, Math.max(8, targetCount * 3));
+    const MAX_RETRIES = Math.max(30, Math.ceil(targetCount * 1.5));
 
     onLog('[TT-FC] ICP Type: faceless_clipper (TikTok only)');
     onLog('[TT-FC] Keyword pool: ' + FACELESS_CLIPPER_KEYWORD_POOLS.length + ' variantes | site:tiktok.com');
@@ -773,11 +781,17 @@ export class TikTokFacelessEngine {
     while (accepted.length < targetCount && this.isRunning && attempt < MAX_RETRIES) {
       attempt++;
       const needed = targetCount - accepted.length;
-      const searchQuery = this.buildSearchQuery(attempt, targetRegions);
+      // Build a batch of GOOGLE_QUERY_BATCH distinct queries (different pool/mod combos)
+      // joined by newline so the Google Search actor runs them in a single API call.
+      // This cuts actor startup cost by ÷GOOGLE_QUERY_BATCH compared to one-query-per-attempt.
+      const baseAttempt = (attempt - 1) * GOOGLE_QUERY_BATCH + 1;
+      const searchQuery = Array.from({ length: GOOGLE_QUERY_BATCH }, (_, i) =>
+        this.buildSearchQuery(baseAttempt + i, targetRegions)
+      ).join('\n');
 
       onLog('');
       onLog('━━━ ATTEMPT ' + attempt + '/' + MAX_RETRIES + ' ━━━  ' + needed + ' lead(s) still needed');
-      onLog('🔎 STEP 1/4 — Google Search (TikTok): ' + searchQuery);
+      onLog('🔎 STEP 1/4 — Google Search (' + GOOGLE_QUERY_BATCH + '-query batch, attempt ' + attempt + ')...');
 
       // ── STEP 1: Google Search site:tiktok.com ────────────────────────────────
       let searchResults: unknown[];
@@ -836,19 +850,36 @@ export class TikTokFacelessEngine {
       const seenRaw = new Set<string>();
       const uniqueRawHandles = rawHandles.filter(h => { if (seenRaw.has(h)) return false; seenRaw.add(h); return true; });
 
-      // Snippet follower pre-filter
+      // Snippet pre-filter — follower range + ICP signal scoring (free, before TikTok scraper)
       let snippetFiltered = 0;
+      let snippetIcpFiltered = 0;
+      const snippetScores = new Map<string, number>();
       const novelHandles: string[] = [];
       for (const h of uniqueRawHandles) {
         const snippet = handleToSnippet.get(h) || '';
+        const title   = handleToTitle.get(h) || '';
+        // Follower range check
         const snippetFollowers = this.extractFollowersFromSnippet(snippet);
         if (snippetFollowers !== null && (snippetFollowers < minFollowers || snippetFollowers > maxFollowers)) {
           snippetFiltered++;
           continue;
         }
+        // ICP signal check — only discard if snippet is long enough to be meaningful
+        // (short/empty snippets pass through: absence of keywords ≠ non-ICP)
+        const combinedText = (snippet + ' ' + title).toLowerCase();
+        const score = icpEvaluator.scoreSnippetIcp(combinedText);
+        snippetScores.set(h, score);
+        if (score === 0 && combinedText.length > 100) {
+          snippetIcpFiltered++;
+          continue;
+        }
         novelHandles.push(h);
       }
-      if (snippetFiltered > 0) onLog(`[PRE-FILTER] Snippet: ${snippetFiltered} descartados pre-scrape`);
+      // Sort highest-ICP-score first — best candidates fill the TikTok scraper batch
+      novelHandles.sort((a, b) => (snippetScores.get(b) ?? 0) - (snippetScores.get(a) ?? 0));
+      if (snippetFiltered > 0 || snippetIcpFiltered > 0) {
+        onLog(`[PRE-FILTER] Snippet: ${snippetFiltered} follower-range + ${snippetIcpFiltered} non-ICP descartados pre-scrape`);
+      }
 
       onLog('🔎 STEP 1/4 ✓ — ' + allOrganicResults.length + ' organic → ' + novelHandles.length + ' handles TikTok nuevos');
 
@@ -865,7 +896,9 @@ export class TikTokFacelessEngine {
       // ── STEP 2: TikTok profile fetch (with snippet fallback) ─────────────────
       // skipTtScraper is set after 2 consecutive 403 ACTOR_FORBIDDEN errors.
       // In snippet mode: 0 extra Apify calls — profiles are built from Google data.
-      const MAX_TT_BATCH = 15;
+      // Batch size: top 35% of ICP-ranked handles (capped 15–25) so the TikTok
+      // scraper budget is spent on the most promising profiles first.
+      const MAX_TT_BATCH = Math.min(25, Math.max(15, Math.ceil(novelHandles.length * 0.35)));
       const ttBatch = novelHandles.slice(0, MAX_TT_BATCH);
       let normalizedProfiles: ReturnType<typeof this.groupTikTokItemsByProfile>;
 
@@ -1089,28 +1122,32 @@ export class TikTokFacelessEngine {
       // ── STEP 3b: Email discovery ──────────────────────────────────────────────
       // Runs ONLY on AI-verified + content-passed leads — avoids wasting discovery calls
       // on profiles that were already rejected upstream.
+      // Email is ENRICHMENT, not an acceptance gate — leads are accepted once ICP-verified.
+      // Each call is race-capped at EMAIL_TIMEOUT_MS so slow servers never stall the loop.
       const toDiscover = contentPassed.slice(0, Math.max(slotsRemaining * 8, contentPassed.length));
       onLog('📧 STEP 3b — Email discovery (TikTok) para ' + toDiscover.length + ' candidatos...');
       await Promise.all(this.chunkArray(toDiscover, 10).map(async (chunk) => {
         await Promise.all(chunk.map(async (lead) => {
           if (!this.isRunning) return;
-          const discovered = await emailDiscoveryService.discoverEmailForTikTok(
+          const emailPromise = emailDiscoveryService.discoverEmailForTikTok(
             lead.decisionMaker?.email || '',
             lead.website || '',
             lead.ig_handle || '',
             onLog,
             lead.aiAnalysis?.summary || '',
           );
+          const timeoutPromise = new Promise<string>(r => setTimeout(() => r(''), EMAIL_TIMEOUT_MS));
+          const discovered = await Promise.race([emailPromise, timeoutPromise]);
           if (discovered && lead.decisionMaker) lead.decisionMaker.email = discovered;
         }));
       }));
       const withEmail = toDiscover.filter(l => l.decisionMaker?.email);
-      onLog('📧 STEP 3b ✓ — ' + withEmail.length + '/' + toDiscover.length + ' tienen email');
+      onLog('📧 STEP 3b ✓ — ' + withEmail.length + '/' + toDiscover.length + ' tienen email (email es enriquecimiento, no gate)');
 
-      if (!withEmail.length) { onLog('⚠ Ningún candidato tiene email. Rotando query...'); continue; }
-
-      const toProcess = withEmail.slice(0, slotsRemaining);
-      onLog('📧 STEP 3b ✓ — ' + toProcess.length + ' leads con email + ICP verificado listos para análisis IA');
+      // Accept ALL ICP-verified + content-passed leads, with or without email.
+      // Leads with email → Instantly. Leads without email → DB for manual DM outreach.
+      const toProcess = contentPassed.slice(0, slotsRemaining);
+      onLog('📧 STEP 3b ✓ — ' + toProcess.length + ' leads ICP verificados listos para análisis IA');
 
       // ── STEP 4b: Batch AI analysis ────────────────────────────────────────────
       onLog('✍ STEP 4b — Generando análisis IA (batch) para ' + toProcess.length + ' creadores TikTok...');

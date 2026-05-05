@@ -46,16 +46,16 @@ const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
   ['"no excuses"', '"best version"', '"discipline"', '"mindset"', '"hard work"', '"self improvement"'],
   // 2. Figure-clip / entrepreneur clipper — Hormozi, Gadzhi, Goggins editors
   ['"hormozi"', '"iman gadzhi"', '"goggins"', '"david goggins"', '"tate"', '"make money online"'],
-  // 3. Carousel / slideshow creator at scale — "banger seguro" per client (most common ICP format)
-  ['"slideshow"', '"carousel"', '"frases"', '"top 5"', '"body transformation"', '"desliza"'],
+  // 3. Carousel / slideshow creator at scale — primary ICP format (EN-only)
+  ['"slideshow"', '"carousel"', '"body transformation"', '"top 5"', '"listicle"', '"swipe for more"'],
   // 4. EN hustle / wealth / online business
   ['"passive income"', '"wifi money"', '"online business"', '"financial freedom"', '"smma"', '"agency growth"'],
   // 5. Physique / natty / gym progression creator
   ['"natty"', '"physique"', '"gains"', '"cutting"', '"bulking"', '"no days off"', '"gymtok"'],
-  // 6. ES motivation / entrepreneurship — Spanish-speaking market
-  ['"mentalidad"', '"disciplina"', '"emprendimiento"', '"dinero online"', '"libertad financiera"', '"mejor versión"'],
-  // 7. ES gym / fitness / physique in Spanish
-  ['"rutina"', '"entrenamiento"', '"natty"', '"progreso"', '"transformacion"', '"physique"'],
+  // 6. EN anchor-account clipper reference — creators who name or clip known figures
+  ['"hormozi clips"', '"iman gadzhi clips"', '"goggins edits"', '"tate clips"', '"alex hormozi"', '"andrew tate clips"'],
+  // 7. EN volume / content-factory signals — high-output posting identity
+  ['"daily content"', '"content for hire"', '"dm for rates"', '"video editor for hire"', '"free edits"', '"content creator for hire"'],
   // 8. Community / WOP / Skool / clipping networks — burst every 5th attempt
   ['"skool"', '"clipping"', '"wop"', '"dm for collab"', '"content agency"', '"reel editor"'],
 ];
@@ -66,10 +66,6 @@ const REGION_QUERY_TERMS: Record<string, string[]> = {
   CA: ['Canada', 'Canadian'],
   UK: ['England', '"United Kingdom"'],
   AU: ['Australia', 'Australian'],
-  ES: ['España', 'Spain'],
-  MX: ['México', 'Mexico'],
-  AR: ['Argentina'],
-  CO: ['Colombia'],
 };
 
 const MAX_CONSEC_ZEROS = 5;
@@ -117,11 +113,11 @@ export class TikTokFacelessEngine {
    *
    * 6-cycle rotation through 8 main ICP keyword pools (0–7):
    *   mod === 0  → Pool + DM/CTA signal (clipper identity, highest precision)
-   *   mod === 1  → Pool only — no CTA (minimal-bio creators: slideshow, physique, @moullaga67 type)
+   *   mod === 1  → Pool only — guarded to high-precision pools (0, 2, 6); others use ctaGroup
    *   mod === 2  → Pool + figure names (Hormozi/Gadzhi clips community)
    *   mod === 3  → Pool + DM/linktree CTA
-   *   mod === 4  → Pool only (natty/physique progressors typically skip CTAs)
-   *   mod === 5  → Pool + Spanish/EN business dorks (ES market rotation)
+   *   mod === 4  → Pool + volume signal (slideshow/carousel/content-factory)
+   *   mod === 5  → Pool + EN business dorks (agency/SMMA/online business)
    *
    * Community burst: every 5th attempt uses Pool 8 (WOP/Skool/clipping networks).
    * Location: when targetRegions ≤ 3 regions, a soft location hint is appended.
@@ -150,8 +146,9 @@ export class TikTokFacelessEngine {
 
     const ctaGroup = '("link in bio" OR "DM for promo" OR "linktr.ee" OR "payhip" OR "forms.gle")';
     const dmCtaGroup = '("dm for promo" OR "linktr.ee" OR "payhip" OR "gumroad")';
-    const businessGroup = '("curso" OR "programa" OR "smma" OR "coaching" OR "online business")';
+    const businessGroup = '("content agency" OR "build in public" OR "smma" OR "agency growth" OR "online business")';
     const hormoziFigures = '("hormozi" OR "iman gadzhi" OR "goggins" OR "tate")';
+    const volumeSignal = '("slideshow" OR "carousel" OR "daily content" OR "1000 videos" OR "content for hire")';
 
     const mod = attempt % 6;
 
@@ -159,8 +156,12 @@ export class TikTokFacelessEngine {
       // Pool + DM/CTA — forces creator-intent signal
       return withLoc(`site:tiktok.com ${orGroup} ${ctaGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     } else if (mod === 1) {
-      // Pool only — no CTA: finds minimal-bio creators
-      return withLoc(`site:tiktok.com ${orGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+      // Pool only — guarded: only skip second signal for high-precision pools (0=clipper, 2=figure-clip, 6=anchor)
+      const isHighPrecisionPool = poolIdx === 0 || poolIdx === 2 || poolIdx === 6;
+      if (isHighPrecisionPool) {
+        return withLoc(`site:tiktok.com ${orGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+      }
+      return withLoc(`site:tiktok.com ${orGroup} ${ctaGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     } else if (mod === 2) {
       // Pool + figure names — targets editors of Hormozi/Gadzhi/Goggins content
       return withLoc(`site:tiktok.com ${orGroup} ${hormoziFigures} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
@@ -168,10 +169,10 @@ export class TikTokFacelessEngine {
       // Pool + DM/linktree CTA — second CTA cycle
       return withLoc(`site:tiktok.com ${orGroup} ${dmCtaGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     } else if (mod === 4) {
-      // Pool only — natty/physique progressors typically skip CTAs
-      return withLoc(`site:tiktok.com ${orGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+      // Pool + volume signal — targets content-factory accounts posting at scale
+      return withLoc(`site:tiktok.com ${orGroup} ${volumeSignal} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     } else {
-      // Pool + Spanish/EN business dorks — ES market rotation
+      // Pool + EN business dorks — SMMA/agency/online business rotation
       return withLoc(`site:tiktok.com ${orGroup} ${businessGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     }
   }
@@ -864,7 +865,7 @@ export class TikTokFacelessEngine {
       // ── STEP 2: TikTok profile fetch (with snippet fallback) ─────────────────
       // skipTtScraper is set after 2 consecutive 403 ACTOR_FORBIDDEN errors.
       // In snippet mode: 0 extra Apify calls — profiles are built from Google data.
-      const MAX_TT_BATCH = 5;
+      const MAX_TT_BATCH = 15;
       const ttBatch = novelHandles.slice(0, MAX_TT_BATCH);
       let normalizedProfiles: ReturnType<typeof this.groupTikTokItemsByProfile>;
 
@@ -1013,41 +1014,47 @@ export class TikTokFacelessEngine {
       onLog('[DEDUP] ' + dbDeduped.length + '/' + notYetAccepted.length + ' son nuevos (no están en la BD)');
       if (!dbDeduped.length) { onLog('⚠ Todos los candidatos ya existen en la BD. Rotando query...'); continue; }
 
-      // ── STEP 3b: Email discovery (TikTok) ───────────────────────────────────
-      // Runs BEFORE content analysis — no point verifying content for leads with no email.
       const slotsRemaining = targetCount - accepted.length;
-      const toDiscover = dbDeduped.slice(0, Math.max(slotsRemaining * 8, dbDeduped.length));
-      onLog('📧 STEP 3b — Email discovery (TikTok) para ' + toDiscover.length + ' candidatos...');
-      await Promise.all(this.chunkArray(toDiscover, 10).map(async (chunk) => {
-        await Promise.all(chunk.map(async (lead) => {
-          if (!this.isRunning) return;
-          const discovered = await emailDiscoveryService.discoverEmailForTikTok(
-            lead.decisionMaker?.email || '',
-            lead.website || '',
-            lead.ig_handle || '',
-            onLog,
-          );
-          if (discovered && lead.decisionMaker) lead.decisionMaker.email = discovered;
-        }));
-      }));
-      const withEmail = toDiscover.filter(l => l.decisionMaker?.email);
-      onLog('📧 STEP 3b ✓ — ' + withEmail.length + '/' + toDiscover.length + ' tienen email');
 
-      if (!withEmail.length) { onLog('⚠ Ningún candidato tiene email. Rotando query...'); continue; }
+      // ── STEP 4a: AI Soft Filter ───────────────────────────────────────────────
+      // Runs BEFORE email discovery — no point discovering emails for profiles the AI rejects.
+      // The AI filter only needs bio/handle/name, all populated during candidate construction.
+      onLog('🤖 STEP 4a — Filtro IA para ' + dbDeduped.length + ' candidatos (verificando ICP faceless)...');
+      const softFiltered = await icpEvaluator.applySoftFilter(dbDeduped, onLog, 'faceless_clipper');
+      const icpVerified = softFiltered.filter(l => l.icp_verified === true);
+      const icpUnverified = softFiltered.filter(l => l.icp_verified !== true);
+      onLog('[ICP SOFT] ' + icpVerified.length + ' verificados ✓ | ' + icpUnverified.length + ' no verificados ✗');
 
-      // ── STEP 3a: Lean Content Analysis (inline, after email check) ───────────
-      // Runs ONLY on leads that already have an email — avoids wasting time on
-      // content verification for leads that would be discarded for lack of email.
-      // Strict mode: rejects creators with no video data or verification errors.
+      const toEvaluate = icpVerified.length > 0 ? icpVerified : (() => {
+        if (icpUnverified.length > 0) onLog('⚠ IA no pudo verificar — usando hard-filter fallback...');
+        return icpUnverified;
+      })();
+      if (!toEvaluate.length) { onLog('⚠ Ningún lead ICP. Rotando...'); continue; }
+
+      // Anti-ICP early exit
+      const antiIcpLeads = toEvaluate.filter(l => (l as unknown as Record<string, unknown>).anti_icp === true);
+      if (antiIcpLeads.length > 0) {
+        for (const lead of antiIcpLeads) { lead.status = 'discarded'; onLog(`[ANTI-ICP 🚫] @${lead.ig_handle} → discarded`); }
+        onLog(`[ANTI-ICP] ${antiIcpLeads.length} lead(s) descartados sin análisis IA.`);
+      }
+      const cleanToEvaluate = toEvaluate.filter(l => !(l as unknown as Record<string, unknown>).anti_icp);
+      if (!cleanToEvaluate.length) { onLog('⚠ Todos los leads eran Anti-ICP. Rotando query...'); continue; }
+
+      onLog('🤖 STEP 4a ✓ — ' + cleanToEvaluate.length + ' leads ICP verificados');
+
+      // ── STEP 3a: Lean Content Analysis ───────────────────────────────────────
+      // Runs after AI filter — free (uses already-fetched video data from TikTok scraper, 0 Apify calls).
+      // Profiles with no video data pass by default (AI filter is the primary gate).
       onLog('🎬 STEP 3a — Lean Content Analysis (últimos 3 videos, 0 Apify extra)...');
       const contentPassed: Lead[] = [];
 
-      for (const lead of withEmail) {
+      for (const lead of cleanToEvaluate) {
         if (!this.isRunning) break;
         const latestVideos = videosMap.get(lead.ig_handle || '') || [];
 
         if (!latestVideos.length) {
-          onLog(`[LEAN CONTENT] ✗ @${lead.ig_handle} — sin videos disponibles — SKIP`);
+          contentPassed.push(lead);
+          onLog(`[LEAN CONTENT] ⚪ @${lead.ig_handle} — sin videos disponibles — pasa por defecto`);
           continue;
         }
 
@@ -1071,37 +1078,38 @@ export class TikTokFacelessEngine {
             onLog(`[LEAN CONTENT] ✗ @${lead.ig_handle} — score ${result.overall_score} — ${result.reasoning} — SKIP`);
           }
         } catch (e: unknown) {
-          onLog(`[LEAN CONTENT] ✗ @${lead.ig_handle} — verification error — SKIP`);
+          contentPassed.push(lead);
+          onLog(`[LEAN CONTENT] ⚪ @${lead.ig_handle} — verification error — pasa por defecto`);
         }
       }
 
-      onLog('[LEAN CONTENT] ' + contentPassed.length + '/' + withEmail.length + ' pasaron verificación de contenido');
+      onLog('[LEAN CONTENT] ' + contentPassed.length + '/' + cleanToEvaluate.length + ' pasaron verificación de contenido');
       if (!contentPassed.length) { onLog('⚠ Ningún lead pasó Lean Content Analysis. Rotando query...'); continue; }
 
-      // ── STEP 4a: AI Soft Filter ───────────────────────────────────────────────
-      onLog('🤖 STEP 4a — Filtro IA para ' + contentPassed.length + ' candidatos (verificando ICP faceless)...');
-      const softFiltered = await icpEvaluator.applySoftFilter(contentPassed, onLog, 'faceless_clipper');
-      const icpVerified = softFiltered.filter(l => l.icp_verified === true);
-      const icpUnverified = softFiltered.filter(l => l.icp_verified !== true);
-      onLog('[ICP SOFT] ' + icpVerified.length + ' verificados ✓ | ' + icpUnverified.length + ' no verificados ✗');
+      // ── STEP 3b: Email discovery ──────────────────────────────────────────────
+      // Runs ONLY on AI-verified + content-passed leads — avoids wasting discovery calls
+      // on profiles that were already rejected upstream.
+      const toDiscover = contentPassed.slice(0, Math.max(slotsRemaining * 8, contentPassed.length));
+      onLog('📧 STEP 3b — Email discovery (TikTok) para ' + toDiscover.length + ' candidatos...');
+      await Promise.all(this.chunkArray(toDiscover, 10).map(async (chunk) => {
+        await Promise.all(chunk.map(async (lead) => {
+          if (!this.isRunning) return;
+          const discovered = await emailDiscoveryService.discoverEmailForTikTok(
+            lead.decisionMaker?.email || '',
+            lead.website || '',
+            lead.ig_handle || '',
+            onLog,
+          );
+          if (discovered && lead.decisionMaker) lead.decisionMaker.email = discovered;
+        }));
+      }));
+      const withEmail = toDiscover.filter(l => l.decisionMaker?.email);
+      onLog('📧 STEP 3b ✓ — ' + withEmail.length + '/' + toDiscover.length + ' tienen email');
 
-      const toEvaluate = icpVerified.length > 0 ? icpVerified : (() => {
-        if (icpUnverified.length > 0) onLog('⚠ IA no pudo verificar — usando hard-filter fallback...');
-        return icpUnverified;
-      })();
-      if (!toEvaluate.length) { onLog('⚠ Ningún lead ICP. Rotando...'); continue; }
+      if (!withEmail.length) { onLog('⚠ Ningún candidato tiene email. Rotando query...'); continue; }
 
-      // Anti-ICP early exit
-      const antiIcpLeads = toEvaluate.filter(l => (l as unknown as Record<string, unknown>).anti_icp === true);
-      if (antiIcpLeads.length > 0) {
-        for (const lead of antiIcpLeads) { lead.status = 'discarded'; onLog(`[ANTI-ICP 🚫] @${lead.ig_handle} → discarded`); }
-        onLog(`[ANTI-ICP] ${antiIcpLeads.length} lead(s) descartados sin análisis IA.`);
-      }
-      const cleanToEvaluate = toEvaluate.filter(l => !(l as unknown as Record<string, unknown>).anti_icp);
-      if (!cleanToEvaluate.length) { onLog('⚠ Todos los leads eran Anti-ICP. Rotando query...'); continue; }
-
-      const toProcess = cleanToEvaluate.slice(0, slotsRemaining);
-      onLog('📧 STEP 4a ✓ — ' + toProcess.length + ' leads con email + ICP verificado listos para análisis IA');
+      const toProcess = withEmail.slice(0, slotsRemaining);
+      onLog('📧 STEP 3b ✓ — ' + toProcess.length + ' leads con email + ICP verificado listos para análisis IA');
 
       // ── STEP 4b: Batch AI analysis ────────────────────────────────────────────
       onLog('✍ STEP 4b — Generando análisis IA (batch) para ' + toProcess.length + ' creadores TikTok...');

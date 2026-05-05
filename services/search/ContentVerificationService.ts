@@ -18,8 +18,11 @@ import { ICPType, VideoItem, ContentVerificationResult } from '../../lib/types';
 /** Maximum number of videos/posts to analyze per creator (cost control) */
 const MAX_VIDEOS_TO_ANALYZE = 3;
 
-/** Minimum score (0–100) for a creator to be considered an ICP match */
+/** Minimum score (0–100) for a creator to be considered an ICP match (personal_brand) */
 export const CONTENT_SCORE_THRESHOLD = 65;
+
+/** Higher threshold for faceless/clipper ICP — reduces false positives from casual gym/motivation accounts */
+const FACELESS_CLIPPER_CONTENT_SCORE_THRESHOLD = 72;
 
 /** Apify actor IDs */
 const INSTAGRAM_POSTS_SCRAPER = 'apify~instagram-scraper';
@@ -277,9 +280,10 @@ export class ContentVerificationService {
     );
     const reasonings = analyses.map((a, i) => `Video ${i + 1}: ${a.reasoning}`).join(' | ');
 
+    const threshold = icpType === 'faceless_clipper' ? FACELESS_CLIPPER_CONTENT_SCORE_THRESHOLD : CONTENT_SCORE_THRESHOLD;
     return {
       overall_score,
-      is_icp_match: overall_score >= CONTENT_SCORE_THRESHOLD,
+      is_icp_match: overall_score >= threshold,
       analyzed_videos: analyses.length,
       analyzed_at: new Date().toISOString(),
       reasoning: reasonings.substring(0, 600),

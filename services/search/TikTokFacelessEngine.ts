@@ -244,9 +244,14 @@ export class TikTokFacelessEngine {
     return res.json();
   }
 
-  private async callApifyActor(actorId: string, input: unknown, onLog: LogCallback, itemsLimit?: number, timeoutMs?: number): Promise<unknown[]> {
+  private async callApifyActor(actorId: string, input: unknown, onLog: LogCallback, itemsLimit?: number, timeoutMs?: number, runTimeoutSecs?: number): Promise<unknown[]> {
     onLog('[APIFY] Lanzando ' + actorId.split('~').pop() + '...');
-    const startData = await this.apifyRequest(`acts/${actorId}/runs`, 'POST', input) as {
+    // runTimeoutSecs → ?timeout= tells Apify to kill the actor server-side after N seconds.
+    // This is the ONLY reliable cap: client-side polling can't stop a running actor.
+    const runsPath = runTimeoutSecs
+      ? `acts/${actorId}/runs?timeout=${runTimeoutSecs}`
+      : `acts/${actorId}/runs`;
+    const startData = await this.apifyRequest(runsPath, 'POST', input) as {
       data?: { id?: string; defaultDatasetId?: string };
     };
     const runId = startData.data?.id;
@@ -262,7 +267,7 @@ export class TikTokFacelessEngine {
       await new Promise(r => setTimeout(r, delay));
       elapsedMs += delay;
       polls++;
-      if (timeoutMs && elapsedMs >= timeoutMs) break; // hard cap per actor
+      if (timeoutMs && elapsedMs >= timeoutMs) break; // client-side backup cap
       try {
         const sd = await this.apifyRequest(`acts/${actorId}/runs/${runId}`, 'GET') as {
           data?: { status?: string };
@@ -277,10 +282,10 @@ export class TikTokFacelessEngine {
       }
     }
 
-    // Abort the Apify run if we exited without success (timeout or user stop)
-    // so it doesn't keep consuming credits on Apify's servers.
+    // Abort the Apify run if we exited without success (timeout or user stop).
+    // Correct v2 endpoint: actor-runs/{runId}/abort
     if (!done) {
-      try { await this.apifyRequest(`acts/${actorId}/runs/${runId}/abort`, 'POST', {}); } catch { /* ignore */ }
+      try { await this.apifyRequest(`actor-runs/${runId}/abort`, 'POST', {}); } catch { /* ignore */ }
       if (!this.isRunning) return []; // user stopped — silent exit
       throw new Error('Apify timeout after ' + Math.round(elapsedMs / 1000) + 's');
     }
@@ -947,7 +952,8 @@ export class TikTokFacelessEngine {
             },
             onLog,
             ttBatch.length * 3,
-            60_000, // 60s hard cap — fallback to snippet mode if actor is slow
+            65_000, // client-side: 65s backup timeout
+            55,     // server-side: Apify kills the actor at 55s no matter what TikTok does
           );
           ttScraperConsecFails = 0;
           normalizedProfiles = this.groupTikTokItemsByProfile(

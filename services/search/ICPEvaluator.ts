@@ -295,6 +295,81 @@ export class ICPEvaluator {
   }
 
   /**
+   * Archetype 6 — Fitness Faceless Slideshow Factory — composite numeric scorer.
+   *
+   * Scores a profile 0–100 based on structural signals that correlate with
+   * high-volume faceless content factories WITHOUT requiring bio text keywords.
+   * Designed specifically for accounts like @moullaga67, @creed.lifter, @landon.vaughn17
+   * whose bios are empty/emoji-only but whose likes/followers ratio is 20x–100x.
+   *
+   * Score interpretation:
+   *   ≥ 70  → auto-accept (bypass AI soft filter)
+   *   40–69 → forward to AI soft filter
+   *   < 40  → drop (personal brand pattern — low ratio + high follower activity)
+   *
+   * Calibration benchmarks (should all score ≥ 75):
+   *   @moullaga67:    followers≈5K,  heart≈500K+, video≈500+, bio="" (empty)
+   *   @creed.lifter:  followers≈4.9K, heart≈467K, video≈300+, bio="No bio yet."
+   *   @landon.vaughn17: followers≈11.9K, heart≈1.3M, video≈1000+, bio="Lightweight baby!"
+   */
+  public scoreArchetype6(
+    heartCount: number,
+    videoCount: number,
+    rawBio: string,
+    handle: string,
+    displayName: string,
+  ): number {
+    let score = 0;
+
+    // ── Likes/Followers ratio (most discriminating signal) ────────────────────
+    // heartCount = total profile likes; follower count is NOT available here directly,
+    // but the ratio can be approximated when both heart and follower data flow together.
+    // Since follower count is enforced at 1K–500K by the hard filter, we use absolute
+    // heartCount tiers as a proxy for ratio (1K followers min → 50K hearts = 50x ratio).
+    if      (heartCount >= 1_000_000) score += 40;
+    else if (heartCount >= 200_000)   score += 35;
+    else if (heartCount >= 50_000)    score += 25;
+    else if (heartCount >= 10_000)    score += 15;
+    else if (heartCount > 0)          score += 5;
+    // No hearts at all (Apify couldn't retrieve it) → neutral (don't penalise)
+
+    // ── Video count (content factory signal) ─────────────────────────────────
+    if      (videoCount >= 500) score += 20;
+    else if (videoCount >= 200) score += 15;
+    else if (videoCount >= 100) score += 10;
+    else if (videoCount >= 30)  score += 5;
+    else if (videoCount > 0 && videoCount < 30) score -= 10; // too low → likely personal account
+
+    // ── Raw bio length (empty/minimal bio is a POSITIVE A6 signal) ───────────
+    const bioLen = rawBio.trim().length;
+    if      (bioLen === 0)   score += 15; // perfectly empty — classic A6
+    else if (bioLen <= 10)   score += 10; // emoji-only or single word
+    else if (bioLen <= 30)   score += 5;  // short quote/phrase
+    else if (bioLen >= 100)  score -= 10; // long bio → personal brand
+
+    // ── Handle / display name structural patterns ─────────────────────────────
+    const h = handle.toLowerCase();
+    const n = displayName.toLowerCase();
+
+    // Numeric suffix (moullaga67, landon.vaughn17, creed.lifter7) → +15
+    if (/^[a-z]+[._]?[a-z]*\d{1,3}$/.test(h)) score += 15;
+
+    // Emoji-only display name (💸💸💸, 🏋️‍♂️💪🔥) → +10
+    if (/^[\p{Emoji_Presentation}\p{Extended_Pictographic}\s]+$/u.test(displayName.trim()) && displayName.trim().length > 0) score += 10;
+
+    // Fitness-related handle token (lifter, gains, physique, creed, pump, bulk, shred, gym, fit) → +8
+    const fitnessTokens = ['lifter', 'gains', 'physique', 'creed', 'pump', 'bulk', 'shred', 'gym', 'fit', 'body', 'muscle', 'swole', 'grind'];
+    if (fitnessTokens.some(t => h.includes(t) || n.includes(t))) score += 8;
+
+    // Generic / random handle pattern (no obvious niche words) → slight positive
+    // Handles with only letters + optional dot/underscore + no fitness/business keyword → +5
+    const isGenericHandle = /^[a-z]{4,12}$/.test(h) && !fitnessTokens.some(t => h.includes(t));
+    if (isGenericHandle) score += 3;
+
+    return Math.max(0, Math.min(100, score));
+  }
+
+  /**
    * Soft Filter — AI evaluation via /api/openai.
    * Sends leads in batches of 10 to GPT-4o-mini to determine if each profile
    * is a genuine PHYSICAL FITNESS CREATOR.

@@ -109,11 +109,16 @@ const TIKTOK_PROFILE_SCRAPER = 'clockworks~free-tiktok-scraper';
 const ANTI_ICP_NEGATIVES = '-restaurant -store -boutique -cooking -dance';
 
 // Fitness faceless hashtags for TikTok Hashtag Discovery mode.
-// When fitness pools (9–11) are active, the main loop scrapes TikTok hashtags DIRECTLY —
-// bypassing the Google bio-search limitation for empty-bio accounts.
-// @creed.lifter ("No bio yet."), @moullaga67 ("💸💸💸"), @landon.vaughn17 ("Lightweight baby!")
-// are only discoverable this way: bio is empty, but video captions contain these hashtags.
-const FITNESS_HASHTAG_POOL = ['gymmotivation', 'gymtok', 'physique'] as const;
+// For faceless_clipper ICP, the main loop cycles through this pool on EVERY attempt —
+// not just pools 9–11. The A6 numeric scorer acts as the downstream quality gate,
+// replacing the old "only fire on fitness query batches" heuristic.
+// Pool is ordered roughly by expected A6-ICP yield (highest first).
+// @creed.lifter, @moullaga67, @landon.vaughn17 are all discoverable via these hashtags.
+const FITNESS_HASHTAG_POOL = [
+  'gymmotivation', 'gymtok', 'physique', 'gains', 'gymrat',
+  'fitspo', 'hardwork', 'discipline', 'motivation', 'lightweightbaby',
+  'mindset', 'neversettle', 'nodaysoff', 'hustle', 'grindset',
+] as const;
 
 // TikTok URL path segments that are not profile pages
 const TIKTOK_SKIP_HANDLES = new Set(['tag', 'search', 'discover', 'music', 'video', 'live', 'trending', 'foryou', 't']);
@@ -430,10 +435,18 @@ export class TikTokFacelessEngine {
         (bioLinkRaw && typeof (bioLinkRaw as Record<string, unknown>).link === 'string')
           ? (bioLinkRaw as Record<string, unknown>).link as string : '';
       const regionCode = ((meta.region as string) || (meta.countryCode as string) || '').toUpperCase();
+      const rawBioText = (meta.signature as string) || (meta.bio as string) || '';
       results.push({
         username: handle,
         followersCount: (meta.fans as number) || (meta.followerCount as number) || 0,
-        biography: (meta.signature as string) || (meta.bio as string) || '',
+        // Total profile likes and video count — key signals for Archetype 6 scorer.
+        // clockworks~free-tiktok-scraper exposes these in authorMeta as `heart` and `video`.
+        heartCount: (meta.heart as number) || (meta.heartCount as number) || 0,
+        videoCount: (meta.video as number) || (meta.videoCount as number) || 0,
+        biography: rawBioText,
+        // Preserve the raw bio before caption-enrichment overwrites `biography`.
+        // Empty raw bio is a POSITIVE Archetype 6 signal — don't conflate with enriched text.
+        rawBio: rawBioText,
         fullName: (meta.nickName as string) || (meta.nickname as string) || (meta.displayName as string) || '',
         externalUrl: bioLink,
         publicEmail: (meta.email as string) || '',
@@ -1050,27 +1063,28 @@ export class TikTokFacelessEngine {
         }
       }
 
-      // ── TikTok Hashtag Discovery (fitness faceless pools 9–11 only) ──────────────────────────
-      // Accounts like @creed.lifter ("No bio yet.") and @moullaga67 ("💸💸💸") have empty bios
-      // and CANNOT be found via Google bio-search. We scrape TikTok hashtags directly.
-      // Fires ONLY when pools 9–11 are active — NOT on every attempt 1.
-      // Firing on attempt 1 floods with South African personal fitness accounts that all fail
-      // lean content, causing 8+ attempts instead of 1-2.
+      // ── TikTok Hashtag Discovery (faceless_clipper: every attempt; others: pools 9–11 only) ──
+      // For faceless_clipper ICP we cycle through the expanded FITNESS_HASHTAG_POOL on EVERY
+      // attempt — the A6 numeric scorer acts as the downstream quality gate, filtering personal
+      // gym accounts (low ratio) before expensive AI calls replace the old "only fire on
+      // fitness query batches" heuristic.
       // Bio enrichment: empty bios (< 25 chars) are augmented with video caption text so that
       // TIER2 keywords (gymmotivation, physique, discipline…) fire correctly in the hard filter.
-      const hashtagToRun = isFitnessAttempt
-        ? FITNESS_HASHTAG_POOL.find(h => queryBatch.some(q => q.includes('"#' + h + '"')))
-        : undefined;
+      const hashtagToRun: string | undefined = icpFilters?.icpType === 'faceless_clipper'
+        ? FITNESS_HASHTAG_POOL[(attempt - 1) % FITNESS_HASHTAG_POOL.length]
+        : isFitnessAttempt
+          ? FITNESS_HASHTAG_POOL.find(h => queryBatch.some(q => q.includes('"#' + h + '"')))
+          : undefined;
       if (hashtagToRun && !skipTtScraper) {
         const matchedHashtag = hashtagToRun;
         if (matchedHashtag) {
-          onLog('🏋️ Hashtag Discovery: #' + matchedHashtag + ' (sin bio requerida — scraping TikTok directo)...');
+          onLog('🏋️ Hashtag Discovery: #' + matchedHashtag + ' — attempt ' + attempt + ' (pool ' + ((attempt - 1) % FITNESS_HASHTAG_POOL.length + 1) + '/' + FITNESS_HASHTAG_POOL.length + ')...');
           try {
             const hashtagRaw = await this.callApifyActor(
               TIKTOK_PROFILE_SCRAPER,
               {
                 hashtags: [matchedHashtag],
-                resultsPerPage: 30,
+                resultsPerPage: 50,
                 shouldDownloadVideos: false,
                 shouldDownloadCovers: false,
                 shouldDownloadAvatars: false,
@@ -1079,7 +1093,7 @@ export class TikTokFacelessEngine {
                 shouldDownloadMusicCovers: false,
               },
               onLog,
-              150,    // up to 150 items (30 videos × ~5 different authors)
+              250,    // up to 250 items (50 videos × ~5 different authors)
               65_000, // client-side timeout ms
               55,     // server-side kill (seconds)
               1024,   // memory cap MB
@@ -1087,21 +1101,23 @@ export class TikTokFacelessEngine {
             const hashtagProfiles = this.groupTikTokItemsByProfile(
               hashtagRaw as Record<string, unknown>[]
             ).filter(p => !seenHandles.has(p.username));
-            // Enrich empty/minimal bios with video caption text so TIER2 keywords fire.
-            // Before: biography="" | After: biography=" #gymmotivation #physique #gains..."
+            // Preserve rawBio BEFORE caption enrichment — empty rawBio is a positive A6 signal.
+            // Bio enrichment adds hashtag captions to biography so TIER2 keywords fire in hard filter.
+            // rawBio stays untouched so scoreArchetype6() can use the original empty/minimal bio.
             for (const p of hashtagProfiles) {
               seenHandles.add(p.username);
               const extP = p as typeof p & { _latestVideos: { thumbnailUrl: string; desc: string }[] };
               if (!extP.biography || extP.biography.trim().length < 25) {
                 const captions = (extP._latestVideos || []).slice(0, 5).map(v => v.desc || '').join(' ');
                 if (captions) extP.biography = (extP.biography || '').trim() + ' ' + captions;
+                // rawBio was set in groupTikTokItemsByProfile — DO NOT overwrite it here.
               }
             }
             if (hashtagProfiles.length > 0) {
               normalizedProfiles = [...normalizedProfiles, ...hashtagProfiles] as typeof normalizedProfiles;
               // Relax email gate — these no-email ideal ICP accounts would otherwise be rejected.
               isFitnessAttempt = true;
-              onLog('🏋️ #' + matchedHashtag + ' → ' + hashtagProfiles.length + ' nuevos perfiles fitness faceless añadidos');
+              onLog('🏋️ #' + matchedHashtag + ' → ' + hashtagProfiles.length + ' nuevos perfiles A6 candidatos añadidos');
             } else {
               onLog('🏋️ #' + matchedHashtag + ' → 0 perfiles nuevos (todos ya vistos en esta sesión)');
             }
@@ -1190,6 +1206,10 @@ export class TikTokFacelessEngine {
           email_status: 'pending',
           status: 'scraped',
           _icpType: 'faceless_clipper',
+          // Archetype 6 numeric scorer inputs — passed from Apify authorMeta
+          _heartCount: (profile.heartCount as number) || 0,
+          _videoCount: (profile.videoCount as number) || 0,
+          _rawBio:     (profile.rawBio    as string) || '',
         });
       }
 
@@ -1205,12 +1225,14 @@ export class TikTokFacelessEngine {
 
       const slotsRemaining = targetCount - accepted.length;
 
-      // ── STEP 4a: TIER1 pre-verify + AI Soft Filter ──────────────────────────
-      // Profiles whose bio/handle already contains an explicit TIER1 signal (clipper, editor,
-      // payhip, goggins, hormozi…) are marked icp_verified immediately — no AI call needed.
-      // Deterministic signals don't need probabilistic validation and avoid AI anti_icp mis-fires
-      // (e.g. @davidgogginspiration was labelled "UGC creator" by AI despite being a valid clipper).
+      // ── STEP 4a: TIER1 pre-verify + A6 Scoring + AI Soft Filter ──────────────
+      // Decision tree (in priority order):
+      //   1. TIER1 signal in bio/handle → icp_verified immediately, skip AI
+      //   2. Archetype 6 numeric score ≥ 70 → icp_verified, skip AI (high-confidence factory)
+      //   3. A6 score 40–69 → forward to AI soft filter
+      //   4. A6 score < 40 → drop (personal gym brand pattern — ratio too low / bio too long)
       const tier1PreVerified: Lead[] = [];
+      const a6AutoVerified: Lead[] = [];
       const needsAIVerification: Lead[] = [];
       for (const candidate of dbDeduped) {
         const bioText = ((candidate as unknown as Record<string, unknown>).biography as string || '').toLowerCase();
@@ -1222,7 +1244,25 @@ export class TikTokFacelessEngine {
           tier1PreVerified.push(candidate);
           onLog(`[ICP TIER1] ✅ @${candidate.ig_handle} — TIER1 signal detectada → pre-verified, skip AI`);
         } else {
-          needsAIVerification.push(candidate);
+          // Archetype 6 composite numeric score
+          const a6Score = icpEvaluator.scoreArchetype6(
+            candidate._heartCount  ?? 0,
+            candidate._videoCount  ?? 0,
+            candidate._rawBio      ?? '',
+            candidate.ig_handle    ?? '',
+            candidate.decisionMaker?.name ?? '',
+          );
+          candidate._archetype6Score = a6Score;
+          if (a6Score >= 70) {
+            candidate.icp_verified = true;
+            a6AutoVerified.push(candidate);
+            onLog(`[A6 SCORE] ✅ @${candidate.ig_handle} — score=${a6Score} ≥ 70 → pre-verified, skip AI`);
+          } else if (a6Score < 40) {
+            onLog(`[A6 SCORE] ✗  @${candidate.ig_handle} — score=${a6Score} < 40 → drop (personal brand pattern)`);
+          } else {
+            onLog(`[A6 SCORE] ⚡ @${candidate.ig_handle} — score=${a6Score} → forwarding to AI soft filter`);
+            needsAIVerification.push(candidate);
+          }
         }
       }
 
@@ -1231,7 +1271,7 @@ export class TikTokFacelessEngine {
         ? await icpEvaluator.applySoftFilter(needsAIVerification, onLog, 'faceless_clipper')
         : [];
       const aiVerified = softFiltered.filter(l => l.icp_verified === true);
-      const icpVerified = [...tier1PreVerified, ...aiVerified];
+      const icpVerified = [...tier1PreVerified, ...a6AutoVerified, ...aiVerified];
       const icpUnverified = softFiltered.filter(l => l.icp_verified !== true);
       onLog('[ICP SOFT] ' + icpVerified.length + ' verificados ✓ | ' + icpUnverified.length + ' no verificados ✗');
 

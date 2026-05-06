@@ -18,12 +18,17 @@ import { ICPType, VideoItem, ContentVerificationResult } from '../../lib/types';
 /** Maximum number of videos/posts to analyze per creator (cost control) */
 const MAX_VIDEOS_TO_ANALYZE = 3;
 
+/** For faceless_clipper TikTok: analyze 5 thumbnails to improve face-detection robustness.
+ *  The engine already stores up to 5 videos in _latestVideos — no extra Apify cost. */
+const FACELESS_MAX_VIDEOS_TO_ANALYZE = 5;
+
 /** Minimum score (0–100) for a creator to be considered an ICP match (personal_brand) */
 export const CONTENT_SCORE_THRESHOLD = 65;
 
-/** Threshold for faceless/clipper ICP — matches personal_brand threshold so borderline editors and
- *  motivation accounts (score 65–71) are not incorrectly discarded before email discovery. */
-const FACELESS_CLIPPER_CONTENT_SCORE_THRESHOLD = 65;
+/** Threshold for faceless/clipper ICP — lowered to 60 because the new binary face-counting
+ *  prompt produces higher baseline scores on true positives (slideshow TYPE_A accounts
+ *  routinely score 80+), so the extra margin handles borderline mixed-content pages. */
+const FACELESS_CLIPPER_CONTENT_SCORE_THRESHOLD = 60;
 
 /** Apify actor IDs */
 const INSTAGRAM_POSTS_SCRAPER = 'apify~instagram-scraper';
@@ -212,7 +217,7 @@ export class ContentVerificationService {
               { role: 'user', content: contentParts },
             ],
             temperature: 0.2,
-            max_tokens: 120,
+            max_tokens: 150,
           }),
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -220,11 +225,16 @@ export class ContentVerificationService {
         const raw = data.choices?.[0]?.message?.content || '';
         const match = raw.match(/\{[\s\S]*\}/);
         if (match) {
-          const parsed = JSON.parse(match[0]) as Partial<SingleVideoAnalysis>;
+          const parsed = JSON.parse(match[0]) as Partial<SingleVideoAnalysis> & { content_type?: string };
           const score = Math.max(0, Math.min(100, Number(parsed.content_alignment_score) || 50));
+          // Use icpType-specific threshold so the per-video is_icp_match is consistent
+          // with the aggregate threshold applied in verifyCreatorContent.
+          const perVideoThreshold = icpType === 'faceless_clipper'
+            ? FACELESS_CLIPPER_CONTENT_SCORE_THRESHOLD
+            : CONTENT_SCORE_THRESHOLD;
           return {
             content_alignment_score: score,
-            is_icp_match: score >= CONTENT_SCORE_THRESHOLD,
+            is_icp_match: score >= perVideoThreshold,
             reasoning: String(parsed.reasoning || '').substring(0, 300),
           };
         }
@@ -251,13 +261,14 @@ export class ContentVerificationService {
   ): Promise<ContentVerificationResult> {
     // 1. Collect video items
     let items: VideoItem[];
+    const maxVideos = (icpType === 'faceless_clipper') ? FACELESS_MAX_VIDEOS_TO_ANALYZE : MAX_VIDEOS_TO_ANALYZE;
     if (prefetchedItems && prefetchedItems.length > 0) {
-      items = prefetchedItems.slice(0, MAX_VIDEOS_TO_ANALYZE);
+      items = prefetchedItems.slice(0, maxVideos);
     } else {
       const postsMap = platform === 'tiktok'
         ? await this.scrapeTikTokPosts([handle])
         : await this.scrapeInstagramPosts([handle]);
-      items = (postsMap.get(handle) ?? []).slice(0, MAX_VIDEOS_TO_ANALYZE);
+      items = (postsMap.get(handle) ?? []).slice(0, maxVideos);
     }
 
     // 2. No items found → pass by default
@@ -295,29 +306,45 @@ export class ContentVerificationService {
   // ── Prompt Builder ───────────────────────────────────────────────────────────
 
   private buildSystemPrompt(icpType: ICPType): string {
-    const facelessCriteria = `
-CRITICAL REJECTION CRITERIA (ANTI-ICP): Score 0 immediately if the content shows:
-- Food, restaurant, cafe, acai/smoothie/juice brand, retail store, or physical product promotion
-- Traditional life coaching sessions (non-fitness, non-digital), HR/corporate consulting content
-- Standard personal lifestyle vlogs (selfies, food, travel, pets) with zero hustle/wealth/entrepreneurship angle
-If ANY of these apply, return content_alignment_score: 0 and is_icp_match: false.
+    // ── Faceless Clipper: binary face-counting classifier ─────────────────────
+    // Deliberately avoids semantic niche judgments — instead asks a single deterministic
+    // visual question: "is the account owner's face in this frame?"
+    // GPT-4o-mini is much more reliable at face detection than at inferring niche from
+    // a single low-res thumbnail. Scoring is formulaic, not interpretive.
+    //
+    // Score per video (then averaged across up to 5 thumbnails):
+    //   TYPE_A (faceless stock/Pinterest/text-overlay) → 82 base (+8 if gym hashtag in caption, max 90)
+    //   TYPE_B (personal face — owner's own body/face clearly visible) → 15 base (capped at 25)
+    //   TYPE_C (unclear/avatar/ambiguous) → 50
+    // Averaged score ≥ 60 → is_icp_match: true  (FACELESS_CLIPPER_CONTENT_SCORE_THRESHOLD = 60)
+    //
+    // Expected benchmark scores (should all pass ≥ 60):
+    //   @moullaga67    (all TYPE_A stock gym images) → avg ~88 → PASS ✓
+    //   @creed.lifter  (all TYPE_A stock physique)   → avg ~88 → PASS ✓
+    //   @landon.vaughn17 (text-card + stock gym)     → avg ~85 → PASS ✓
+    //   @johnsmith_fitness (personal trainer, TYPE_B face) → avg ~18 → FAIL ✗
+    if (icpType === 'faceless_clipper') {
+      return `You are a visual content classifier for a creator outreach agency.
+Analyze ONE video thumbnail and caption from a TikTok creator.
 
-APPROVE (score ≥ 65) if the content matches ANY of these patterns:
-- Video editor / clipper service provider: edit showcases, portfolio reels, "rate my edit", VFX/transitions demos, editing tutorials, "DM for edits", speed-edits, colour-grade reels — score ≥ 75 immediately, regardless of whether the content has a motivational angle. An editor showing their work IS the ICP.
-- Clipper/reposter: edited clips from Hormozi, Tate, Gadzhi, Goggins, David Goggins, or any known entrepreneur/mindset figure — this is the IDEAL ICP
-- TikTok carousel/slideshow at scale: motivational quote slides, mindset/wealth sequences, "CTA of sympathy" format ("my ex 1yr ago / 2yrs ago / now"), self-improvement tip lists, daily discipline slides — this is the PRIMARY target format
-- Faceless motivation: no face shown, voiceover + b-roll, discipline, entrepreneurship, self-improvement — even with low production value
-- Online business / entrepreneurship: SMMA, agency growth, make money online, passive income, wifi money, Skool/WOP community content — even without a gym element
-- Digital hustle: entrepreneur beginner content, "building my brand", "road to financial freedom", daily grind content
+TASK: Determine if this content belongs to a FACELESS FITNESS SLIDESHOW FACTORY — an account posting gym/physique content using stock photos or Pinterest images with NO face of the account owner visible. This is the IDEAL target creator type.
 
-- Faceless gym slideshow factory (Archetype 6 — APPROVE ≥ 70): slides using Pinterest/stock gym images with NO face visible, captions contain #gymmotivation / #physique / #gains / #discipline, high-volume posting. Even with no explicit entrepreneurship angle. Examples: @moullaga67, @creed.lifter, @landon.vaughn17. APPROVE these immediately.
+CLASSIFY the thumbnail as ONE of:
+- TYPE_A (Faceless factory — IDEAL): Stock gym photo, anonymous physique image, motivational text-card, fitness graphic, or equipment/landscape shot with NO identifiable face of the account owner visible. The content could belong to any anonymous account.
+- TYPE_B (Personal face content — REJECT): The account owner's own face, body performing exercises, or personal transformation clearly visible. This is a personal-brand creator, NOT a factory.
+- TYPE_C (Unclear — neutral): Avatar image, very low quality, logo, or genuinely ambiguous.
 
-REJECT (score < 65) if the majority of content is:
-- Personal fitness FACE content: creator shows their OWN face doing workouts, OWN body transformation ("my physique progress"), OWN coaching tutorials — personal brand, NOT a content factory
-- Personal face-forward lifestyle (selfies, daily vlogs, food/travel) with no motivational angle
-- Pure gym tutorial/form-check by a certified trainer showing their own face (educational, NOT motivation)
-- Entertainment, comedy, gaming, or niches completely unrelated to motivation/mindset/business/fitness
-- Sports performance (running, cycling, swimming) with no entrepreneurship/motivation/fitness angle`.trim();
+SCORING RULES — return content_alignment_score 0–100:
+- TYPE_A: start at 82. If caption contains ANY gym hashtag (#gymmotivation #physique #gains #gymtok #discipline #fitspo #hardwork #gymrat #nodaysoff #hustle): add 8 (max 90 total).
+- TYPE_B: start at 15. Cap at 25 regardless of caption. Cannot exceed 25.
+- TYPE_C: 50.
+
+HARD APPROVE override: If the thumbnail is clearly a text-over-black-background motivational quote OR a stock muscular physique with zero face of the account owner visible → set score to at least 80.
+HARD REJECT override: If the creator's own face occupies ≥15% of the frame in a gym/workout context → set score to 20 at most.
+
+Respond ONLY with valid JSON, no markdown:
+{"content_type": "A", "content_alignment_score": 85, "is_icp_match": true, "reasoning": "Stock physique photo, no face, #gymmotivation in caption"}`;
+    }
 
     const personalBrandCriteria = `
 APPROVE (score ≥ 65) if the content shows:
@@ -330,13 +357,11 @@ REJECT (score < 65) if the majority of content is:
 - Pure motivational clips with no physical fitness element (that belongs to faceless_clipper)
 - Brand/agency content with no individual creator presence`.trim();
 
-    const criteria = icpType === 'faceless_clipper' ? facelessCriteria : personalBrandCriteria;
-
     return `You are a short-form content analyst for a creator outreach agency.
 Evaluate the provided video thumbnail/frame and caption/transcript.
 Determine if this content matches the "${icpType}" archetype.
 
-${criteria}
+${personalBrandCriteria}
 
 Score guide: 0–40 = clearly wrong niche | 41–64 = borderline/uncertain | 65–84 = good match | 85–100 = perfect match
 

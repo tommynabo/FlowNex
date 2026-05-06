@@ -148,6 +148,14 @@ export interface Lead {
   _videoItemsForVerification?: VideoItem[];
   /** Transient: icpType stored alongside the lead so the cron job can use it without re-querying the campaign */
   _icpType?: ICPType;
+  /** Transient: total profile likes from Apify authorMeta.heart — used by Archetype 6 scorer */
+  _heartCount?: number;
+  /** Transient: total video count from Apify authorMeta.video — used by Archetype 6 scorer */
+  _videoCount?: number;
+  /** Transient: raw (pre-caption-enrichment) bio text — empty bio is a positive A6 signal */
+  _rawBio?: string;
+  /** Transient: composite Archetype 6 numeric score (0–100) — logged for calibration */
+  _archetype6Score?: number;
 }
 
 export interface AdvancedFilter {

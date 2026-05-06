@@ -889,7 +889,7 @@ export class TikTokFacelessEngine {
       }
 
       if (!searchResults.length) {
-        onLog('🔎 No results for: ' + searchQuery);
+        onLog('🔎 No results for: ' + queryBatch[0]);
         consecutiveZeros++;
         if (consecutiveZeros >= MAX_CONSEC_ZEROS) { onLog('[ENGINE] ' + MAX_CONSEC_ZEROS + ' empty rounds — deteniendo.'); break; }
         continue;
@@ -1341,7 +1341,7 @@ export class TikTokFacelessEngine {
       // ── STEP 3b: Email discovery ──────────────────────────────────────────────
       // Runs ONLY on AI-verified + content-passed leads — avoids wasting discovery calls
       // on profiles that were already rejected upstream.
-      // Email is ENRICHMENT, not an acceptance gate — leads are accepted once ICP-verified.
+      // Email is a hard ACCEPTANCE GATE — leads without a discovered email are dropped.
       // Each call is race-capped at EMAIL_TIMEOUT_MS so slow servers never stall the loop.
       const toDiscover = contentPassed.slice(0, Math.max(slotsRemaining * 8, contentPassed.length));
       onLog('📧 STEP 3b — Email discovery (TikTok) para ' + toDiscover.length + ' candidatos...');
@@ -1353,7 +1353,7 @@ export class TikTokFacelessEngine {
             lead.website || '',
             lead.ig_handle || '',
             onLog,
-            lead.aiAnalysis?.summary || '',
+            lead._rawBio || '',
           );
           const timeoutPromise = new Promise<string>(r => setTimeout(() => r(''), EMAIL_TIMEOUT_MS));
           const discovered = await Promise.race([emailPromise, timeoutPromise]);
@@ -1364,18 +1364,12 @@ export class TikTokFacelessEngine {
       onLog('📧 STEP 3b ✓ — ' + withEmail.length + '/' + toDiscover.length + ' tienen email');
 
       if (!withEmail.length) {
-        // With email-first queries this should rarely happen.
-        // After attempt 20, accept ICP-verified leads without email (saved to DB only, not Instantly).
-        if ((attempt > 20 || isFitnessAttempt) && contentPassed.length > 0) {
-          onLog('⚠ Sin email — aceptando ' + Math.min(contentPassed.length, slotsRemaining) + ' lead(s) ICP verificados sin email (DB only, no Instantly)...');
-        } else {
-          onLog('⚠ Ningún candidato tiene email. Rotando query...');
-          continue;
-        }
+        onLog('⚠ Sin gmail — ningún candidato tiene email. Rotando query...');
+        continue;
       }
 
-      const toProcess = (withEmail.length > 0 ? withEmail : contentPassed).slice(0, slotsRemaining);
-      onLog('📧 STEP 3b ✓ — ' + toProcess.length + ' leads con email + ICP verificado listos para análisis IA');
+      const toProcess = withEmail.slice(0, slotsRemaining);
+      onLog('📧 STEP 3b ✓ — ' + toProcess.length + ' leads con gmail + ICP verificado listos para análisis IA');
 
       // ── STEP 4b: Batch AI analysis ────────────────────────────────────────────
       onLog('✍ STEP 4b — Generando análisis IA (batch) para ' + toProcess.length + ' creadores TikTok...');

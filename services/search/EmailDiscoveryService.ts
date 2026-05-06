@@ -142,14 +142,16 @@ export class EmailDiscoveryService {
       return existingEmail;
     }
 
-    // Stage 2 + Stage 3 run concurrently — both are independent network calls.
-    // Running them in parallel halves the latency when Stage 2 finds nothing.
-    const [websiteEmail, ttEmail] = await Promise.all([
+    // Stages 2, 3 & 4 run concurrently — all are independent network calls.
+    // Stage 4: if the bio contains "ig: @handle" or "instagram.com/handle", cross-ref
+    // the Instagram profile for its business email (common on TikTok fitness accounts).
+    const [websiteEmail, ttEmail, igXrefEmail] = await Promise.all([
       website ? this.findViaWebsite(website, handle, onLog) : Promise.resolve(''),
       this.findViaTikTokSource(handle, onLog),
+      bio ? this.findViaInstagramCrossRef(bio, handle, onLog) : Promise.resolve(''),
     ]);
-    const result = [websiteEmail, ttEmail].find(e => e && isStrictlyValidEmail(e)) ?? '';
-    if (!result) onLog(`[EMAIL] @${handle} (TikTok) → no email found across all 3 stages`);
+    const result = [websiteEmail, ttEmail, igXrefEmail].find(e => e && isStrictlyValidEmail(e)) ?? '';
+    if (!result) onLog(`[EMAIL] @${handle} (TikTok) → no email found across all 4 stages`);
     return result;
   }
 

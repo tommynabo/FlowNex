@@ -367,6 +367,12 @@ TARGET ARCHETYPES — pass if the profile clearly fits ANY of these:
    - KEY DISTINCTION: NO face shown, NO personal coaching language, NO "my transformation" — pure content FACTORY using Pinterest/stock images
    - ACCEPT even with empty bio ("No bio yet."), emoji-only bio ("💸💸💸"), or minimal quote bio ("Lightweight baby!")
 
+IDEAL MATCH EXAMPLES — profiles that are a PERFECT ICP match (benchmark against these):
+- @moullaga67: name=💸💸💸, bio="No bio yet." → PERFECT. Empty bio + money-emoji name + very low followers but 197K likes = classic gym slideshow content factory. Accept immediately with confidence ≥ 95.
+- @creed.lifter: name=creed.lifter, bio="No bio yet." → PERFECT. Handle contains fitness term ("lifter") + empty bio + 467K likes on 4.9K followers = high-volume gym slideshow factory. Accept immediately.
+- @landon.vaughn17: name=Landon Vaughn, bio="Lightweight baby!" → PERFECT. Bio is a famous gym/weightlifting quote (CT Fletcher catchphrase). Handle has number suffix. Only 11.9K followers but 1.3M likes = extremely high-volume content factory. Accept immediately.
+Key pattern: low followers + extremely high likes (ratio >50x) + empty/minimal bio + no personal face shown = IDEAL ICP. These are the PRIMARY TARGET ARCHETYPE.
+
 AUTO-APPROVE SIGNALS (approve with confidence ≥ 88, skip lengthy analysis):
 - Bio contains "clipper" or "editor" or "edits": auto-approve
 - Bio contains "dm for promo" or "dm for promos" or "dm for collab": auto-approve

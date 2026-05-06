@@ -829,7 +829,8 @@ export class TikTokFacelessEngine {
       );
       // Fitness faceless attempts (pools 9–11): primary discovery is TikTok Hashtag scraping.
       // isFitnessAttempt disables the email gate — fitness faceless creators never put email in bio.
-      const isFitnessAttempt = FITNESS_HASHTAG_POOL.some(h =>
+      // Declared as `let` so it can be set to true when attempt-1 baseline hashtag discovery fires.
+      let isFitnessAttempt = FITNESS_HASHTAG_POOL.some(h =>
         queryBatch.some(q => q.includes('"#' + h + '"'))
       );
 
@@ -1049,16 +1050,18 @@ export class TikTokFacelessEngine {
         }
       }
 
-      // ── TikTok Hashtag Discovery (fitness faceless pools 9–11) ──────────────────────────
+      // ── TikTok Hashtag Discovery (fitness faceless pools 9–11 + attempt 1 baseline) ─────────
       // Accounts like @creed.lifter ("No bio yet.") and @moullaga67 ("💸💸💸") have empty bios
-      // and CANNOT be found via Google bio-search. We scrape TikTok hashtags directly using
-      // clockworks~free-tiktok-scraper with { hashtags: [...] } — same actor, different input mode.
+      // and CANNOT be found via Google bio-search. We scrape TikTok hashtags directly.
+      // ALWAYS fires on attempt 1 (gymmotivation baseline) so ideal ICP accounts are seeded
+      // even before the engine finds the 3 via Google email-search.
       // Bio enrichment: empty bios (< 25 chars) are augmented with video caption text so that
       // TIER2 keywords (gymmotivation, physique, discipline…) fire correctly in the hard filter.
-      if (isFitnessAttempt && !skipTtScraper) {
-        const matchedHashtag = FITNESS_HASHTAG_POOL.find(h =>
-          queryBatch.some(q => q.includes('"#' + h + '"'))
-        );
+      const hashtagToRun = isFitnessAttempt
+        ? FITNESS_HASHTAG_POOL.find(h => queryBatch.some(q => q.includes('"#' + h + '"')))
+        : attempt === 1 ? FITNESS_HASHTAG_POOL[0] : undefined;
+      if (hashtagToRun && !skipTtScraper) {
+        const matchedHashtag = hashtagToRun;
         if (matchedHashtag) {
           onLog('🏋️ Hashtag Discovery: #' + matchedHashtag + ' (sin bio requerida — scraping TikTok directo)...');
           try {
@@ -1095,6 +1098,8 @@ export class TikTokFacelessEngine {
             }
             if (hashtagProfiles.length > 0) {
               normalizedProfiles = [...normalizedProfiles, ...hashtagProfiles] as typeof normalizedProfiles;
+              // Relax email gate — these no-email ideal ICP accounts would otherwise be rejected.
+              isFitnessAttempt = true;
               onLog('🏋️ #' + matchedHashtag + ' → ' + hashtagProfiles.length + ' nuevos perfiles fitness faceless añadidos');
             } else {
               onLog('🏋️ #' + matchedHashtag + ' → 0 perfiles nuevos (todos ya vistos en esta sesión)');

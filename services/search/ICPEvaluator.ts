@@ -86,6 +86,13 @@ const FACELESS_CLIPPER_TIER2_KEYWORDS = [
   'wifimoney', 'passiveincome', 'financialfreedom', 'makemoney', 'onlinebusiness',
   'hormozi', 'gadzhi', 'tate', 'goggins',
   'moneymindset', 'dailymotivation',
+  // Fitness faceless slideshow signals — present in video caption hashtags.
+  // The Hashtag Discovery loop enriches empty bios with these caption terms so they
+  // fire in the hard filter. Combined with motivation/discipline/gains → easily ≥3 hits.
+  'gymmotivation', 'gymtok', 'gymlife', 'fitspo', 'gymrat',
+  'physique', 'gains', 'fitness', 'gym',
+  // Re-added at TIER2 (not TIER1): safe now UGC terms are in ANTI_ICP_BIO_KEYWORDS
+  'slideshow', 'carousel',
 ];
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -319,6 +326,15 @@ TARGET ARCHETYPES — pass if the profile clearly fits ANY of these:
    - May not be successful yet — the entrepreneurial obsession and creator habit are what matter
    - Strong signals: mentions Skool, WOP, SMMA, or references known entrepreneur figures
 
+6. FITNESS FACELESS SLIDESHOW CREATOR
+   - Posts gym/physique motivation slideshows using stock or Pinterest images — NOT their own face
+   - High-volume posting (100s–1000s of videos), MINIMAL or EMPTY bio — completely normal for this archetype
+   - Handle / display name signals: physique.daily, gains.page, emoji-only name (💸💸💸), number-suffixed handle (moullaga67, creed.lifter)
+   - Video captions contain: #gymmotivation, #gymtok, #physique, #gains, #discipline, #hardwork
+   - Often has link-in-bio (Payhip, Gumroad, Linktree) selling a PDF, program, or info product
+   - KEY DISTINCTION: NO face shown, NO personal coaching language, NO "my transformation" — pure content FACTORY using Pinterest/stock images
+   - ACCEPT even with empty bio ("No bio yet."), emoji-only bio ("💸💸💸"), or minimal quote bio ("Lightweight baby!")
+
 AUTO-APPROVE SIGNALS (approve with confidence ≥ 88, skip lengthy analysis):
 - Bio contains "clipper" or "editor" or "edits": auto-approve
 - Bio contains "dm for promo" or "dm for promos" or "dm for collab": auto-approve
@@ -326,6 +342,8 @@ AUTO-APPROVE SIGNALS (approve with confidence ≥ 88, skip lengthy analysis):
 - Bio contains "linktr.ee" AND niche keywords (motivation/mindset/smma): auto-approve
 - Bio contains "skool" or "wop" or "smma": auto-approve (entrepreneur community member)
 - Username/handle contains: clips, edits, clipper, daily, motivation, mindset, noexcuses, slideshow, carousel
+- Handle/name contains physique, gains, gym, gymtok AND biography field includes fitness hashtags: auto-approve as Archetype 6
+- Bio is empty or emoji-only (≤ 3 words) AND biography field includes #gymmotivation, #gymtok, or #physique: auto-approve as Archetype 6
 
 REJECT (is_human_creator = false):
 - Large official brand accounts, media companies, entertainment studios
@@ -339,7 +357,8 @@ REJECT (is_human_creator = false):
 
 CRITICAL ANTI-ICP (reject immediately, anti_icp: true):
 - UGC creators, user-generated content creators, "content for brands" accounts, brand-deal-focused accounts. These produce paid ad content for companies. We want organic clippers and editors, not commercial content producers. Reject immediately.
-- Personal fitness brands, gym influencers, workout tutorials, body transformation creators, physique/natty journey accounts, fitness coaches — unless they ALSO have an explicit clipper/editor identity (e.g. "fitness clipper", "gym edits"). Reject immediately if fitness is the ONLY identity.
+- Personal fitness FACE creators: accounts posting their OWN workout videos, OWN body transformation ("my physique progress"), or with personal coaching bios ("Certified PT", "1-on-1 coaching", "DM for coaching"). These are personal brands — reject immediately.
+- NOTE: FITNESS FACELESS SLIDESHOW CREATORS (Archetype 6) are VALID TARGETS. Empty bio + fitness hashtags in video captions + high-volume slideshows = ACCEPT. When uncertain between "personal fitness brand" vs "fitness faceless factory", prefer ACCEPT.
 - Local physical businesses: restaurants, cafes, acai, bakeries, physical retail
 - Corporate/HR consulting, therapists, spiritual coaches (no wealth/business angle)
 - Accounts posting primarily in a non-English language

@@ -62,6 +62,14 @@ const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
   ['"gmail.com"', '"hormozi clips"', '"goggins edits"', '"tate clips"', '"gadzhi clips"', '"alex hormozi"'],
   // 8. Community burst (WOP/Skool/clipping) + Gmail — every 5th attempt
   ['"skool"', '"wop"', '"clipping"', '"dm for collab"', '"gmail.com"', '"daily clips"'],
+  // 9. FITNESS FACELESS — #gymmotivation (empty-bio Pinterest gym slideshow accounts)
+  // Primary discovery: TikTok Hashtag Discovery mode scrapes #gymmotivation directly.
+  // Secondary: Google query for any video/profile pages Google has indexed.
+  ['"#gymmotivation"', '"#motivation"', '"#discipline"', '"#hardwork"', '"slideshow"'],
+  // 10. GymTok faceless — #gymtok physique/Pinterest slideshows, often emoji-name accounts
+  ['"#gymtok"', '"#fitness"', '"#hustle"', '"slideshow"', '"#bestversion"'],
+  // 11. Physique / gains faceless — money×fitness crossover slideshow factory
+  ['"#physique"', '"#gains"', '"#gym"', '"slideshow"', '"#motivation"'],
 ];
 
 // Maps campaign region codes to Google Search location terms (appended as soft hint to queries)
@@ -99,6 +107,13 @@ const TIKTOK_PROFILE_SCRAPER = 'clockworks~free-tiktok-scraper';
 // Anti-ICP negative keywords — only the 5 most critical terms.
 // Shorter queries avoid Google truncation that caused empty results.
 const ANTI_ICP_NEGATIVES = '-restaurant -store -boutique -cooking -dance';
+
+// Fitness faceless hashtags for TikTok Hashtag Discovery mode.
+// When fitness pools (9–11) are active, the main loop scrapes TikTok hashtags DIRECTLY —
+// bypassing the Google bio-search limitation for empty-bio accounts.
+// @creed.lifter ("No bio yet."), @moullaga67 ("💸💸💸"), @landon.vaughn17 ("Lightweight baby!")
+// are only discoverable this way: bio is empty, but video captions contain these hashtags.
+const FITNESS_HASHTAG_POOL = ['gymmotivation', 'gymtok', 'physique'] as const;
 
 // TikTok URL path segments that are not profile pages
 const TIKTOK_SKIP_HANDLES = new Set(['tag', 'search', 'discover', 'music', 'video', 'live', 'trending', 'foryou', 't']);
@@ -153,12 +168,20 @@ export class TikTokFacelessEngine {
       return withLoc(`site:tiktok.com ${group8} ${emailSignalBurst} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     }
 
-    // Normal rotation: cycle through pools 0–7
-    const poolIdx = attempt <= 1 ? 0 : (attempt - 2) % 8;
+    // Normal rotation: 12 pools total.
+    // Pools 0–8: email-first (clipper/editor/community). Pools 9–11: fitness faceless (no email gate).
+    const poolIdx = attempt <= 1 ? 0 : (attempt - 2) % 12;
     const terms = FACELESS_CLIPPER_KEYWORD_POOLS[poolIdx];
     const orGroup = '(' + terms.join(' OR ') + ')';
 
-    // ALL cycles include email signal — Gmail-indexed bios guarantee contactable leads.
+    // Fitness faceless pools (9–11): no email signal — these creators have empty bios.
+    // TikTok Hashtag Discovery in the main loop is the primary channel for these accounts.
+    if (poolIdx >= 9) {
+      const facelessBoost = '("slideshow" OR "link in bio" OR "payhip" OR "gumroad" OR "dm for promo")';
+      return withLoc(`site:tiktok.com ${orGroup} ${facelessBoost} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+    }
+
+    // Email-first pools (0–8): Gmail-indexed bios guarantee contactable leads.
     // Big creators (Robbins, Hormozi) never put personal Gmail in bio → this naturally
     // filters to nano/micro creators who ARE the target ICP.
     const emailSignal = '("gmail.com" OR "business inquiries" OR "for business" OR "dm for business" OR "for collabs")';
@@ -804,6 +827,11 @@ export class TikTokFacelessEngine {
       const queryBatch = Array.from({ length: GOOGLE_QUERY_BATCH }, (_, i) =>
         this.buildSearchQuery(baseAttempt + i, targetRegions)
       );
+      // Fitness faceless attempts (pools 9–11): primary discovery is TikTok Hashtag scraping.
+      // isFitnessAttempt disables the email gate — fitness faceless creators never put email in bio.
+      const isFitnessAttempt = FITNESS_HASHTAG_POOL.some(h =>
+        queryBatch.some(q => q.includes('"#' + h + '"'))
+      );
 
       onLog('');
       onLog('━━━ ATTEMPT ' + attempt + '/' + MAX_RETRIES + ' ━━━  ' + needed + ' lead(s) still needed');
@@ -1021,6 +1049,67 @@ export class TikTokFacelessEngine {
         }
       }
 
+      // ── TikTok Hashtag Discovery (fitness faceless pools 9–11) ──────────────────────────
+      // Accounts like @creed.lifter ("No bio yet.") and @moullaga67 ("💸💸💸") have empty bios
+      // and CANNOT be found via Google bio-search. We scrape TikTok hashtags directly using
+      // clockworks~free-tiktok-scraper with { hashtags: [...] } — same actor, different input mode.
+      // Bio enrichment: empty bios (< 25 chars) are augmented with video caption text so that
+      // TIER2 keywords (gymmotivation, physique, discipline…) fire correctly in the hard filter.
+      if (isFitnessAttempt && !skipTtScraper) {
+        const matchedHashtag = FITNESS_HASHTAG_POOL.find(h =>
+          queryBatch.some(q => q.includes('"#' + h + '"'))
+        );
+        if (matchedHashtag) {
+          onLog('🏋️ Hashtag Discovery: #' + matchedHashtag + ' (sin bio requerida — scraping TikTok directo)...');
+          try {
+            const hashtagRaw = await this.callApifyActor(
+              TIKTOK_PROFILE_SCRAPER,
+              {
+                hashtags: [matchedHashtag],
+                resultsPerPage: 30,
+                shouldDownloadVideos: false,
+                shouldDownloadCovers: false,
+                shouldDownloadAvatars: false,
+                shouldDownloadSubtitles: false,
+                shouldDownloadSlideshowImages: false,
+                shouldDownloadMusicCovers: false,
+              },
+              onLog,
+              150,    // up to 150 items (30 videos × ~5 different authors)
+              65_000, // client-side timeout ms
+              55,     // server-side kill (seconds)
+              1024,   // memory cap MB
+            );
+            const hashtagProfiles = this.groupTikTokItemsByProfile(
+              hashtagRaw as Record<string, unknown>[]
+            ).filter(p => !seenHandles.has(p.username));
+            // Enrich empty/minimal bios with video caption text so TIER2 keywords fire.
+            // Before: biography="" | After: biography=" #gymmotivation #physique #gains..."
+            for (const p of hashtagProfiles) {
+              seenHandles.add(p.username);
+              const extP = p as typeof p & { _latestVideos: { thumbnailUrl: string; desc: string }[] };
+              if (!extP.biography || extP.biography.trim().length < 25) {
+                const captions = (extP._latestVideos || []).slice(0, 5).map(v => v.desc || '').join(' ');
+                if (captions) extP.biography = (extP.biography || '').trim() + ' ' + captions;
+              }
+            }
+            if (hashtagProfiles.length > 0) {
+              normalizedProfiles = [...normalizedProfiles, ...hashtagProfiles] as typeof normalizedProfiles;
+              onLog('🏋️ #' + matchedHashtag + ' → ' + hashtagProfiles.length + ' nuevos perfiles fitness faceless añadidos');
+            } else {
+              onLog('🏋️ #' + matchedHashtag + ' → 0 perfiles nuevos (todos ya vistos en esta sesión)');
+            }
+          } catch (e: unknown) {
+            const hErr = e instanceof Error ? e.message : String(e);
+            if (hErr.startsWith('APIFY_QUOTA_EXCEEDED')) {
+              onLog('[ENGINE] ⛔ Apify quota agotada — Abortando.');
+              break;
+            }
+            onLog('🏋️ Hashtag Discovery #' + matchedHashtag + ' error (continuando sin él): ' + hErr.substring(0, 120));
+          }
+        }
+      }
+
       // ── STEP 3: Hard ICP filter ──────────────────────────────────────────────
       onLog('🔍 STEP 3/4 — Applying hard ICP filters (' + normalizedProfiles.length + ' profiles)...');
       const hardFiltered = icpEvaluator.applyHardFilter(
@@ -1207,7 +1296,7 @@ export class TikTokFacelessEngine {
       if (!withEmail.length) {
         // With email-first queries this should rarely happen.
         // After attempt 20, accept ICP-verified leads without email (saved to DB only, not Instantly).
-        if (attempt > 20 && contentPassed.length > 0) {
+        if ((attempt > 20 || isFitnessAttempt) && contentPassed.length > 0) {
           onLog('⚠ Sin email — aceptando ' + Math.min(contentPassed.length, slotsRemaining) + ' lead(s) ICP verificados sin email (DB only, no Instantly)...');
         } else {
           onLog('⚠ Ningún candidato tiene email. Rotando query...');

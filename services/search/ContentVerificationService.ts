@@ -310,12 +310,14 @@ APPROVE (score ≥ 65) if the content matches ANY of these patterns:
 - Online business / entrepreneurship: SMMA, agency growth, make money online, passive income, wifi money, Skool/WOP community content — even without a gym element
 - Digital hustle: entrepreneur beginner content, "building my brand", "road to financial freedom", daily grind content
 
+- Faceless gym slideshow factory (Archetype 6 — APPROVE ≥ 70): slides using Pinterest/stock gym images with NO face visible, captions contain #gymmotivation / #physique / #gains / #discipline, high-volume posting. Even with no explicit entrepreneurship angle. Examples: @moullaga67, @creed.lifter, @landon.vaughn17. APPROVE these immediately.
+
 REJECT (score < 65) if the majority of content is:
-- Personal fitness content: gym workouts, physique/natty journey, body transformation, workout tutorials, gym motivation — even if it has a motivational angle
+- Personal fitness FACE content: creator shows their OWN face doing workouts, OWN body transformation ("my physique progress"), OWN coaching tutorials — personal brand, NOT a content factory
 - Personal face-forward lifestyle (selfies, daily vlogs, food/travel) with no motivational angle
-- Pure gym tutorial/form-check by a certified trainer (educational instruction, NOT motivation)
-- Entertainment, comedy, gaming, or niches completely unrelated to motivation/mindset/business
-- Sports performance content (running, cycling, swimming) without entrepreneurship/motivation angle`.trim();
+- Pure gym tutorial/form-check by a certified trainer showing their own face (educational, NOT motivation)
+- Entertainment, comedy, gaming, or niches completely unrelated to motivation/mindset/business/fitness
+- Sports performance (running, cycling, swimming) with no entrepreneurship/motivation/fitness angle`.trim();
 
     const personalBrandCriteria = `
 APPROVE (score ≥ 65) if the content shows:

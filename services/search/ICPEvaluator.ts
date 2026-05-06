@@ -70,6 +70,9 @@ const ANTI_ICP_BIO_KEYWORDS = [
   'scenepack', 'scenepacks',
   'sound promo', 'sound promotion', 'music promo', 'music promotion',
   'anime edit', 'anime edits',
+  // Public speakers, academics, law — no digital/creator/hustle angle
+  'public speaker', 'keynote speaker', 'law student', 'studying law',
+  'lawyer', 'attorney', 'studying at',
 ];
 
 // Handle-only anti-ICP substrings — checked against the USERNAME only, not bio.
@@ -88,13 +91,17 @@ const ANTI_ICP_HANDLE_KEYWORDS = [
 
 // Tier-1: explicit creator-economy signals — pass ALONE (high precision).
 // Any account with ONE of these in bio/name/handle is a valid candidate.
-const FACELESS_CLIPPER_TIER1_KEYWORDS = [
+export const FACELESS_CLIPPER_TIER1_KEYWORDS = [
   'clipper', 'editor', 'edits', 'editing',
   'dm for promo', 'dm for promos', 'dm for collab', 'dm for rates',
   'payhip', 'gumroad',
   'skool', 'wop', 'smma',
   'clipping', 'daily clips',
   '💸', '💰', '🤑',
+  // Clips pages for known figures — handle/name signals guarantee clipper/reposter identity
+  // @davidgogginspiration, @hormozi.clips, @tate.edits etc. → auto-pass hard filter
+  'goggins', 'hormozi', 'gadzhi', 'tate.edits', 'tate.clips',
+  'goggins.', '.goggins', 'gogginsmotivation', 'gogginsinspiration',
 ];
 
 // Tier-2: generic signals — require THREE or more present to pass.

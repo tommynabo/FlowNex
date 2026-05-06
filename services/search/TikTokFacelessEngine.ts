@@ -29,7 +29,7 @@
 import { Lead, SearchConfigState, AudienceTier, VideoItem } from '../../lib/types';
 import { deduplicationService } from '../deduplication/DeduplicationService';
 import { PROJECT_CONFIG } from '../../config/project';
-import { icpEvaluator, RawApifyProfile, HARD_FILTER_MIN_FOLLOWERS } from './ICPEvaluator';
+import { icpEvaluator, RawApifyProfile, HARD_FILTER_MIN_FOLLOWERS, FACELESS_CLIPPER_TIER1_KEYWORDS } from './ICPEvaluator';
 import { emailDiscoveryService } from './EmailDiscoveryService';
 import { contentVerificationService } from './ContentVerificationService';
 import type { LogCallback, ResultCallback } from './SearchService';
@@ -1050,16 +1050,17 @@ export class TikTokFacelessEngine {
         }
       }
 
-      // ── TikTok Hashtag Discovery (fitness faceless pools 9–11 + attempt 1 baseline) ─────────
+      // ── TikTok Hashtag Discovery (fitness faceless pools 9–11 only) ──────────────────────────
       // Accounts like @creed.lifter ("No bio yet.") and @moullaga67 ("💸💸💸") have empty bios
       // and CANNOT be found via Google bio-search. We scrape TikTok hashtags directly.
-      // ALWAYS fires on attempt 1 (gymmotivation baseline) so ideal ICP accounts are seeded
-      // even before the engine finds the 3 via Google email-search.
+      // Fires ONLY when pools 9–11 are active — NOT on every attempt 1.
+      // Firing on attempt 1 floods with South African personal fitness accounts that all fail
+      // lean content, causing 8+ attempts instead of 1-2.
       // Bio enrichment: empty bios (< 25 chars) are augmented with video caption text so that
       // TIER2 keywords (gymmotivation, physique, discipline…) fire correctly in the hard filter.
       const hashtagToRun = isFitnessAttempt
         ? FITNESS_HASHTAG_POOL.find(h => queryBatch.some(q => q.includes('"#' + h + '"')))
-        : attempt === 1 ? FITNESS_HASHTAG_POOL[0] : undefined;
+        : undefined;
       if (hashtagToRun && !skipTtScraper) {
         const matchedHashtag = hashtagToRun;
         if (matchedHashtag) {
@@ -1240,8 +1241,18 @@ export class TikTokFacelessEngine {
         const latestVideos = videosMap.get(lead.ig_handle || '') || [];
 
         if (!latestVideos.length) {
-          contentPassed.push(lead);
-          onLog(`[LEAN CONTENT] ⚪ @${lead.ig_handle} — sin videos disponibles — pasa por defecto`);
+          // Sin vídeos: solo pasa si tiene señal TIER1 explícita (clipper, editor, payhip, dm for promo…).
+          // Evita que cuentas sin nada relevante (public speaker, law student) pasen sin análisis.
+          const bioText = ((lead as unknown as Record<string, unknown>).biography as string || '').toLowerCase();
+          const handleText = (lead.ig_handle || '').toLowerCase();
+          const combinedText = bioText + ' ' + handleText;
+          const tier1Pass = FACELESS_CLIPPER_TIER1_KEYWORDS.some(kw => combinedText.includes(kw));
+          if (tier1Pass) {
+            contentPassed.push(lead);
+            onLog(`[LEAN CONTENT] ⚪ @${lead.ig_handle} — sin videos pero TIER1 en bio/handle — pasa`);
+          } else {
+            onLog(`[LEAN CONTENT] 🚫 @${lead.ig_handle} — sin videos y sin TIER1 signal — SKIP`);
+          }
           continue;
         }
 

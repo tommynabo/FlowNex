@@ -62,6 +62,28 @@ const ANTI_ICP_BIO_KEYWORDS = [
   // UGC creators — paid ad content for brands, NOT the organic clipper/editor archetype
   'ugc creator', 'user generated content', 'content for brands', 'brand deals',
   'sponsored content creator', 'paid partnerships only',
+  // Music / audio / dance niches — these accounts use "dm for promo" language just like our ICP
+  // but they're promoting music/audio/dance content, NOT motivation/hustle/fitness.
+  // @foreva.safia bio: "Dancer | Dm for promo/collabs" → 'dancer' catches it.
+  // @cath7rsis bio: "scenepacks on instagram / dm for sound promos" → 'scenepack'+'sound promo'.
+  'dancer', 'dancing', 'choreograph',
+  'scenepack', 'scenepacks',
+  'sound promo', 'sound promotion', 'music promo', 'music promotion',
+  'anime edit', 'anime edits',
+];
+
+// Handle-only anti-ICP substrings — checked against the USERNAME only, not bio.
+// These are too risky to match in full bio text (e.g. "record" could appear in "track record")
+// but are highly reliable niche signals when present in a TikTok handle.
+// @spinningtherecord: handle contains "record" → music/vinyl DJ page, NOT our ICP.
+const ANTI_ICP_HANDLE_KEYWORDS = [
+  'record',    // "spinningtherecord", "vinylrecords", "therecordshop" — music/vinyl
+  'vinyl',     // vinyl DJ/music pages
+  'djset',     // DJ sets
+  'djpage',    // DJ page
+  'musicpage', // music page
+  'dancepage', // dance page
+  'dancelife', // dance lifestyle page
 ];
 
 // Tier-1: explicit creator-economy signals — pass ALONE (high precision).
@@ -156,11 +178,21 @@ export class ICPEvaluator {
         continue;
       }
 
-      // Anti-ICP bio keyword check — rejects physical businesses and corporate accounts
+      // Anti-ICP bio keyword check — rejects physical businesses, corporate accounts, music/dance.
       // Applies to BOTH icpTypes: these profiles are never valid targets regardless of ICP.
       const antiIcpKw = ANTI_ICP_BIO_KEYWORDS.find(kw => fullText.includes(kw));
       if (antiIcpKw) {
         onLog(`[HARD FILTER] 🚫 @${handle} skip: Anti-ICP keyword "${antiIcpKw}" detected in bio/name`);
+        rejections.antiIcp++;
+        continue;
+      }
+
+      // Handle-only anti-ICP check — catches music/vinyl/DJ pages whose bios look like ICP
+      // (they use "dm for promo" + Gmail but are promoting music, not motivation/hustle).
+      // Checked against HANDLE ONLY to avoid false positives on bio text.
+      const antiHandleKw = ANTI_ICP_HANDLE_KEYWORDS.find(kw => handle.includes(kw));
+      if (antiHandleKw) {
+        onLog(`[HARD FILTER] 🎵 @${handle} skip: music/audio handle signal "${antiHandleKw}" in username`);
         rejections.antiIcp++;
         continue;
       }
@@ -345,6 +377,12 @@ AUTO-APPROVE SIGNALS (approve with confidence ≥ 88, skip lengthy analysis):
 - Handle/name contains physique, gains, gym, gymtok AND biography field includes fitness hashtags: auto-approve as Archetype 6
 - Bio is empty or emoji-only (≤ 3 words) AND biography field includes #gymmotivation, #gymtok, or #physique: auto-approve as Archetype 6
 
+⚠ CRITICAL EXCEPTION — AUTO-APPROVE IS BLOCKED (reject immediately) when ANY of these are present:
+- Bio contains "dancer", "dancing", "choreograph" → dance creator, NOT motivation/clipper ICP. Real example: @foreva.safia bio "Dancer | Dm for promo/collabs" — auto-approve blocked.
+- Bio contains "scenepack", "scenepacks" → scene pack / anime edit account, wrong niche. Real example: @cath7rsis bio "scenepacks on instagram / dm for sound promos" — blocked.
+- Bio contains "sound promo", "sound promotion", "music promo" → music promoter, NOT our ICP.
+- Handle contains "record", "vinyl", "djset" → music/vinyl/DJ page. Real example: @spinningtherecord handle contains "record" → blocked even though bio has "dm for promo" + Gmail.
+
 REJECT (is_human_creator = false):
 - Large official brand accounts, media companies, entertainment studios
 - Accounts with zero relevance to motivation, mindset, wealth, or entrepreneurship
@@ -359,6 +397,9 @@ CRITICAL ANTI-ICP (reject immediately, anti_icp: true):
 - UGC creators, user-generated content creators, "content for brands" accounts, brand-deal-focused accounts. These produce paid ad content for companies. We want organic clippers and editors, not commercial content producers. Reject immediately.
 - Personal fitness FACE creators: accounts posting their OWN workout videos, OWN body transformation ("my physique progress"), or with personal coaching bios ("Certified PT", "1-on-1 coaching", "DM for coaching"). These are personal brands — reject immediately.
 - NOTE: FITNESS FACELESS SLIDESHOW CREATORS (Archetype 6) are VALID TARGETS. Empty bio + fitness hashtags in video captions + high-volume slideshows = ACCEPT. When uncertain between "personal fitness brand" vs "fitness faceless factory", prefer ACCEPT.
+- Music promoters, DJ accounts, vinyl/record pages, sound promoters: bio has "dm for sound promos", "music promo", or handle contains "record"/"vinyl"/"djset". They use "dm for promo" language but are in the MUSIC niche — NOT our ICP. Reject immediately.
+- Dance creators, choreographers: bio says "dancer", "dancing", "choreograph". "Dm for promo/collabs" does NOT save them — wrong niche entirely. Reject immediately.
+- Scene pack / aesthetic edit accounts: bio says "scenepacks", "anime edits", "aesthetic edits". Entertainment editors who promote sounds/music, not motivation/hustle content factories. Reject immediately.
 - Local physical businesses: restaurants, cafes, acai, bakeries, physical retail
 - Corporate/HR consulting, therapists, spiritual coaches (no wealth/business angle)
 - Accounts posting primarily in a non-English language

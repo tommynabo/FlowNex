@@ -73,6 +73,9 @@ const ANTI_ICP_BIO_KEYWORDS = [
   // Public speakers, academics, law — no digital/creator/hustle angle
   'public speaker', 'keynote speaker', 'law student', 'studying law',
   'lawyer', 'attorney', 'studying at',
+  // Fashion & beauty niches — wrong ICP entirely
+  'fashion', 'beauty', 'makeup', 'skincare', 'cosmetics', 'outfit', 'ootd',
+  'nail', 'lash', 'glam', 'moda', 'belleza', 'maquillaje',
 ];
 
 // Handle-only anti-ICP substrings — checked against the USERNAME only, not bio.
@@ -87,6 +90,10 @@ const ANTI_ICP_HANDLE_KEYWORDS = [
   'musicpage', // music page
   'dancepage', // dance page
   'dancelife', // dance lifestyle page
+  'fashion',   // fashion page handles
+  'beauty',    // beauty/makeup handles
+  'makeup',    // makeup tutorial accounts
+  'skincare',  // skincare niche handles
 ];
 
 // Tier-1: explicit creator-economy signals — pass ALONE (high precision).
@@ -163,7 +170,7 @@ export class ICPEvaluator {
       const followers = profile.followersCount || 0;
 
       // Follower range — TikTok faceless/clipper accounts scale much higher than Instagram personal brands
-      const maxFollowers = icpType === 'faceless_clipper' ? 1_000_000 : HARD_FILTER_MAX_FOLLOWERS;
+      const maxFollowers = icpType === 'faceless_clipper' ? 500_000 : HARD_FILTER_MAX_FOLLOWERS;
       if (followers < HARD_FILTER_MIN_FOLLOWERS) {
         onLog(`[HARD FILTER] ↓ @${handle} skip: ${followers.toLocaleString()} < min ${HARD_FILTER_MIN_FOLLOWERS.toLocaleString()} followers`);
         rejections.followerLow++;

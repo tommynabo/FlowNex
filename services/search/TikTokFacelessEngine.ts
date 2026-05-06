@@ -106,7 +106,7 @@ const TIKTOK_PROFILE_SCRAPER = 'clockworks~free-tiktok-scraper';
 
 // Anti-ICP negative keywords — only the 5 most critical terms.
 // Shorter queries avoid Google truncation that caused empty results.
-const ANTI_ICP_NEGATIVES = '-restaurant -store -boutique -cooking -dance';
+const ANTI_ICP_NEGATIVES = '';
 
 // Fitness faceless hashtags for TikTok Hashtag Discovery mode.
 // For faceless_clipper ICP, the main loop cycles through this pool on EVERY attempt —

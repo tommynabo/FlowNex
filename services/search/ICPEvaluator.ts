@@ -59,6 +59,9 @@ const ANTI_ICP_BIO_KEYWORDS = [
   // Elite athletes and modeling agencies
   'pro athlete', 'professional athlete', 'championship', 'competitor',
   'medalist', 'olympian', 'actor', 'actress', 'model agency',
+  // UGC creators — paid ad content for brands, NOT the organic clipper/editor archetype
+  'ugc creator', 'user generated content', 'content for brands', 'brand deals',
+  'sponsored content creator', 'paid partnerships only',
 ];
 
 // Tier-1: explicit creator-economy signals — pass ALONE (high precision).
@@ -66,25 +69,23 @@ const ANTI_ICP_BIO_KEYWORDS = [
 const FACELESS_CLIPPER_TIER1_KEYWORDS = [
   'clipper', 'editor', 'edits', 'editing',
   'dm for promo', 'dm for promos', 'dm for collab', 'dm for rates',
-  'payhip', 'gumroad', 'content for hire', 'video editor for hire', 'free edits',
-  'content creator for hire', 'reel editor',
-  'slideshow', 'carousel',
+  'payhip', 'gumroad',
   'skool', 'wop', 'smma',
-  'clipping', 'daily clips', 'daily content',
+  'clipping', 'daily clips',
   '💸', '💰', '🤑',
 ];
 
-// Tier-2: generic signals — require TWO or more present to pass.
-// A single word like "gym", "discipline", or "motivation" no longer qualifies alone.
+// Tier-2: generic signals — require THREE or more present to pass.
+// Raising the bar from 2 to 3 prevents generic fitness/lifestyle influencers from
+// passing on "mindset + motivation" alone (2 hits no longer sufficient).
 const FACELESS_CLIPPER_TIER2_KEYWORDS = [
-  'mindset', 'motivation', 'motivational', 'wealth', 'hustle', 'grind',
+  'mindset', 'motivation', 'wealth', 'hustle', 'grind',
   'entrepreneur', 'entrepreneurship', 'clips', 'clip',
-  'money', 'success', 'discipline', 'hardwork', 'noexcuses', 'neversettle',
+  'money', 'discipline', 'hardwork', 'noexcuses', 'neversettle',
   'nodaysoff', 'grindset', 'bestversion', 'selfimprovement',
   'wifimoney', 'passiveincome', 'financialfreedom', 'makemoney', 'onlinebusiness',
   'hormozi', 'gadzhi', 'tate', 'goggins',
-  'daily', 'moneymindset', 'dailymotivation', 'transformation',
-  'business', 'agency',
+  'moneymindset', 'dailymotivation',
 ];
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -174,9 +175,9 @@ export class ICPEvaluator {
         //   Everything else → reject (prevents e.g. "gym" or "discipline" alone from passing)
         const tier1Hit = FACELESS_CLIPPER_TIER1_KEYWORDS.some(kw => fullText.includes(kw));
         const tier2Hits = FACELESS_CLIPPER_TIER2_KEYWORDS.filter(kw => fullText.includes(kw));
-        const hasClipperSignal = tier1Hit || tier2Hits.length >= 2;
+        const hasClipperSignal = tier1Hit || tier2Hits.length >= 3;
         if (!hasClipperSignal) {
-          onLog(`[HARD FILTER] 🚫 @${handle} skip: insufficient ICP signal (tier-1: none, tier-2: ${tier2Hits.length}/2 needed)`);
+          onLog(`[HARD FILTER] 🚫 @${handle} skip: insufficient ICP signal (tier-1: none, tier-2: ${tier2Hits.length}/3 needed)`);
           rejections.noSignal++;
           continue;
         }
@@ -235,7 +236,7 @@ export class ICPEvaluator {
     const tier1Hit = FACELESS_CLIPPER_TIER1_KEYWORDS.some(kw => text.includes(kw));
     if (tier1Hit) return 3;
     const tier2Hits = FACELESS_CLIPPER_TIER2_KEYWORDS.filter(kw => text.includes(kw));
-    if (tier2Hits.length >= 2) return 2;
+    if (tier2Hits.length >= 3) return 2;
     if (tier2Hits.length === 1) return 1;
     return 0;
   }
@@ -306,8 +307,7 @@ TARGET ARCHETYPES — pass if the profile clearly fits ANY of these:
 
 4. CAROUSEL / SLIDESHOW CREATOR AT SCALE
    - Posts TikTok carousels/slideshows in high volume (100s–1000s of videos per month)
-   - Content: motivational quote slides, mindset/wealth sequences, "CTA of sympathy" format
-     ("my ex 1yr ago / 2yrs ago / now"), self-improvement tip lists, daily discipline slides
+   - Content: motivational quote slides, mindset/wealth sequences, self-improvement tip lists
    - This is the PRIMARY target archetype: high-volume content factory
    - Business model: content factory looking for scalable revenue streams
    - Signals: many videos, "slideshow" or "carousel" in bio, high like-to-follower ratio
@@ -315,7 +315,7 @@ TARGET ARCHETYPES — pass if the profile clearly fits ANY of these:
 5. ENTREPRENEUR BEGINNER / DIGITAL HUSTLE
    - Obsessed with making money online, follows Hormozi/Gadzhi content
    - May be in Skool or WOP communities, references SMMA, agency, digital business
-   - Bio signals: "building my empire", "SMMA", "agency owner", "digital creator", "content for hire"
+   - Bio signals: "building my empire", "SMMA", "agency owner", "digital creator"
    - May not be successful yet — the entrepreneurial obsession and creator habit are what matter
    - Strong signals: mentions Skool, WOP, SMMA, or references known entrepreneur figures
 
@@ -333,13 +333,15 @@ REJECT (is_human_creator = false):
 - Spam or bot accounts with gibberish bios
 - Pure personal lifestyle (selfies, travel, food, pets) with NO hustle/motivation/business angle
 - Traditional life coaches, therapists, HR consultants with no digital/business angle
-- Professional athletes, fighters, wrestlers, or sports competitors (we want digital creators and editors, not physical sports professionals)
+- Professional athletes, fighters, wrestlers, or sports competitors
 - Accounts posting primarily in a non-English language (Spanish, Portuguese, French, etc.)
+- UGC creators, "content for brands" creators, "content for hire" creators: these are paid ad video producers, NOT the organic faceless clipper/editor archetype we want. Reject them.
 
 CRITICAL ANTI-ICP (reject immediately, anti_icp: true):
-- Personal fitness brands, gym influencers, workout tutorials, body transformation creators, physique/natty journey accounts, fitness coaches. We DO NOT want fitness creators in this category. Reject immediately.
+- UGC creators, user-generated content creators, "content for brands" accounts, brand-deal-focused accounts. These produce paid ad content for companies. We want organic clippers and editors, not commercial content producers. Reject immediately.
+- Personal fitness brands, gym influencers, workout tutorials, body transformation creators, physique/natty journey accounts, fitness coaches — unless they ALSO have an explicit clipper/editor identity (e.g. "fitness clipper", "gym edits"). Reject immediately if fitness is the ONLY identity.
 - Local physical businesses: restaurants, cafes, acai, bakeries, physical retail
-- Corporate/HR consulting, therapists, spiritual coaches (no wealth/fitness angle)
+- Corporate/HR consulting, therapists, spiritual coaches (no wealth/business angle)
 - Accounts posting primarily in a non-English language
 
 Reply ONLY with a valid JSON array matching the input order:
@@ -408,7 +410,7 @@ Reply ONLY with a valid JSON array matching the input order:
 
           const passes = (result as any).is_physical_fitness_creator ?? result.is_human_creator;
           const isAntiIcp = (result as any).anti_icp === true;
-          if (usernameMatch && passes === true && result.confidence >= 70 && !isAntiIcp) {
+          if (usernameMatch && passes === true && result.confidence >= 80 && !isAntiIcp) {
             lead.icp_verified = true;
             verifiedCount++;
             onLog(`[ICP SOFT] ✓ @${lead.ig_handle} → ICP verified (${result.confidence}% confidence)`);
@@ -436,7 +438,7 @@ Reply ONLY with a valid JSON array matching the input order:
     }));
 
     const totalVerified = leads.filter(l => l.icp_verified).length;
-    onLog(`[ICP SOFT] Total: ${totalVerified}/${leads.length} ICP verified (${leads.length - totalVerified} unverified but kept)`);
+    onLog(`[ICP SOFT] Total: ${totalVerified}/${leads.length} ICP verified (${leads.length - totalVerified} unverified → dropped by engine)`);
 
     return leads;
   }

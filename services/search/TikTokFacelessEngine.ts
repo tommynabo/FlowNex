@@ -39,25 +39,29 @@ import type { LogCallback, ResultCallback } from './SearchService';
 //   Clippers (@finesteditsz), EN motivation (@nofexcuses), Figure-clip entrepreneurs (Hormozi/Gadzhi),
 //   Carousel/slideshow creators, EN wealth/hustle, Content-factory volume signals,
 //   ES motivation/entrepreneurship (@brian09__), EN hustle/social proof, Community (WOP/Skool/clipping)
+// Email-first strategy: 5 of 9 pools lead with "gmail.com" and 2 more lead with explicit
+// contact-intent phrases. Google indexes TikTok bio text — profiles whose bio contains their
+// email are guaranteed contactable AND are naturally nano/micro-size (big creators never put
+// personal Gmail in bio). This eliminates the ~95% email-discovery failure of the old approach.
 const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
-  // 0. Clipper / editor identity — highest precision, explicit self-identification
-  ['"clipper"', '"editor"', '"edits"', '"daily clips"', '"dm for promo"', '"payhip"', '"gumroad"'],
-  // 1. EN faceless motivation / no-excuses archetype
-  ['"no excuses"', '"best version"', '"discipline"', '"mindset"', '"hard work"', '"self improvement"'],
-  // 2. Figure-clip / entrepreneur clipper — Hormozi, Gadzhi, Goggins editors
-  ['"hormozi"', '"iman gadzhi"', '"goggins"', '"david goggins"', '"tate"', '"make money online"'],
-  // 3. Carousel / slideshow creator at scale — primary ICP format (EN-only)
-  ['"slideshow"', '"carousel"', '"daily discipline"', '"top 5"', '"listicle"', '"swipe for more"'],
-  // 4. EN hustle / wealth / online business
-  ['"passive income"', '"wifi money"', '"online business"', '"financial freedom"', '"smma"', '"agency growth"'],
-  // 5. Content volume / content-factory signals — high-output posting identity
-  ['"consistency"', '"daily upload"', '"100 videos"', '"going viral"', '"viral clips"', '"short form"', '"repurpose"'],
-  // 6. EN anchor-account clipper reference — creators who name or clip known figures
-  ['"hormozi clips"', '"iman gadzhi clips"', '"goggins edits"', '"tate clips"', '"alex hormozi"', '"andrew tate clips"'],
-  // 7. EN volume / content-factory signals — high-output posting identity
-  ['"daily content"', '"content for hire"', '"dm for rates"', '"video editor for hire"', '"free edits"', '"content creator for hire"'],
-  // 8. Community / WOP / Skool / clipping networks — burst every 5th attempt
-  ['"skool"', '"clipping"', '"wop"', '"dm for collab"', '"content agency"', '"reel editor"'],
+  // 0. Clipper / editor identity + Gmail — highest precision, guaranteed email
+  ['"gmail.com"', '"clipper"', '"editor"', '"edits"', '"daily clips"', '"dm for promo"'],
+  // 1. EN faceless motivation / no-excuses + Gmail — contactable mindset creators
+  ['"gmail.com"', '"no excuses"', '"best version"', '"discipline"', '"slideshow"', '"no face"'],
+  // 2. Figure-clip / entrepreneur clipper + Gmail — Hormozi, Gadzhi, Goggins editors
+  ['"gmail.com"', '"hormozi"', '"iman gadzhi"', '"david goggins"', '"tate"', '"goggins"'],
+  // 3. Entrepreneur / community signals + Gmail — WOP, Skool, SMMA members
+  ['"gmail.com"', '"smma"', '"skool"', '"wop"', '"online business"', '"make money online"'],
+  // 4. Business inquiry / collabs signal — explicit contact intent without requiring Gmail
+  ['"business inquiries"', '"for business"', '"for collabs"', '"clips"', '"motivation"', '"mindset"'],
+  // 5. DM for promo / rates — explicit monetisation + contact intent
+  ['"dm for promo"', '"dm for promos"', '"dm for rates"', '"hustle"', '"grind"', '"discipline"'],
+  // 6. Monetisation links + Gmail — Payhip / Gumroad / Forms creators actively selling
+  ['"payhip.com"', '"gumroad.com"', '"forms.gle"', '"clips"', '"motivation"', '"slideshow"'],
+  // 7. Anchor-account clipper reference + Gmail — editors of known figures
+  ['"gmail.com"', '"hormozi clips"', '"goggins edits"', '"tate clips"', '"gadzhi clips"', '"alex hormozi"'],
+  // 8. Community burst (WOP/Skool/clipping) + Gmail — every 5th attempt
+  ['"skool"', '"wop"', '"clipping"', '"dm for collab"', '"gmail.com"', '"daily clips"'],
 ];
 
 // Maps campaign region codes to Google Search location terms (appended as soft hint to queries)
@@ -141,12 +145,12 @@ export class TikTokFacelessEngine {
     })();
     const withLoc = (q: string) => locationSuffix ? `${q} ${locationSuffix}` : q;
 
-    // Community burst — every 5th attempt targets WOP/Skool/clipping networks
+    // Community burst — every 5th attempt targets WOP/Skool/clipping networks with email signal
     if (attempt % 5 === 0) {
       const pool8 = FACELESS_CLIPPER_KEYWORD_POOLS[8];
       const group8 = '(' + pool8.join(' OR ') + ')';
-      const clipperBoost = '("clipper" OR "editor" OR "clipping" OR "dm for promo")';
-      return withLoc(`site:tiktok.com ${group8} ${clipperBoost} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+      const emailSignalBurst = '("gmail.com" OR "business inquiries" OR "dm for promo" OR "dm for promos")';
+      return withLoc(`site:tiktok.com ${group8} ${emailSignalBurst} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     }
 
     // Normal rotation: cycle through pools 0–7
@@ -154,38 +158,33 @@ export class TikTokFacelessEngine {
     const terms = FACELESS_CLIPPER_KEYWORD_POOLS[poolIdx];
     const orGroup = '(' + terms.join(' OR ') + ')';
 
-    const ctaGroup = '("link in bio" OR "DM for promo" OR "linktr.ee" OR "payhip" OR "forms.gle")';
-    const dmCtaGroup = '("dm for promo" OR "linktr.ee" OR "payhip" OR "gumroad")';
+    // ALL cycles include email signal — Gmail-indexed bios guarantee contactable leads.
+    // Big creators (Robbins, Hormozi) never put personal Gmail in bio → this naturally
+    // filters to nano/micro creators who ARE the target ICP.
+    const emailSignal = '("gmail.com" OR "business inquiries" OR "for business" OR "dm for business" OR "for collabs")';
+    const dmCtaGroup = '("dm for promo" OR "dm for promos" OR "dm for rates" OR "payhip" OR "gumroad")';
     const hormoziFigures = '("hormozi" OR "iman gadzhi" OR "goggins" OR "tate")';
-    const volumeSignal = '("slideshow" OR "carousel" OR "daily content" OR "1000 videos" OR "content for hire")';
-    // Email-signal query: Google indexes TikTok bio text — profiles whose bio contains
-    // "gmail.com" or business-inquiry phrases are actively seeking outreach.
-    const emailSignal = '("gmail.com" OR "business inquiries" OR "for business inquiries" OR "business email" OR "dm for business" OR "for collabs")';
+    const volumeSignal = '("slideshow" OR "carousel" OR "daily content" OR "viral clips" OR "short form")';
 
     const mod = attempt % 6;
 
     if (mod === 0) {
-      // Pool + DM/CTA — forces creator-intent signal
-      return withLoc(`site:tiktok.com ${orGroup} ${ctaGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+      // Pool + email signal — primary email-first sweep
+      return withLoc(`site:tiktok.com ${orGroup} ${emailSignal} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     } else if (mod === 1) {
-      // Pool only — guarded: only skip second signal for high-precision pools (0=clipper, 2=figure-clip, 6=anchor)
-      const isHighPrecisionPool = poolIdx === 0 || poolIdx === 2 || poolIdx === 6;
-      if (isHighPrecisionPool) {
-        return withLoc(`site:tiktok.com ${orGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
-      }
-      return withLoc(`site:tiktok.com ${orGroup} ${ctaGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+      // Pool + email signal + DM CTA — email + explicit monetisation intent
+      return withLoc(`site:tiktok.com ${orGroup} ${emailSignal} ${dmCtaGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     } else if (mod === 2) {
-      // Pool + figure names — targets editors of Hormozi/Gadzhi/Goggins content
-      return withLoc(`site:tiktok.com ${orGroup} ${hormoziFigures} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+      // Pool + email signal + figure names — editors of Hormozi/Gadzhi/Goggins content
+      return withLoc(`site:tiktok.com ${orGroup} ${emailSignal} ${hormoziFigures} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     } else if (mod === 3) {
-      // Pool + DM/linktree CTA — second CTA cycle
-      return withLoc(`site:tiktok.com ${orGroup} ${dmCtaGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+      // Pool + email signal + volume signal — content factory + contactable
+      return withLoc(`site:tiktok.com ${orGroup} ${emailSignal} ${volumeSignal} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     } else if (mod === 4) {
-      // Pool + volume signal — targets content-factory accounts posting at scale
-      return withLoc(`site:tiktok.com ${orGroup} ${volumeSignal} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+      // Pool + DM CTA only — broader sweep without strict email gate
+      return withLoc(`site:tiktok.com ${orGroup} ${dmCtaGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     } else {
-      // Pool + email-signal — targets creators whose bio already exposes contact info.
-      // Google indexes bio text; this surfaces profiles we can actually email.
+      // Pool + email signal — general email-first sweep
       return withLoc(`site:tiktok.com ${orGroup} ${emailSignal} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     }
   }
@@ -884,12 +883,31 @@ export class TikTokFacelessEngine {
       const seenRaw = new Set<string>();
       const uniqueRawHandles = rawHandles.filter(h => { if (seenRaw.has(h)) return false; seenRaw.add(h); return true; });
 
+      // ── Email Pre-Gate ────────────────────────────────────────────────────────
+      // If the current queries are email-first (contain gmail.com / business inquiries / dm for promo),
+      // discard handles whose Google snippet contains no email address.
+      // These handles can never produce an outreach lead — saving all downstream cost.
+      const EMAIL_GATE_TRIGGERS = ['gmail.com', 'business inquiries', 'dm for promo', 'dm for rates', 'for collabs'];
+      const isEmailFirstBatch = queryBatch.some(q => EMAIL_GATE_TRIGGERS.some(sig => q.toLowerCase().includes(sig)));
+      let emailGateDropped = 0;
+      const emailGatedHandles = isEmailFirstBatch
+        ? uniqueRawHandles.filter(h => {
+            const combined = (handleToSnippet.get(h) || '') + ' ' + (handleToTitle.get(h) || '');
+            const hasEmail = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/.test(combined);
+            if (!hasEmail) emailGateDropped++;
+            return hasEmail;
+          })
+        : uniqueRawHandles;
+      if (isEmailFirstBatch) {
+        onLog(`[EMAIL GATE] ${emailGatedHandles.length}/${uniqueRawHandles.length} handles pasaron pre-gate (email en snippet) | ${emailGateDropped} descartados sin email`);
+      }
+
       // Snippet pre-filter — follower range + ICP signal scoring (free, before TikTok scraper)
       let snippetFiltered = 0;
       let snippetIcpFiltered = 0;
       const snippetScores = new Map<string, number>();
       const novelHandles: string[] = [];
-      for (const h of uniqueRawHandles) {
+      for (const h of emailGatedHandles) {
         const snippet = handleToSnippet.get(h) || '';
         const title   = handleToTitle.get(h) || '';
         // Follower range check
@@ -1101,11 +1119,10 @@ export class TikTokFacelessEngine {
       const icpUnverified = softFiltered.filter(l => l.icp_verified !== true);
       onLog('[ICP SOFT] ' + icpVerified.length + ' verificados ✓ | ' + icpUnverified.length + ' no verificados ✗');
 
-      const toEvaluate = icpVerified.length > 0 ? icpVerified : (() => {
-        if (icpUnverified.length > 0) onLog('⚠ IA no pudo verificar — usando hard-filter fallback...');
-        return icpUnverified;
-      })();
-      if (!toEvaluate.length) { onLog('⚠ Ningún lead ICP. Rotando...'); continue; }
+      // No fallback to icpUnverified — soft filter is the gate, not hard filter.
+      // Low-confidence or unverified profiles are dropped here to eliminate false positives.
+      if (!icpVerified.length) { onLog('⚠ Ningún lead pasó el filtro ICP. Rotando...'); continue; }
+      const toEvaluate = icpVerified;
 
       // Anti-ICP early exit
       const antiIcpLeads = toEvaluate.filter(l => (l as unknown as Record<string, unknown>).anti_icp === true);
@@ -1187,9 +1204,18 @@ export class TikTokFacelessEngine {
       const withEmail = toDiscover.filter(l => l.decisionMaker?.email);
       onLog('📧 STEP 3b ✓ — ' + withEmail.length + '/' + toDiscover.length + ' tienen email');
 
-      if (!withEmail.length) { onLog('⚠ Ningún candidato tiene email. Rotando query...'); continue; }
+      if (!withEmail.length) {
+        // With email-first queries this should rarely happen.
+        // After attempt 20, accept ICP-verified leads without email (saved to DB only, not Instantly).
+        if (attempt > 20 && contentPassed.length > 0) {
+          onLog('⚠ Sin email — aceptando ' + Math.min(contentPassed.length, slotsRemaining) + ' lead(s) ICP verificados sin email (DB only, no Instantly)...');
+        } else {
+          onLog('⚠ Ningún candidato tiene email. Rotando query...');
+          continue;
+        }
+      }
 
-      const toProcess = withEmail.slice(0, slotsRemaining);
+      const toProcess = (withEmail.length > 0 ? withEmail : contentPassed).slice(0, slotsRemaining);
       onLog('📧 STEP 3b ✓ — ' + toProcess.length + ' leads con email + ICP verificado listos para análisis IA');
 
       // ── STEP 4b: Batch AI analysis ────────────────────────────────────────────

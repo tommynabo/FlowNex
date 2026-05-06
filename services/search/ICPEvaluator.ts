@@ -483,7 +483,7 @@ Reply ONLY with a valid JSON array matching the input order:
 
           const passes = (result as any).is_physical_fitness_creator ?? result.is_human_creator;
           const isAntiIcp = (result as any).anti_icp === true;
-          if (usernameMatch && passes === true && result.confidence >= 80 && !isAntiIcp) {
+          if (usernameMatch && passes === true && result.confidence >= 75 && !isAntiIcp) {
             lead.icp_verified = true;
             verifiedCount++;
             onLog(`[ICP SOFT] ✓ @${lead.ig_handle} → ICP verified (${result.confidence}% confidence)`);

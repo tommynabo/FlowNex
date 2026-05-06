@@ -1205,12 +1205,33 @@ export class TikTokFacelessEngine {
 
       const slotsRemaining = targetCount - accepted.length;
 
-      // ── STEP 4a: AI Soft Filter ───────────────────────────────────────────────
-      // Runs BEFORE email discovery — no point discovering emails for profiles the AI rejects.
-      // The AI filter only needs bio/handle/name, all populated during candidate construction.
-      onLog('🤖 STEP 4a — Filtro IA para ' + dbDeduped.length + ' candidatos (verificando ICP faceless)...');
-      const softFiltered = await icpEvaluator.applySoftFilter(dbDeduped, onLog, 'faceless_clipper');
-      const icpVerified = softFiltered.filter(l => l.icp_verified === true);
+      // ── STEP 4a: TIER1 pre-verify + AI Soft Filter ──────────────────────────
+      // Profiles whose bio/handle already contains an explicit TIER1 signal (clipper, editor,
+      // payhip, goggins, hormozi…) are marked icp_verified immediately — no AI call needed.
+      // Deterministic signals don't need probabilistic validation and avoid AI anti_icp mis-fires
+      // (e.g. @davidgogginspiration was labelled "UGC creator" by AI despite being a valid clipper).
+      const tier1PreVerified: Lead[] = [];
+      const needsAIVerification: Lead[] = [];
+      for (const candidate of dbDeduped) {
+        const bioText = ((candidate as unknown as Record<string, unknown>).biography as string || '').toLowerCase();
+        const handleText = (candidate.ig_handle || '').toLowerCase();
+        const combinedText = bioText + ' ' + handleText;
+        const hasTier1 = FACELESS_CLIPPER_TIER1_KEYWORDS.some(kw => combinedText.includes(kw));
+        if (hasTier1) {
+          candidate.icp_verified = true;
+          tier1PreVerified.push(candidate);
+          onLog(`[ICP TIER1] ✅ @${candidate.ig_handle} — TIER1 signal detectada → pre-verified, skip AI`);
+        } else {
+          needsAIVerification.push(candidate);
+        }
+      }
+
+      onLog('🤖 STEP 4a — Filtro IA para ' + needsAIVerification.length + ' candidatos (verificando ICP faceless)...');
+      const softFiltered = needsAIVerification.length > 0
+        ? await icpEvaluator.applySoftFilter(needsAIVerification, onLog, 'faceless_clipper')
+        : [];
+      const aiVerified = softFiltered.filter(l => l.icp_verified === true);
+      const icpVerified = [...tier1PreVerified, ...aiVerified];
       const icpUnverified = softFiltered.filter(l => l.icp_verified !== true);
       onLog('[ICP SOFT] ' + icpVerified.length + ' verificados ✓ | ' + icpUnverified.length + ' no verificados ✗');
 
@@ -1241,18 +1262,11 @@ export class TikTokFacelessEngine {
         const latestVideos = videosMap.get(lead.ig_handle || '') || [];
 
         if (!latestVideos.length) {
-          // Sin vídeos: solo pasa si tiene señal TIER1 explícita (clipper, editor, payhip, dm for promo…).
-          // Evita que cuentas sin nada relevante (public speaker, law student) pasen sin análisis.
-          const bioText = ((lead as unknown as Record<string, unknown>).biography as string || '').toLowerCase();
-          const handleText = (lead.ig_handle || '').toLowerCase();
-          const combinedText = bioText + ' ' + handleText;
-          const tier1Pass = FACELESS_CLIPPER_TIER1_KEYWORDS.some(kw => combinedText.includes(kw));
-          if (tier1Pass) {
-            contentPassed.push(lead);
-            onLog(`[LEAN CONTENT] ⚪ @${lead.ig_handle} — sin videos pero TIER1 en bio/handle — pasa`);
-          } else {
-            onLog(`[LEAN CONTENT] 🚫 @${lead.ig_handle} — sin videos y sin TIER1 signal — SKIP`);
-          }
+          // Sin videos → pasa por defecto.
+          // El hard filter (ANTI_ICP_BIO_KEYWORDS) y el AI soft filter ya validaron esta cuenta.
+          // @sherronspeaks y similares quedan bloqueados upstream por 'public speaker'/'law student'.
+          contentPassed.push(lead);
+          onLog(`[LEAN CONTENT] ⚪ @${lead.ig_handle} — sin videos — pasa (validado upstream)`);
           continue;
         }
 

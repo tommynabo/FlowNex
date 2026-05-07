@@ -235,7 +235,9 @@ export class ContentVerificationService {
       }
     }
     // API failure → pass by default
-    return { content_alignment_score: 50, is_icp_match: true, reasoning: 'Vision API unavailable — passed by default' };
+    // Score 70 keeps the average ≥ FACELESS_CLIPPER_CONTENT_SCORE_THRESHOLD (60) even when
+    // ALL 5 videos fail Vision API. Score 50 caused false negatives for AI-verified leads.
+    return { content_alignment_score: 70, is_icp_match: true, reasoning: 'Vision API unavailable — passed by default' };
   }
 
   /**

@@ -193,26 +193,36 @@ export class TikTokFacelessEngine {
 
   /**
    * Builds a site:tiktok.com Google Search query for the given attempt.
+   * Returns { query, isStatsBlock } so the loop can bypass the email gate selectively:
+   *   isStatsBlock=true  → no email required in snippet (coaches rarely put Gmail in bio)
+   *   isStatsBlock=false → normal email gate applies for email-first pools (0–8)
    *
-   * Stats block: attempt 1 and every 7th attempt thereafter (8, 15, 22…) use
-   *   buildStatsBlockQuery() — random city/height/weight from real bio format.
-   * 6-cycle rotation through 8 main ICP keyword pools (0–7):
-   *   mod === 0  → Pool + DM/CTA signal (clipper identity, highest precision)
-   *   mod === 1  → Pool only — guarded to high-precision pools (0, 2, 6); others use ctaGroup
-   *   mod === 2  → Pool + figure names (Hormozi/Gadzhi clips community)
-   *   mod === 3  → Pool + DM/linktree CTA
-   *   mod === 4  → Pool + volume signal (slideshow/carousel/content-factory)
-   *   mod === 5  → Pool + EN business dorks (agency/SMMA/online business)
+   * Stats block fires for ALL 3 sub-queries of an outer batch when outerAttempt % 7 === 1
+   * (outer attempts 1, 8, 15, 22…). Math.ceil(attempt / GOOGLE_QUERY_BATCH) maps:
+   *   sub-attempts 1, 2, 3  → outer 1 → all stats block → isEmailFirstBatch stays false
+   *   sub-attempts 4, 5, 6  → outer 2 → normal email-first pools
+   *   sub-attempts 22,23,24 → outer 8 → all stats block again
    *
-   * Community burst: every 5th attempt uses Pool 8 (WOP/Skool/clipping networks).
+   * 6-cycle rotation through 8 main ICP keyword pools (0–7) for non-stats attempts:
+   *   mod === 0  → Pool + email signal (clipper identity, highest precision)
+   *   mod === 1  → Pool + email signal + DM CTA
+   *   mod === 2  → Pool + email signal + figure names (Hormozi/Gadzhi clips community)
+   *   mod === 3  → Pool + email signal + volume signal (slideshow/carousel)
+   *   mod === 4  → Pool + DM CTA only (broader sweep without strict email gate)
+   *   mod === 5  → Pool + email signal (general email-first sweep)
+   *
+   * Community burst: every 5th outer attempt uses Pool 8 (WOP/Skool/clipping networks).
    * Location: when targetRegions ≤ 3 regions, a soft location hint is appended.
    */
-  private buildSearchQuery(attempt: number, targetRegions: string[] = []): string {
-    // Stats block — attempt 1 (first query ever) and every 7th attempt after that.
-    // % 5 === 0 fires on 5, 10, 15… so % 7 === 1 safely avoids collision on most attempts.
-    if (attempt === 1 || (attempt % 7 === 1 && attempt > 1)) {
-      return this.buildStatsBlockQuery();
+  private buildSearchQuery(attempt: number, targetRegions: string[] = []): { query: string; isStatsBlock: boolean } {
+    // Stats block — ALL sub-queries of outer attempt 1, 8, 15, 22… return isStatsBlock=true.
+    // Keeping every sub-query in the batch as stats block ensures the loop sees
+    // queryBatch.every(q => q.isStatsBlock) = true → email gate disabled for whole round.
+    const outerAttempt = Math.ceil(attempt / GOOGLE_QUERY_BATCH);
+    if (outerAttempt % 7 === 1) {
+      return { query: this.buildStatsBlockQuery(), isStatsBlock: true };
     }
+
     // Build optional location suffix from campaign regions (soft hint, ≤3 regions only)
     const locationSuffix = (() => {
       if (!targetRegions.length || targetRegions.length > 3) return '';
@@ -221,36 +231,29 @@ export class TikTokFacelessEngine {
     })();
     const withLoc = (q: string) => locationSuffix ? `${q} ${locationSuffix}` : q;
 
-    // Community burst — every 5th attempt targets WOP/Skool/clipping networks with email signal
-    if (attempt % 5 === 0) {
+    // Community burst — every 5th outer attempt targets WOP/Skool/clipping networks with email signal
+    if (outerAttempt % 5 === 0) {
       const pool8 = FACELESS_CLIPPER_KEYWORD_POOLS[8];
       const group8 = '(' + pool8.join(' OR ') + ')';
       const emailSignalBurst = '("gmail.com" OR "business inquiries" OR "dm for promo" OR "dm for promos")';
-      return withLoc(`site:tiktok.com ${group8} ${emailSignalBurst} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+      return { query: withLoc(`site:tiktok.com ${group8} ${emailSignalBurst} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`), isStatsBlock: false };
     }
 
     // Normal rotation: 17 pools total (0–16).
     // Pools 0–8: email-first (clipper/editor/community). Pools 9–11: fitness faceless (no email gate).
     // Pools 12–13: @-prefixed handle mentions. Pools 14–15: bodybuilding fan/clip pages.
     // Pool 16: personal coaching CTA ("DM LEAN", "skinny-fat").
-    const poolIdx = (attempt - 2) % 17;
+    const poolIdx = (attempt - 4) % 17;
     const terms = FACELESS_CLIPPER_KEYWORD_POOLS[poolIdx];
     const orGroup = '(' + terms.join(' OR ') + ')';
 
-    // Pool 16: coaching CTA pool — same construction as pools 9–15 (no strict email gate).
-    // Pools 9–16 use the facelessBoost construction instead of the email-signal mod rotation.
-    // Pools 9–11: hashtag-signal fitness faceless (may have empty bios).
-    // Pools 12–13: @-prefixed handle mentions — gmail.com is already embedded in the pool terms.
-    // Pools 14–15: bodybuilding fan/clip pages — gmail.com already embedded.
-    // Pool 16: personal coaching CTA — DM LEAN / skinny-fat / DM SHRED.
+    // Pools 9–16: no strict email gate — use facelessBoost construction.
     if (poolIdx >= 9) {
       const facelessBoost = '("slideshow" OR "link in bio" OR "payhip" OR "gumroad" OR "dm for promo")';
-      return withLoc(`site:tiktok.com ${orGroup} ${facelessBoost} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+      return { query: withLoc(`site:tiktok.com ${orGroup} ${facelessBoost} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`), isStatsBlock: false };
     }
 
     // Email-first pools (0–8): Gmail-indexed bios guarantee contactable leads.
-    // Big creators (Robbins, Hormozi) never put personal Gmail in bio → this naturally
-    // filters to nano/micro creators who ARE the target ICP.
     const emailSignal = '("gmail.com" OR "business inquiries" OR "for business" OR "dm for business" OR "for collabs")';
     const dmCtaGroup = '("dm for promo" OR "dm for promos" OR "dm for rates" OR "payhip" OR "gumroad")';
     const hormoziFigures = '("hormozi" OR "iman gadzhi" OR "goggins" OR "tate")';
@@ -259,23 +262,17 @@ export class TikTokFacelessEngine {
     const mod = attempt % 6;
 
     if (mod === 0) {
-      // Pool + email signal — primary email-first sweep
-      return withLoc(`site:tiktok.com ${orGroup} ${emailSignal} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+      return { query: withLoc(`site:tiktok.com ${orGroup} ${emailSignal} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`), isStatsBlock: false };
     } else if (mod === 1) {
-      // Pool + email signal + DM CTA — email + explicit monetisation intent
-      return withLoc(`site:tiktok.com ${orGroup} ${emailSignal} ${dmCtaGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+      return { query: withLoc(`site:tiktok.com ${orGroup} ${emailSignal} ${dmCtaGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`), isStatsBlock: false };
     } else if (mod === 2) {
-      // Pool + email signal + figure names — editors of Hormozi/Gadzhi/Goggins content
-      return withLoc(`site:tiktok.com ${orGroup} ${emailSignal} ${hormoziFigures} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+      return { query: withLoc(`site:tiktok.com ${orGroup} ${emailSignal} ${hormoziFigures} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`), isStatsBlock: false };
     } else if (mod === 3) {
-      // Pool + email signal + volume signal — content factory + contactable
-      return withLoc(`site:tiktok.com ${orGroup} ${emailSignal} ${volumeSignal} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+      return { query: withLoc(`site:tiktok.com ${orGroup} ${emailSignal} ${volumeSignal} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`), isStatsBlock: false };
     } else if (mod === 4) {
-      // Pool + DM CTA only — broader sweep without strict email gate
-      return withLoc(`site:tiktok.com ${orGroup} ${dmCtaGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+      return { query: withLoc(`site:tiktok.com ${orGroup} ${dmCtaGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`), isStatsBlock: false };
     } else {
-      // Pool + email signal — general email-first sweep
-      return withLoc(`site:tiktok.com ${orGroup} ${emailSignal} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+      return { query: withLoc(`site:tiktok.com ${orGroup} ${emailSignal} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`), isStatsBlock: false };
     }
   }
 
@@ -928,7 +925,7 @@ export class TikTokFacelessEngine {
         const batchResults = await Promise.all(
           queryBatch.map(q =>
             this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
-              queries: q,
+              queries: q.query,
               maxPagesPerQuery: 1,
               resultsPerPage: 40,
             }, onLog, undefined, 90_000, 80, 1024).catch((e: unknown) => {
@@ -956,7 +953,7 @@ export class TikTokFacelessEngine {
       }
 
       if (!searchResults.length) {
-        onLog('🔎 No results for: ' + queryBatch[0]);
+        onLog('🔎 No results for: ' + queryBatch[0].query);
         consecutiveZeros++;
         if (consecutiveZeros >= MAX_CONSEC_ZEROS) { onLog('[ENGINE] ' + MAX_CONSEC_ZEROS + ' empty rounds — deteniendo.'); break; }
         continue;
@@ -993,11 +990,13 @@ export class TikTokFacelessEngine {
       const uniqueRawHandles = rawHandles.filter(h => { if (seenRaw.has(h)) return false; seenRaw.add(h); return true; });
 
       // ── Email Pre-Gate ────────────────────────────────────────────────────────
-      // If the current queries are email-first (contain gmail.com / business inquiries / dm for promo),
-      // discard handles whose Google snippet contains no email address.
-      // These handles can never produce an outreach lead — saving all downstream cost.
+      // Stats-block batches (outerAttempt % 7 === 1) are ENTIRELY isStatsBlock=true by
+      // construction — every sub-query returns {isStatsBlock:true}. Personal coaches
+      // rarely put Gmail in their bio, so the email gate must be completely bypassed
+      // for these rounds. Email-first batches (pools 0–8) keep the gate as before.
       const EMAIL_GATE_TRIGGERS = ['gmail.com', 'business inquiries', 'dm for promo', 'dm for rates', 'for collabs'];
-      const isEmailFirstBatch = queryBatch.some(q => EMAIL_GATE_TRIGGERS.some(sig => q.toLowerCase().includes(sig)));
+      const isStatsBlockBatch = queryBatch.every(q => q.isStatsBlock);
+      const isEmailFirstBatch = !isStatsBlockBatch && queryBatch.some(q => EMAIL_GATE_TRIGGERS.some(sig => q.query.toLowerCase().includes(sig)));
       let emailGateDropped = 0;
       const emailGatedHandles = isEmailFirstBatch
         ? uniqueRawHandles.filter(h => {
@@ -1009,6 +1008,8 @@ export class TikTokFacelessEngine {
         : uniqueRawHandles;
       if (isEmailFirstBatch) {
         onLog(`[EMAIL GATE] ${emailGatedHandles.length}/${uniqueRawHandles.length} handles pasaron pre-gate (email en snippet) | ${emailGateDropped} descartados sin email`);
+      } else if (isStatsBlockBatch) {
+        onLog(`[EMAIL GATE] 📊 Stats-block round — gate omitido, ${uniqueRawHandles.length} handles pasan sin restricción de email`);
       }
 
       // Snippet pre-filter — follower range + ICP signal scoring (free, before TikTok scraper)

@@ -108,7 +108,8 @@ export class DeduplicationService {
                 vsl_pitch: lead.aiAnalysis?.vslPitch || '',
                 vsl_sent_status: lead.vsl_sent_status || 'pending',
                 email_status: lead.email_status || 'pending',
-                status: lead.status || 'scraped'
+                status: lead.status || 'scraped',
+                source: lead.source || 'instagram'
             }));
 
             const { error } = await supabase.from('leads').insert(leadsToInsert);

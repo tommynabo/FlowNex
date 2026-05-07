@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Lead } from '../lib/types';
-import { Copy, Check, X, Instagram, Mail, Users, TrendingUp } from 'lucide-react';
+import { Copy, Check, X, Instagram, ExternalLink, Mail, Users, TrendingUp } from 'lucide-react';
 
 interface LeadsCardsProps {
   leads: Lead[];
@@ -86,9 +86,12 @@ export function LeadsCards({ leads, onMarkContacted, onMarkDiscarded }: LeadsCar
               <h2 className="text-2xl font-bold text-foreground">{activeLead.decisionMaker?.name || ('@' + activeLead.ig_handle)}</h2>
               <div className="flex items-center gap-2 mt-1 flex-wrap">
                 {activeLead.ig_handle && (
-                  <a href={'https://instagram.com/' + activeLead.ig_handle} target="_blank" rel="noreferrer"
+                  <a href={(activeLead.source === 'tiktok' ? 'https://tiktok.com/@' : 'https://instagram.com/') + activeLead.ig_handle} target="_blank" rel="noreferrer"
                     className="flex items-center gap-1 text-sm text-primary hover:underline">
-                    <Instagram className="w-3.5 h-3.5" />@{activeLead.ig_handle}
+                    {activeLead.source === 'tiktok'
+                      ? <ExternalLink className="w-3.5 h-3.5" />
+                      : <Instagram className="w-3.5 h-3.5" />}
+                    @{activeLead.ig_handle}
                   </a>
                 )}
                 {activeLead.follower_count ? (

@@ -237,7 +237,7 @@ function App() {
               // Transform DB leads to Lead interface
               leads = leadsData.map(l => ({
                 id: l.id,
-                source: row.source as any || 'instagram',
+                source: (l.source || row.source || 'instagram') as any,
                 ig_handle: l.ig_handle || '',
                 follower_count: l.follower_count || 0,
                 niche: l.niche || '',
@@ -333,7 +333,7 @@ function App() {
       if (data) {
         const mapped: Lead[] = data.map(l => ({
           id: l.id,
-          source: 'instagram' as const,
+          source: (l.source || 'instagram') as any,
           ig_handle: l.ig_handle || '',
           follower_count: l.follower_count || 0,
           niche: l.niche || '',
@@ -459,7 +459,8 @@ function App() {
       vsl_sent_status: lead.vsl_sent_status || 'pending',
       email_status: lead.email_status || 'pending',
       status: 'scraped',
-      icp_verified: lead.icp_verified ?? false
+      icp_verified: lead.icp_verified ?? false,
+      source: lead.source || 'instagram'
     });
 
     // Streaming counter — tracks how many leads arrived via onLeadFound

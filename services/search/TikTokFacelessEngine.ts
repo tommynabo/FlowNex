@@ -115,7 +115,7 @@ const REGION_QUERY_TERMS: Record<string, string[]> = {
   AU: ['Australia', 'Australian'],
 };
 
-const MAX_CONSEC_ZEROS = 5;
+const MAX_CONSEC_ZEROS = 3;
 
 const REGION_MAP: Record<string, string[]> = {
   US: ['united states', 'usa', 'u.s.a', 'u.s.', 'america', 'new york', 'los angeles', 'chicago', 'houston', 'phoenix', 'miami', 'dallas', 'seattle', 'denver', 'atlanta', 'boston', 'us'],
@@ -162,7 +162,9 @@ const TIKTOK_SKIP_HANDLES = new Set(['tag', 'search', 'discover', 'music', 'vide
 
 // Number of parallel Google Search actor runs per attempt.
 // Each query launches its own run concurrently → wall-time ≈ single run (~40s) vs serial (~200s).
-const GOOGLE_QUERY_BATCH = 3;
+// 5 parallel queries: 67% more candidates per attempt vs 3, wall-time barely increases (~5-10s extra).
+// With 100+ handles already in DB, wider coverage per attempt = fewer total attempts needed.
+const GOOGLE_QUERY_BATCH = 5;
 
 // Max milliseconds spent on email discovery per lead.
 // Caps Stage 2 website scraping + Stage 3/4 deep scraping so the loop never
@@ -215,7 +217,7 @@ export class TikTokFacelessEngine {
    * Community burst: every 5th outer attempt uses Pool 8 (WOP/Skool/clipping networks).
    * Location: when targetRegions ≤ 3 regions, a soft location hint is appended.
    */
-  private buildSearchQuery(attempt: number, targetRegions: string[] = []): { query: string; isStatsBlock: boolean } {
+  private buildSearchQuery(attempt: number, targetRegions: string[] = [], poolOffset = 0): { query: string; isStatsBlock: boolean } {
     // Stats block — ALL sub-queries of outer attempt 1, 16, 31… return isStatsBlock=true.
     // Spacing at % 15 means only 1 in 15 outer attempts (≈7%) burns Google budget on
     // stats-block queries, leaving the remaining 93% for email-first keyword pools.
@@ -244,7 +246,10 @@ export class TikTokFacelessEngine {
     // Pools 0–8: email-first (clipper/editor/community). Pools 9–11: fitness faceless (no email gate).
     // Pools 12–13: @-prefixed handle mentions. Pools 14–15: bodybuilding fan/clip pages.
     // Pool 16: personal coaching CTA ("DM LEAN", "skinny-fat").
-    const poolIdx = (attempt - 4) % 17;
+    // poolOffset: injected by the main loop on consecutive-zero rounds.
+    // Each zero-handle attempt adds +5 → jumps to a completely different pool family
+    // instead of advancing by 1 through the same saturated search space.
+    const poolIdx = ((attempt - 4) + poolOffset) % 17;
     const terms = FACELESS_CLIPPER_KEYWORD_POOLS[poolIdx];
     const orGroup = '(' + terms.join(' OR ') + ')';
 
@@ -897,6 +902,10 @@ export class TikTokFacelessEngine {
     const seenHandles = new Set<string>(existingIgHandles);
     let attempt = 0;
     let consecutiveZeros = 0;
+    // Pool diversity offset — incremented by 5 on every zero-handle attempt so the next
+    // attempt jumps to a different pool family instead of one step ahead in the same
+    // saturated search space. Reset to 0 whenever new handles are found.
+    let poolOffset = 0;
     // Snippet fallback state — activated after 2 consecutive TikTok scraper 403s
     let ttScraperConsecFails = 0;
     let skipTtScraper = false;
@@ -909,8 +918,9 @@ export class TikTokFacelessEngine {
       // This cuts actor startup cost by ÷GOOGLE_QUERY_BATCH compared to one-query-per-attempt.
       const baseAttempt = (attempt - 1) * GOOGLE_QUERY_BATCH + 1;
       // Build GOOGLE_QUERY_BATCH distinct queries, one per parallel run.
+      // poolOffset shifts the pool index when previous attempt(s) returned zero handles.
       const queryBatch = Array.from({ length: GOOGLE_QUERY_BATCH }, (_, i) =>
-        this.buildSearchQuery(baseAttempt + i, targetRegions)
+        this.buildSearchQuery(baseAttempt + i, targetRegions, poolOffset)
       );
       onLog('');
       onLog('━━━ ATTEMPT ' + attempt + '/' + MAX_RETRIES + ' ━━━  ' + needed + ' lead(s) still needed');
@@ -1049,12 +1059,14 @@ export class TikTokFacelessEngine {
       if (!novelHandles.length) {
         onLog('⚠ Sin handles TikTok nuevos — rotando...');
         consecutiveZeros++;
+        poolOffset += 5; // jump 5 pools ahead to break out of saturated search space
         if (consecutiveZeros >= MAX_CONSEC_ZEROS) { onLog('[ENGINE] ' + MAX_CONSEC_ZEROS + ' rondas sin handles nuevos. Deteniendo.'); break; }
         continue;
       }
 
       for (const h of novelHandles) seenHandles.add(h);
       consecutiveZeros = 0;
+      poolOffset = 0; // reset — new handles found, normal pool rotation resumes
 
       // ── STEP 2: TikTok profile fetch (with snippet fallback) ─────────────────
       // skipTtScraper is set after 2 consecutive 403 ACTOR_FORBIDDEN errors.

@@ -197,11 +197,12 @@ export class TikTokFacelessEngine {
    *   isStatsBlock=true  → no email required in snippet (coaches rarely put Gmail in bio)
    *   isStatsBlock=false → normal email gate applies for email-first pools (0–8)
    *
-   * Stats block fires for ALL 3 sub-queries of an outer batch when outerAttempt % 7 === 1
-   * (outer attempts 1, 8, 15, 22…). Math.ceil(attempt / GOOGLE_QUERY_BATCH) maps:
-   *   sub-attempts 1, 2, 3  → outer 1 → all stats block → isEmailFirstBatch stays false
-   *   sub-attempts 4, 5, 6  → outer 2 → normal email-first pools
-   *   sub-attempts 22,23,24 → outer 8 → all stats block again
+   * Stats block fires for ALL 3 sub-queries of an outer batch when outerAttempt % 15 === 1
+   * (outer attempts 1, 16, 31…) — ~7% of budget vs the previous 14% at % 7.
+   * Math.ceil(attempt / GOOGLE_QUERY_BATCH) maps:
+   *   sub-attempts 1, 2, 3   → outer 1  → all stats block → isEmailFirstBatch stays false
+   *   sub-attempts 4, 5, 6   → outer 2  → normal email-first pools
+   *   sub-attempts 46,47,48  → outer 16 → stats block again
    *
    * 6-cycle rotation through 8 main ICP keyword pools (0–7) for non-stats attempts:
    *   mod === 0  → Pool + email signal (clipper identity, highest precision)
@@ -215,11 +216,11 @@ export class TikTokFacelessEngine {
    * Location: when targetRegions ≤ 3 regions, a soft location hint is appended.
    */
   private buildSearchQuery(attempt: number, targetRegions: string[] = []): { query: string; isStatsBlock: boolean } {
-    // Stats block — ALL sub-queries of outer attempt 1, 8, 15, 22… return isStatsBlock=true.
-    // Keeping every sub-query in the batch as stats block ensures the loop sees
-    // queryBatch.every(q => q.isStatsBlock) = true → email gate disabled for whole round.
+    // Stats block — ALL sub-queries of outer attempt 1, 16, 31… return isStatsBlock=true.
+    // Spacing at % 15 means only 1 in 15 outer attempts (≈7%) burns Google budget on
+    // stats-block queries, leaving the remaining 93% for email-first keyword pools.
     const outerAttempt = Math.ceil(attempt / GOOGLE_QUERY_BATCH);
-    if (outerAttempt % 7 === 1) {
+    if (outerAttempt % 15 === 1) {
       return { query: this.buildStatsBlockQuery(), isStatsBlock: true };
     }
 
@@ -926,7 +927,7 @@ export class TikTokFacelessEngine {
           queryBatch.map(q =>
             this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
               queries: q.query,
-              maxPagesPerQuery: 1,
+              maxPagesPerQuery: 2,
               resultsPerPage: 40,
             }, onLog, undefined, 90_000, 80, 1024).catch((e: unknown) => {
               const msg = e instanceof Error ? e.message : String(e);
@@ -990,7 +991,7 @@ export class TikTokFacelessEngine {
       const uniqueRawHandles = rawHandles.filter(h => { if (seenRaw.has(h)) return false; seenRaw.add(h); return true; });
 
       // ── Email Pre-Gate ────────────────────────────────────────────────────────
-      // Stats-block batches (outerAttempt % 7 === 1) are ENTIRELY isStatsBlock=true by
+      // Stats-block batches (outerAttempt % 15 === 1) are ENTIRELY isStatsBlock=true by
       // construction — every sub-query returns {isStatsBlock:true}. Personal coaches
       // rarely put Gmail in their bio, so the email gate must be completely bypassed
       // for these rounds. Email-first batches (pools 0–8) keep the gate as before.
@@ -1271,7 +1272,7 @@ export class TikTokFacelessEngine {
 
       onLog('🤖 STEP 4a — Filtro IA para ' + needsAIVerification.length + ' candidatos (verificando ICP faceless)...');
       const softFiltered = needsAIVerification.length > 0
-        ? await icpEvaluator.applySoftFilter(needsAIVerification, onLog, 'faceless_clipper', usedSnippetFallback ? 95 : 75)
+        ? await icpEvaluator.applySoftFilter(needsAIVerification, onLog, 'faceless_clipper', usedSnippetFallback ? 85 : 75)
         : [];
       const aiVerified = softFiltered.filter(l => l.icp_verified === true);
       const icpVerified = [...tier1PreVerified, ...a6AutoVerified, ...aiVerified];

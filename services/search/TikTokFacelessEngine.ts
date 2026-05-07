@@ -1360,21 +1360,15 @@ export class TikTokFacelessEngine {
           if (discovered && lead.decisionMaker) lead.decisionMaker.email = discovered;
         }));
       }));
-      const withEmail = toDiscover.filter(l => l.decisionMaker?.email);
-      onLog('📧 STEP 3b ✓ — ' + withEmail.length + '/' + toDiscover.length + ' tienen email');
+      const withEmail = toDiscover.filter(l => l.decisionMaker?.email?.toLowerCase().endsWith('@gmail.com'));
+      onLog('📧 STEP 3b ✓ — ' + withEmail.length + '/' + toDiscover.length + ' tienen Gmail (@gmail.com)');
 
       if (!withEmail.length) {
-        // With email-first queries this should rarely happen.
-        // After attempt 20, accept ICP-verified leads without email (saved to DB only, not Instantly).
-        if ((attempt > 20 || isFitnessAttempt) && contentPassed.length > 0) {
-          onLog('⚠ Sin email — aceptando ' + Math.min(contentPassed.length, slotsRemaining) + ' lead(s) ICP verificados sin email (DB only, no Instantly)...');
-        } else {
-          onLog('⚠ Ningún candidato tiene email. Rotando query...');
-          continue;
-        }
+        onLog('⚠ Ningún candidato tiene Gmail. Rotando query...');
+        continue;
       }
 
-      const toProcess = (withEmail.length > 0 ? withEmail : contentPassed).slice(0, slotsRemaining);
+      const toProcess = withEmail.slice(0, slotsRemaining);
       onLog('📧 STEP 3b ✓ — ' + toProcess.length + ' leads con email + ICP verificado listos para análisis IA');
 
       // ── STEP 4b: Batch AI analysis ────────────────────────────────────────────

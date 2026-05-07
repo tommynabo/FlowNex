@@ -830,10 +830,10 @@ export class InstagramPersonalBrandEngine {
           if (discovered && lead.decisionMaker) lead.decisionMaker.email = discovered;
         }));
       }));
-      const withEmail = toDiscover.filter(l => l.decisionMaker?.email);
-      onLog('📧 STEP 3b ✓ — ' + withEmail.length + '/' + toDiscover.length + ' tienen email');
+      const withEmail = toDiscover.filter(l => l.decisionMaker?.email?.toLowerCase().endsWith('@gmail.com'));
+      onLog('📧 STEP 3b ✓ — ' + withEmail.length + '/' + toDiscover.length + ' tienen Gmail (@gmail.com)');
 
-      if (!withEmail.length) { onLog('⚠ Ningún candidato tiene email. Rotando query...'); continue; }
+      if (!withEmail.length) { onLog('⚠ Ningún candidato tiene Gmail. Rotando query...'); continue; }
 
       // ── STEP 4a: AI Soft Filter ───────────────────────────────────────────────
       onLog('🤖 STEP 4a — Filtro IA para ' + withEmail.length + ' candidatos (verificando ICP fitness)...');

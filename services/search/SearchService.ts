@@ -485,8 +485,9 @@ export class SearchService {
             }))).filter(Boolean) as Lead[];
 
             for (const lead of analyzed) {
-                if (!lead.decisionMaker?.email) {
-                    onLog('[SKIP] @' + lead.ig_handle + ' → sin email encontrado, descartado');
+                const email = lead.decisionMaker?.email;
+                if (!email?.toLowerCase().endsWith('@gmail.com')) {
+                    onLog('[SKIP] @' + lead.ig_handle + ' → sin gmail encontrado, descartado' + (email ? ' (email: ' + email + ')' : ''));
                     continue;
                 }
                 validLeads.push(lead);

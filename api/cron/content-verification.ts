@@ -22,7 +22,7 @@ const MAX_VIDEOS_PER_LEAD = 3;
 const BATCH_SIZE          = 5;   // leads processed per cron invocation (controls cost + duration)
 
 const INSTAGRAM_POSTS_SCRAPER = 'apify~instagram-scraper';
-const TIKTOK_PROFILE_SCRAPER  = 'clockworks~free-tiktok-scraper';
+const TIKTOK_PROFILE_SCRAPER  = 'apidojo/tiktok-scraper';
 
 // ── Supabase (server-side — uses service role key for cron writes) ───────────
 
@@ -111,39 +111,32 @@ async function scrapeTikTokPosts(handles: string[], token: string): Promise<Map<
   if (!handles.length) return result;
 
   const items = await runApifyActor(TIKTOK_PROFILE_SCRAPER, {
-    usernames: handles,
-    maxItems: 3,
+    startUrls: handles.map((h: string) => `https://www.tiktok.com/@${h}`),
+    maxItems: handles.length * 10,
   }, token);
 
   for (const rawItem of items as Record<string, unknown>[]) {
+    const channel = rawItem.channel && typeof rawItem.channel === 'object'
+      ? rawItem.channel as Record<string, unknown>
+      : null;
     const username = (
+      (channel?.username as string) ||
       (rawItem.uniqueId as string) ||
       (rawItem.username as string) ||
       ''
     ).toLowerCase().trim();
     if (!username) continue;
 
-    const latestVideos  = (rawItem.latestVideos as Record<string, unknown>[]) ?? [];
-    const videoObjects  = latestVideos.length > 0 ? latestVideos : [rawItem];
-    const entries: VideoItem[] = [];
-
-    for (const v of videoObjects.slice(0, MAX_VIDEOS_PER_LEAD)) {
-      const thumbnailUrl = (
-        (v.coverUrl as string) ||
-        (v.cover    as string) ||
-        (v.originCover as string) ||
-        (rawItem.avatarMedium as string) ||
-        ''
-      );
-      const transcript = (
-        (v.text  as string) ||
-        (v.desc  as string) ||
-        (v.title as string) ||
-        ''
-      ).substring(0, 800) || undefined;
-      entries.push({ thumbnailUrl, transcript, platform: 'tiktok' });
+    const videoMeta = rawItem.video && typeof rawItem.video === 'object'
+      ? rawItem.video as Record<string, unknown>
+      : null;
+    const thumbnailUrl = (videoMeta?.cover as string) || (videoMeta?.thumbnail as string) || '';
+    const transcript = ((rawItem.title as string) || '').substring(0, 800) || undefined;
+    const existing = result.get(username) ?? [];
+    if (existing.length < MAX_VIDEOS_PER_LEAD) {
+      existing.push({ thumbnailUrl, transcript, platform: 'tiktok' });
+      result.set(username, existing);
     }
-    if (entries.length > 0) result.set(username, entries);
   }
   return result;
 }

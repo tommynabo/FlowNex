@@ -32,7 +32,7 @@ const FACELESS_CLIPPER_CONTENT_SCORE_THRESHOLD = 60;
 
 /** Apify actor IDs */
 const INSTAGRAM_POSTS_SCRAPER = 'apify~instagram-scraper';
-const TIKTOK_PROFILE_SCRAPER  = 'clockworks~free-tiktok-scraper';
+const TIKTOK_PROFILE_SCRAPER  = 'apidojo/tiktok-scraper';
 
 // ── Internal types ────────────────────────────────────────────────────────────
 
@@ -132,43 +132,35 @@ export class ContentVerificationService {
     const result = new Map<string, VideoItem[]>();
     if (!handles.length) return result;
 
-    // maxItems=3 requests only the profile + first 3 video entries
+    // apidojo/tiktok-scraper: startUrls with profile URLs, maxItems per profile
     const items = await callApifyActor(TIKTOK_PROFILE_SCRAPER, {
-      usernames: handles,
-      maxItems: 3,
+      startUrls: handles.map(h => `https://www.tiktok.com/@${h}`),
+      maxItems: handles.length * 10,
     }, 1024);
 
     for (const rawItem of items as Record<string, unknown>[]) {
-      // The actor returns one object per username with a latestVideos[] array
+      // Api Dojo returns one item per video; creator info is in item.channel
+      const channel = rawItem.channel && typeof rawItem.channel === 'object'
+        ? rawItem.channel as Record<string, unknown>
+        : null;
       const username = (
+        (channel?.username as string) ||
         (rawItem.uniqueId as string) ||
         (rawItem.username as string) ||
         ''
       ).toLowerCase().trim();
       if (!username) continue;
 
-      const latestVideos = (rawItem.latestVideos as Record<string, unknown>[]) ?? [];
-      // Fallback: actor may return one object per video (video-feed mode)
-      const videoObjects = latestVideos.length > 0 ? latestVideos : [rawItem];
-
-      const entries: VideoItem[] = [];
-      for (const v of videoObjects.slice(0, MAX_VIDEOS_TO_ANALYZE)) {
-        const thumbnailUrl = (
-          (v.coverUrl as string) ||
-          (v.cover as string) ||
-          (v.originCover as string) ||
-          (rawItem.avatarMedium as string) || // last resort: avatar
-          ''
-        );
-        const transcript = (
-          (v.text as string) ||
-          (v.desc as string) ||
-          (v.title as string) ||
-          ''
-        ).substring(0, 800) || undefined;
-        entries.push({ thumbnailUrl, transcript, platform: 'tiktok' });
+      const videoMeta = rawItem.video && typeof rawItem.video === 'object'
+        ? rawItem.video as Record<string, unknown>
+        : null;
+      const thumbnailUrl = (videoMeta?.cover as string) || (videoMeta?.thumbnail as string) || '';
+      const transcript = ((rawItem.title as string) || '').substring(0, 800) || undefined;
+      const existing = result.get(username) ?? [];
+      if (existing.length < MAX_VIDEOS_TO_ANALYZE) {
+        existing.push({ thumbnailUrl, transcript, platform: 'tiktok' });
+        result.set(username, existing);
       }
-      if (entries.length > 0) result.set(username, entries);
     }
     return result;
   }

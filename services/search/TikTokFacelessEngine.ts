@@ -98,11 +98,12 @@ const REGION_MAP: Record<string, string[]> = {
 // Google Search Scraper
 const GOOGLE_SEARCH_SCRAPER = 'nFJndFXA5zjCTuudP';
 
-// clockworks~free-tiktok-scraper — PPR pricing ($2/1K results), charged against standard Apify credits.
-// No x402 external payment required (unlike clockworks~tiktok-scraper which migrated to x402).
-// Output format: video items with `authorMeta` nested object → handled by MODE B in groupTikTokItemsByProfile.
-// Input: { profiles: ["handle"], resultsPerPage: 1 } → 1 video item per creator = minimal cost.
-const TIKTOK_PROFILE_SCRAPER = 'clockworks~free-tiktok-scraper';
+// apidojo/tiktok-scraper — $0.30/1K results (6.7x cheaper than clockworks $2/1K).
+// Input: { startUrls: ["https://tiktok.com/@handle"] } for profiles;
+//        { startUrls: ["https://tiktok.com/tag/hashtag"] } for hashtag discovery.
+// Output: video items with creator data nested in item.channel → handled by MODE C in groupTikTokItemsByProfile.
+// Minimum 10 items per startUrl required by this actor.
+const TIKTOK_PROFILE_SCRAPER = 'apidojo/tiktok-scraper';
 
 // Anti-ICP negative keywords — only the 5 most critical terms.
 // Shorter queries avoid Google truncation that caused empty results.
@@ -334,60 +335,69 @@ export class TikTokFacelessEngine {
   // ── TikTok profile grouping ──────────────────────────────────────────────────
 
   /**
-   * clockworks~tiktok-profile-scraper returns VIDEO items — not profile objects.
-   * Each item represents one video; the profile data lives in authorMeta.
-   * Key fields:
-   *   item.author          → handle (string)
-   *   item.authorMeta.name → handle (string) — same as item.author
-   *   item.authorMeta.nickName → display name
-   *   item.authorMeta.signature → bio
-   *   item.authorMeta.fans → follower count
-   *   item.authorMeta.region → country code
-   *   item.authorMeta.bioLink → string URL or { link: string }
-   *   item.desc            → video caption (used as latestVideo)
-   *   item.covers[]        → thumbnail URLs
+   * Handles three output shapes:
    *
-   * This function groups items by author → one RawApifyProfile per creator.
-   * The first 3 videos per creator are stored in _latestVideos for inline
-   * Lean Content Analysis (zero extra Apify calls).
-   */
-  /**
-   * Handles BOTH output shapes of clockworks~tiktok-profile-scraper:
+   * MODE C — apidojo/tiktok-scraper (current, video items with item.channel):
+   *   item.channel.username  → handle
+   *   item.channel.followers → follower count
+   *   item.channel.bio       → bio
+   *   item.channel.name      → display name
+   *   item.channel.verified  → verification
+   *   item.video.cover       → thumbnail URL
+   *   item.title             → video caption
+   *   Detection: item.channel present
    *
-   * MODE A — resultsType:'profiles' (preferred, 1 item per creator):
+   * MODE A — legacy clockworks profile object (1 item per creator):
    *   item.uniqueId / item.username  → handle
    *   item.fans                      → followers
    *   item.signature                 → bio
    *   item.nickName                  → display name
-   *   item.region                    → country code
-   *   item.bioLink                   → website
-   *   Detection: item.authorMeta is absent
+   *   Detection: item.authorMeta absent AND item.channel absent
    *
-   * MODE B — default video-item output (1 item per video, N videos per creator):
+   * MODE B — legacy clockworks video-item output (1 item per video, N per creator):
    *   item.author / item.authorMeta.name → handle
    *   item.authorMeta.fans               → followers
    *   item.authorMeta.signature          → bio
-   *   item.authorMeta.nickName           → display name
-   *   item.authorMeta.region             → country code
-   *   item.authorMeta.bioLink            → website
-   *   item.desc / item.covers[]          → video data for LCA
-   *   Detection: item.authorMeta is present
+   *   Detection: item.authorMeta present
    */
   private groupTikTokItemsByProfile(
     items: Record<string, unknown>[],
   ): Array<RawApifyProfile & { _latestVideos: { thumbnailUrl: string; desc: string }[] }> {
     type Entry = {
       meta: Record<string, unknown>;
-      isProfileMode: boolean;
       videos: { thumbnailUrl: string; desc: string }[];
     };
     const profileMap = new Map<string, Entry>();
 
     for (const item of items) {
+      const channel = item.channel && typeof item.channel === 'object'
+        ? item.channel as Record<string, unknown>
+        : null;
       const hasMeta = item.authorMeta && typeof item.authorMeta === 'object';
 
-      if (!hasMeta) {
-        // ── MODE A: profile object ────────────────────────────────────────────
+      if (channel) {
+        // ── MODE C: apidojo/tiktok-scraper ────────────────────────────────────
+        const handle = (
+          (channel.username as string) ||
+          (channel.name as string) ||
+          ''
+        ).toLowerCase().replace(/^@/, '').trim();
+        if (!handle) continue;
+        if (!profileMap.has(handle)) profileMap.set(handle, { meta: channel, videos: [] });
+        const entry = profileMap.get(handle)!;
+        if (entry.videos.length < 5) {
+          const videoMeta = item.video && typeof item.video === 'object'
+            ? item.video as Record<string, unknown>
+            : null;
+          entry.videos.push({
+            thumbnailUrl:
+              (videoMeta?.cover as string) ||
+              (videoMeta?.thumbnail as string) || '',
+            desc: (item.title as string) || '',
+          });
+        }
+      } else if (!hasMeta) {
+        // ── MODE A: legacy clockworks profile object ──────────────────────────
         const handle = (
           (item.uniqueId as string) ||
           (item.username as string) ||
@@ -395,9 +405,9 @@ export class TikTokFacelessEngine {
           ''
         ).toLowerCase().replace(/^@/, '').trim();
         if (!handle || profileMap.has(handle)) continue;
-        profileMap.set(handle, { meta: item, isProfileMode: true, videos: [] });
+        profileMap.set(handle, { meta: item, videos: [] });
       } else {
-        // ── MODE B: video item ────────────────────────────────────────────────
+        // ── MODE B: legacy clockworks video item ──────────────────────────────
         const meta = item.authorMeta as Record<string, unknown>;
         const handle = (
           (meta.name as string) ||
@@ -406,11 +416,9 @@ export class TikTokFacelessEngine {
           ''
         ).toLowerCase().replace(/^@/, '').trim();
         if (!handle) continue;
-        if (!profileMap.has(handle)) profileMap.set(handle, { meta, isProfileMode: false, videos: [] });
+        if (!profileMap.has(handle)) profileMap.set(handle, { meta, videos: [] });
         const entry = profileMap.get(handle)!;
         if (entry.videos.length < 5) {
-          // clockworks~tiktok-scraper uses item.text for captions and item.videoMeta.coverUrl for thumbnails
-          // clockworks~tiktok-profile-scraper (old) used item.desc and item.covers[]
           const videoMeta = item.videoMeta as Record<string, unknown> | undefined;
           entry.videos.push({
             thumbnailUrl:
@@ -429,25 +437,30 @@ export class TikTokFacelessEngine {
 
     const results: Array<RawApifyProfile & { _latestVideos: { thumbnailUrl: string; desc: string }[] }> = [];
     for (const [handle, { meta, videos }] of profileMap) {
+      // MODE C fields (channel): followers, bio, name
+      // MODE A/B fields: fans/followerCount, signature/bio, nickName
       const bioLinkRaw = meta.bioLink;
       const bioLink =
         typeof bioLinkRaw === 'string' ? bioLinkRaw :
         (bioLinkRaw && typeof (bioLinkRaw as Record<string, unknown>).link === 'string')
           ? (bioLinkRaw as Record<string, unknown>).link as string : '';
       const regionCode = ((meta.region as string) || (meta.countryCode as string) || '').toUpperCase();
-      const rawBioText = (meta.signature as string) || (meta.bio as string) || '';
+      const rawBioText = (meta.bio as string) || (meta.signature as string) || '';
       results.push({
         username: handle,
-        followersCount: (meta.fans as number) || (meta.followerCount as number) || 0,
-        // Total profile likes and video count — key signals for Archetype 6 scorer.
-        // clockworks~free-tiktok-scraper exposes these in authorMeta as `heart` and `video`.
+        followersCount:
+          (meta.followers as number) ||
+          (meta.fans as number) ||
+          (meta.followerCount as number) || 0,
         heartCount: (meta.heart as number) || (meta.heartCount as number) || 0,
         videoCount: (meta.video as number) || (meta.videoCount as number) || 0,
         biography: rawBioText,
-        // Preserve the raw bio before caption-enrichment overwrites `biography`.
-        // Empty raw bio is a POSITIVE Archetype 6 signal — don't conflate with enriched text.
         rawBio: rawBioText,
-        fullName: (meta.nickName as string) || (meta.nickname as string) || (meta.displayName as string) || '',
+        fullName:
+          (meta.name as string) ||
+          (meta.nickName as string) ||
+          (meta.nickname as string) ||
+          (meta.displayName as string) || '',
         externalUrl: bioLink,
         publicEmail: (meta.email as string) || '',
         countryCode: regionCode,
@@ -1012,27 +1025,18 @@ export class TikTokFacelessEngine {
         onLog('👤 STEP 2/4 — Fetching ' + ttBatch.length + ' TikTok profiles (batch capped at ' + MAX_TT_BATCH + ')...');
         let rawTikTokProfiles: unknown[];
         try {
-          // clockworks~tiktok-scraper: 1 video item per profile → cheapest way to get authorMeta.
-          // resultsPerPage:1 + shouldDownload*:false → minimal cost, datasets stored under caller's account.
+          // apidojo/tiktok-scraper: startUrls accepts profile page URLs; maxItems caps results.
           rawTikTokProfiles = await this.callApifyActor(
             TIKTOK_PROFILE_SCRAPER,
             {
-              profiles: ttBatch,
-              resultsPerPage: 1,
-              profileScrapeSections: ['videos'],
-              maxProfilesPerQuery: ttBatch.length,
-              shouldDownloadVideos: false,
-              shouldDownloadCovers: false,
-              shouldDownloadAvatars: false,
-              shouldDownloadSubtitles: false,
-              shouldDownloadSlideshowImages: false,
-              shouldDownloadMusicCovers: false,
+              startUrls: ttBatch.map((h: string) => `https://www.tiktok.com/@${h}`),
+              maxItems: ttBatch.length * 10,
             },
             onLog,
-            ttBatch.length * 3,
+            ttBatch.length * 10,
             65_000, // client-side: 65s backup timeout
             55,     // server-side: Apify kills the actor at 55s no matter what TikTok does
-            1024,   // memory cap: 1024 MB (default 4096 MB would exceed Free plan when parallel)
+            1024,   // memory cap: 1024 MB
           );
           ttScraperConsecFails = 0;
           normalizedProfiles = this.groupTikTokItemsByProfile(
@@ -1083,17 +1087,11 @@ export class TikTokFacelessEngine {
             const hashtagRaw = await this.callApifyActor(
               TIKTOK_PROFILE_SCRAPER,
               {
-                hashtags: [matchedHashtag],
-                resultsPerPage: 50,
-                shouldDownloadVideos: false,
-                shouldDownloadCovers: false,
-                shouldDownloadAvatars: false,
-                shouldDownloadSubtitles: false,
-                shouldDownloadSlideshowImages: false,
-                shouldDownloadMusicCovers: false,
+                startUrls: [`https://www.tiktok.com/tag/${matchedHashtag}`],
+                maxItems: 250,
               },
               onLog,
-              250,    // up to 250 items (50 videos × ~5 different authors)
+              250,    // up to 250 items
               65_000, // client-side timeout ms
               55,     // server-side kill (seconds)
               1024,   // memory cap MB

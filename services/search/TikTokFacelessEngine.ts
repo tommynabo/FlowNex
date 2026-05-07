@@ -78,6 +78,33 @@ const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
   ['"bodybuilding fan page"', '"gym motivation"', '"gmail.com"', '"dm for collab"', '"physique page"', '"fan page"'],
   // 15. Fitness clipper / gym clips page — reposter accounts editing gym/athlete content
   ['"fitness clips"', '"gym clips"', '"bodybuilder"', '"gmail.com"', '"dm for paid"', '"paid collab"'],
+  // 16. Personal coaching CTA — "DM [result]" pattern + skinny-fat niche
+  // Only fitness coaches actively selling 1:1 coaching use these exact CTAs in their bio.
+  // "skinny-fat" is a precision niche term: near-zero false positives.
+  ['"DM LEAN"', '"DM SHRED"', '"DM BULK"', '"DM PROGRAM"', '"skinny-fat"', '"skinny fat"'],
+];
+
+// ── Stats Block query constants ─────────────────────────────────────────────
+// Fitness coaches often include city, height and weight in their bio:
+//   "Toronto | 6' | 170lbs | Natural"
+// Google indexes this bio text verbatim — searching for these exact tokens surfaces
+// personal coaches with their own credentials, not generic content factories.
+// Each attempt picks random values → wide coverage without a static query set.
+const STATS_CITIES = [
+  'Toronto', 'Chicago', 'Houston', 'Miami', 'Dallas',
+  'Atlanta', 'Phoenix', 'Denver', 'Seattle', 'Calgary',
+  'Vancouver', 'Boston', 'San Diego', 'Austin', 'Orlando',
+];
+
+const STATS_HEIGHTS = [
+  "5'8\"", "5'9\"", "5'10\"", "5'11\"",
+  "6'",    "6'1\"",  "6'2\"",  "6'3\"",
+];
+
+// Realistic weight range for a lean/muscular natural fitness coach
+const STATS_WEIGHTS_LBS = [
+  '155lbs', '160lbs', '165lbs', '170lbs', '175lbs',
+  '180lbs', '185lbs', '190lbs', '195lbs', '200lbs',
 ];
 
 // Maps campaign region codes to Google Search location terms (appended as soft hint to queries)
@@ -153,8 +180,22 @@ export class TikTokFacelessEngine {
   // ── Query builder ─────────────────────────────────────────────────────────────
 
   /**
+   * Builds a randomised stats-block query targeting fitness coaches who put their
+   * physical stats in their bio: "Toronto | 6' | 170lbs"
+   * City, height and weight are chosen randomly each call → wide coverage per run.
+   */
+  private buildStatsBlockQuery(): string {
+    const city   = STATS_CITIES[Math.floor(Math.random() * STATS_CITIES.length)];
+    const height = STATS_HEIGHTS[Math.floor(Math.random() * STATS_HEIGHTS.length)];
+    const weight = STATS_WEIGHTS_LBS[Math.floor(Math.random() * STATS_WEIGHTS_LBS.length)];
+    return `site:tiktok.com "${city}" "${height}" "${weight}" -site:tiktok.com/tag/ -restaurant -dance`;
+  }
+
+  /**
    * Builds a site:tiktok.com Google Search query for the given attempt.
    *
+   * Stats block: attempt 1 and every 7th attempt thereafter (8, 15, 22…) use
+   *   buildStatsBlockQuery() — random city/height/weight from real bio format.
    * 6-cycle rotation through 8 main ICP keyword pools (0–7):
    *   mod === 0  → Pool + DM/CTA signal (clipper identity, highest precision)
    *   mod === 1  → Pool only — guarded to high-precision pools (0, 2, 6); others use ctaGroup
@@ -167,6 +208,11 @@ export class TikTokFacelessEngine {
    * Location: when targetRegions ≤ 3 regions, a soft location hint is appended.
    */
   private buildSearchQuery(attempt: number, targetRegions: string[] = []): string {
+    // Stats block — attempt 1 (first query ever) and every 7th attempt after that.
+    // % 5 === 0 fires on 5, 10, 15… so % 7 === 1 safely avoids collision on most attempts.
+    if (attempt === 1 || (attempt % 7 === 1 && attempt > 1)) {
+      return this.buildStatsBlockQuery();
+    }
     // Build optional location suffix from campaign regions (soft hint, ≤3 regions only)
     const locationSuffix = (() => {
       if (!targetRegions.length || targetRegions.length > 3) return '';
@@ -183,17 +229,20 @@ export class TikTokFacelessEngine {
       return withLoc(`site:tiktok.com ${group8} ${emailSignalBurst} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     }
 
-    // Normal rotation: 16 pools total.
+    // Normal rotation: 17 pools total (0–16).
     // Pools 0–8: email-first (clipper/editor/community). Pools 9–11: fitness faceless (no email gate).
     // Pools 12–13: @-prefixed handle mentions. Pools 14–15: bodybuilding fan/clip pages.
-    const poolIdx = attempt <= 1 ? 0 : (attempt - 2) % 16;
+    // Pool 16: personal coaching CTA ("DM LEAN", "skinny-fat").
+    const poolIdx = (attempt - 2) % 17;
     const terms = FACELESS_CLIPPER_KEYWORD_POOLS[poolIdx];
     const orGroup = '(' + terms.join(' OR ') + ')';
 
-    // Pools 9–15 use the facelessBoost construction instead of the email-signal mod rotation.
+    // Pool 16: coaching CTA pool — same construction as pools 9–15 (no strict email gate).
+    // Pools 9–16 use the facelessBoost construction instead of the email-signal mod rotation.
     // Pools 9–11: hashtag-signal fitness faceless (may have empty bios).
     // Pools 12–13: @-prefixed handle mentions — gmail.com is already embedded in the pool terms.
     // Pools 14–15: bodybuilding fan/clip pages — gmail.com already embedded.
+    // Pool 16: personal coaching CTA — DM LEAN / skinny-fat / DM SHRED.
     if (poolIdx >= 9) {
       const facelessBoost = '("slideshow" OR "link in bio" OR "payhip" OR "gumroad" OR "dm for promo")';
       return withLoc(`site:tiktok.com ${orGroup} ${facelessBoost} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);

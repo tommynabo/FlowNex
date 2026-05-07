@@ -120,8 +120,9 @@ export const FACELESS_CLIPPER_TIER1_KEYWORDS = [
   // Clips pages for known figures — handle/name signals guarantee clipper/reposter identity
   // @davidgogginspiration, @hormozi.clips, @tate.edits etc. → auto-pass hard filter
   'goggins', 'hormozi', 'gadzhi', 'tate.edits', 'tate.clips',
-  'goggins.', '.goggins', 'gogginsmotivation', 'gogginsinspiration',
-];
+  'goggins.', '.goggins', 'gogginsmotivation', 'gogginsinspiration',  // Personal coaching CTAs — only fitness coaches actively selling 1:1 use these exact phrases
+  'skinny-fat', 'skinny fat',
+  'dm lean', 'dm shred', 'dm bulk', 'dm program',];
 
 // Tier-2: generic signals — require THREE or more present to pass.
 // Raising the bar from 2 to 3 prevents generic fitness/lifestyle influencers from
@@ -141,6 +142,9 @@ const FACELESS_CLIPPER_TIER2_KEYWORDS = [
   'physique', 'gains', 'fitness', 'gym',
   // Re-added at TIER2 (not TIER1): safe now UGC terms are in ANTI_ICP_BIO_KEYWORDS
   'slideshow', 'carousel',
+  // Personal coaching / transformation signals — common in fitness coach bios.
+  // Require 3 combined hits to pass (no change to threshold).
+  'lean', 'shred', 'bulk', 'transformation', 'natural',
 ];
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -239,6 +243,16 @@ export class ICPEvaluator {
       }
 
       if (icpType === 'faceless_clipper') {
+        // Stats block fast-pass — bio contains "6' | 170lbs" or similar.
+        // Fitness coaches who write their own physical stats are unambiguous personal coaches.
+        // Pass immediately without requiring tier1/tier2 keyword hits.
+        const hasStatsBlock = /\d+'\s*[|\u2502]\s*\d+\s*lbs/i.test(profile.biography || '');
+        if (hasStatsBlock) {
+          onLog(`[HARD FILTER] 📊 @${handle} pass: stats block detected in bio (height|weight pattern)`);
+          passed.push(profile);
+          continue;
+        }
+
         // Tiered signal check:
         //   Tier-1 hit (explicit creator-economy signal) → pass alone
         //   Tier-2 hits ≥ 2 (generic signals, e.g. "gym" + "motivation") → pass together

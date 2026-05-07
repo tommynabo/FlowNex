@@ -228,7 +228,11 @@ export class ICPEvaluator {
         //   Everything else → reject (prevents e.g. "gym" or "discipline" alone from passing)
         const tier1Hit = FACELESS_CLIPPER_TIER1_KEYWORDS.some(kw => fullText.includes(kw));
         const tier2Hits = FACELESS_CLIPPER_TIER2_KEYWORDS.filter(kw => fullText.includes(kw));
-        const hasClipperSignal = tier1Hit || tier2Hits.length >= 3;
+        const bioLen = (profile.biography || '').trim().length;
+        // Empty/minimal bio (≤ 30 chars) is a POSITIVE A6 signal — classic faceless factory
+        // accounts (@moullaga67, @creed.lifter) have empty or near-empty bios.
+        // Never reject them here; the A6 scorer and AI soft filter are the downstream gates.
+        const hasClipperSignal = tier1Hit || tier2Hits.length >= 3 || bioLen <= 30;
         if (!hasClipperSignal) {
           onLog(`[HARD FILTER] 🚫 @${handle} skip: insufficient ICP signal (tier-1: none, tier-2: ${tier2Hits.length}/3 needed)`);
           rejections.noSignal++;

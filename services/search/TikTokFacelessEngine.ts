@@ -70,6 +70,10 @@ const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
   ['"#gymtok"', '"#fitness"', '"#hustle"', '"slideshow"', '"#bestversion"'],
   // 11. Physique / gains faceless — money×fitness crossover slideshow factory
   ['"#physique"', '"#gains"', '"#gym"', '"slideshow"', '"#motivation"'],
+  // 12. @-prefixed clipper/editor bio mentions — targets bios where creators self-describe with @
+  ['"@clipper"', '"@editor"', '"@motivation"', '"gmail.com"', '"dm for promo"'],
+  // 13. @-prefixed figure references — editors who mention known figures with @
+  ['"@hormozi"', '"@gadzhi"', '"@goggins"', '"@tate"', '"gmail.com"', '"edits"'],
 ];
 
 // Maps campaign region codes to Google Search location terms (appended as soft hint to queries)
@@ -174,14 +178,16 @@ export class TikTokFacelessEngine {
       return withLoc(`site:tiktok.com ${group8} ${emailSignalBurst} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     }
 
-    // Normal rotation: 12 pools total.
+    // Normal rotation: 14 pools total.
     // Pools 0–8: email-first (clipper/editor/community). Pools 9–11: fitness faceless (no email gate).
-    const poolIdx = attempt <= 1 ? 0 : (attempt - 2) % 12;
+    // Pools 12–13: @-prefixed handle mentions targeting bio self-references and figure tags.
+    const poolIdx = attempt <= 1 ? 0 : (attempt - 2) % 14;
     const terms = FACELESS_CLIPPER_KEYWORD_POOLS[poolIdx];
     const orGroup = '(' + terms.join(' OR ') + ')';
 
-    // Fitness faceless pools (9–11): no email signal — these creators have empty bios.
-    // TikTok Hashtag Discovery in the main loop is the primary channel for these accounts.
+    // Pools 9–13 use the facelessBoost construction instead of the email-signal mod rotation.
+    // Pools 9–11: hashtag-signal fitness faceless (may have empty bios).
+    // Pools 12–13: @-prefixed handle mentions — gmail.com is already embedded in the pool terms.
     if (poolIdx >= 9) {
       const facelessBoost = '("slideshow" OR "link in bio" OR "payhip" OR "gumroad" OR "dm for promo")';
       return withLoc(`site:tiktok.com ${orGroup} ${facelessBoost} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
@@ -853,13 +859,6 @@ export class TikTokFacelessEngine {
       const queryBatch = Array.from({ length: GOOGLE_QUERY_BATCH }, (_, i) =>
         this.buildSearchQuery(baseAttempt + i, targetRegions)
       );
-      // Fitness faceless attempts (pools 9–11): primary discovery is TikTok Hashtag scraping.
-      // isFitnessAttempt disables the email gate — fitness faceless creators never put email in bio.
-      // Declared as `let` so it can be set to true when attempt-1 baseline hashtag discovery fires.
-      let isFitnessAttempt = FITNESS_HASHTAG_POOL.some(h =>
-        queryBatch.some(q => q.includes('"#' + h + '"'))
-      );
-
       onLog('');
       onLog('━━━ ATTEMPT ' + attempt + '/' + MAX_RETRIES + ' ━━━  ' + needed + ' lead(s) still needed');
       onLog('🔎 STEP 1/4 — Google Search (' + GOOGLE_QUERY_BATCH + ' parallel runs, attempt ' + attempt + ')...');
@@ -1010,13 +1009,14 @@ export class TikTokFacelessEngine {
       const ttBatch = novelHandles.slice(0, MAX_TT_BATCH);
       let normalizedProfiles: ReturnType<typeof this.groupTikTokItemsByProfile>;
 
-      // Force snippet mode for small batches — the TikTok actor has a fixed ~30s startup
-      // overhead regardless of batch size. For <25 handles the cost is never worth it.
-      const useTinyBatchSnippet = !skipTtScraper && ttBatch.length < 25;
+      // Force snippet mode only for very small batches (< 3 handles) — the fixed actor
+      // startup cost (~30s) is only unreasonable for 0–2 handles. For 3+ handles the
+      // TikTok scraper runs and returns real heartCount, videoCount, biography and videos.
+      const useTinyBatchSnippet = !skipTtScraper && ttBatch.length < 3;
 
       if (skipTtScraper || useTinyBatchSnippet) {
         // ── Snippet mode ──────────────────────────────────────────────────────
-        const reason = skipTtScraper ? 'TikTok scraper skipped' : `batch demasiado pequeño (${ttBatch.length} < 15)`;
+        const reason = skipTtScraper ? 'TikTok scraper skipped' : `batch demasiado pequeño (${ttBatch.length} < 3)`;
         onLog('👤 STEP 2/4 — Snippet mode (' + reason + ', 0 créditos Apify): ' + ttBatch.length + ' handles');
         normalizedProfiles = this.buildProfilesFromSnippets(ttBatch, handleToSnippet, handleToTitle);
         onLog('👤 STEP 2/4 ✓ — ' + normalizedProfiles.length + ' profiles built from Google snippets');
@@ -1064,69 +1064,6 @@ export class TikTokFacelessEngine {
           // Fall back to snippet profiles instead of skipping the whole attempt
           normalizedProfiles = this.buildProfilesFromSnippets(ttBatch, handleToSnippet, handleToTitle);
           onLog('👤 STEP 2/4 — ' + normalizedProfiles.length + ' profiles from Google snippets (fallback)');
-        }
-      }
-
-      // ── TikTok Hashtag Discovery (faceless_clipper: every attempt; others: pools 9–11 only) ──
-      // For faceless_clipper ICP we cycle through the expanded FITNESS_HASHTAG_POOL on EVERY
-      // attempt — the A6 numeric scorer acts as the downstream quality gate, filtering personal
-      // gym accounts (low ratio) before expensive AI calls replace the old "only fire on
-      // fitness query batches" heuristic.
-      // Bio enrichment: empty bios (< 25 chars) are augmented with video caption text so that
-      // TIER2 keywords (gymmotivation, physique, discipline…) fire correctly in the hard filter.
-      const hashtagToRun: string | undefined = icpFilters?.icpType === 'faceless_clipper'
-        ? FITNESS_HASHTAG_POOL[(attempt - 1) % FITNESS_HASHTAG_POOL.length]
-        : isFitnessAttempt
-          ? FITNESS_HASHTAG_POOL.find(h => queryBatch.some(q => q.includes('"#' + h + '"')))
-          : undefined;
-      if (hashtagToRun && !skipTtScraper) {
-        const matchedHashtag = hashtagToRun;
-        if (matchedHashtag) {
-          onLog('🏋️ Hashtag Discovery: #' + matchedHashtag + ' — attempt ' + attempt + ' (pool ' + ((attempt - 1) % FITNESS_HASHTAG_POOL.length + 1) + '/' + FITNESS_HASHTAG_POOL.length + ')...');
-          try {
-            const hashtagRaw = await this.callApifyActor(
-              TIKTOK_PROFILE_SCRAPER,
-              {
-                startUrls: [`https://www.tiktok.com/tag/${matchedHashtag}`],
-                maxItems: 250,
-              },
-              onLog,
-              250,    // up to 250 items
-              65_000, // client-side timeout ms
-              55,     // server-side kill (seconds)
-              1024,   // memory cap MB
-            );
-            const hashtagProfiles = this.groupTikTokItemsByProfile(
-              hashtagRaw as Record<string, unknown>[]
-            ).filter(p => !seenHandles.has(p.username));
-            // Preserve rawBio BEFORE caption enrichment — empty rawBio is a positive A6 signal.
-            // Bio enrichment adds hashtag captions to biography so TIER2 keywords fire in hard filter.
-            // rawBio stays untouched so scoreArchetype6() can use the original empty/minimal bio.
-            for (const p of hashtagProfiles) {
-              seenHandles.add(p.username);
-              const extP = p as typeof p & { _latestVideos: { thumbnailUrl: string; desc: string }[] };
-              if (!extP.biography || extP.biography.trim().length < 25) {
-                const captions = (extP._latestVideos || []).slice(0, 5).map(v => v.desc || '').join(' ');
-                if (captions) extP.biography = (extP.biography || '').trim() + ' ' + captions;
-                // rawBio was set in groupTikTokItemsByProfile — DO NOT overwrite it here.
-              }
-            }
-            if (hashtagProfiles.length > 0) {
-              normalizedProfiles = [...normalizedProfiles, ...hashtagProfiles] as typeof normalizedProfiles;
-              // Relax email gate — these no-email ideal ICP accounts would otherwise be rejected.
-              isFitnessAttempt = true;
-              onLog('🏋️ #' + matchedHashtag + ' → ' + hashtagProfiles.length + ' nuevos perfiles A6 candidatos añadidos');
-            } else {
-              onLog('🏋️ #' + matchedHashtag + ' → 0 perfiles nuevos (todos ya vistos en esta sesión)');
-            }
-          } catch (e: unknown) {
-            const hErr = e instanceof Error ? e.message : String(e);
-            if (hErr.startsWith('APIFY_QUOTA_EXCEEDED')) {
-              onLog('[ENGINE] ⛔ Apify quota agotada — Abortando.');
-              break;
-            }
-            onLog('🏋️ Hashtag Discovery #' + matchedHashtag + ' error (continuando sin él): ' + hErr.substring(0, 120));
-          }
         }
       }
 
@@ -1251,12 +1188,19 @@ export class TikTokFacelessEngine {
             candidate.decisionMaker?.name ?? '',
           );
           candidate._archetype6Score = a6Score;
+          // When both heartCount and videoCount are 0 the scraper returned no engagement metrics
+          // (common for small/new accounts). In that case the A6 score can't exceed ~33 regardless
+          // of account quality. Route to AI instead of auto-dropping based on missing data.
+          const hasNoEngagementData = (candidate._heartCount ?? 0) === 0 && (candidate._videoCount ?? 0) === 0;
           if (a6Score >= 70) {
             candidate.icp_verified = true;
             a6AutoVerified.push(candidate);
             onLog(`[A6 SCORE] ✅ @${candidate.ig_handle} — score=${a6Score} ≥ 70 → pre-verified, skip AI`);
-          } else if (a6Score < 40) {
+          } else if (a6Score < 40 && !hasNoEngagementData) {
             onLog(`[A6 SCORE] ✗  @${candidate.ig_handle} — score=${a6Score} < 40 → drop (personal brand pattern)`);
+          } else if (a6Score < 40 && hasNoEngagementData) {
+            onLog(`[A6 SCORE] ⚡ @${candidate.ig_handle} — score=${a6Score}, sin datos engagement → AI soft filter`);
+            needsAIVerification.push(candidate);
           } else {
             onLog(`[A6 SCORE] ⚡ @${candidate.ig_handle} — score=${a6Score} → forwarding to AI soft filter`);
             needsAIVerification.push(candidate);

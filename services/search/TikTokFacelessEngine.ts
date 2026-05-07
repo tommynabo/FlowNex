@@ -74,6 +74,10 @@ const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
   ['"@clipper"', '"@editor"', '"@motivation"', '"gmail.com"', '"dm for promo"'],
   // 13. @-prefixed figure references — editors who mention known figures with @
   ['"@hormozi"', '"@gadzhi"', '"@goggins"', '"@tate"', '"gmail.com"', '"edits"'],
+  // 14. Bodybuilding fan page — targets bios like @thebeast.fan1: "Bodybuilding Fan Page + Gmail + DM for paid collab"
+  ['"bodybuilding fan page"', '"gym motivation"', '"gmail.com"', '"dm for collab"', '"physique page"', '"fan page"'],
+  // 15. Fitness clipper / gym clips page — reposter accounts editing gym/athlete content
+  ['"fitness clips"', '"gym clips"', '"bodybuilder"', '"gmail.com"', '"dm for paid"', '"paid collab"'],
 ];
 
 // Maps campaign region codes to Google Search location terms (appended as soft hint to queries)
@@ -178,16 +182,17 @@ export class TikTokFacelessEngine {
       return withLoc(`site:tiktok.com ${group8} ${emailSignalBurst} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
     }
 
-    // Normal rotation: 14 pools total.
+    // Normal rotation: 16 pools total.
     // Pools 0–8: email-first (clipper/editor/community). Pools 9–11: fitness faceless (no email gate).
-    // Pools 12–13: @-prefixed handle mentions targeting bio self-references and figure tags.
-    const poolIdx = attempt <= 1 ? 0 : (attempt - 2) % 14;
+    // Pools 12–13: @-prefixed handle mentions. Pools 14–15: bodybuilding fan/clip pages.
+    const poolIdx = attempt <= 1 ? 0 : (attempt - 2) % 16;
     const terms = FACELESS_CLIPPER_KEYWORD_POOLS[poolIdx];
     const orGroup = '(' + terms.join(' OR ') + ')';
 
-    // Pools 9–13 use the facelessBoost construction instead of the email-signal mod rotation.
+    // Pools 9–15 use the facelessBoost construction instead of the email-signal mod rotation.
     // Pools 9–11: hashtag-signal fitness faceless (may have empty bios).
     // Pools 12–13: @-prefixed handle mentions — gmail.com is already embedded in the pool terms.
+    // Pools 14–15: bodybuilding fan/clip pages — gmail.com already embedded.
     if (poolIdx >= 9) {
       const facelessBoost = '("slideshow" OR "link in bio" OR "payhip" OR "gumroad" OR "dm for promo")';
       return withLoc(`site:tiktok.com ${orGroup} ${facelessBoost} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);

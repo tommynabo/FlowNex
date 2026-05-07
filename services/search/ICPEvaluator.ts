@@ -101,10 +101,14 @@ const ANTI_ICP_HANDLE_KEYWORDS = [
 export const FACELESS_CLIPPER_TIER1_KEYWORDS = [
   'clipper', 'editor', 'edits', 'editing',
   'dm for promo', 'dm for promos', 'dm for collab', 'dm for rates',
+  'paid collab', 'paid collaboration', 'paid promotion',
   'payhip', 'gumroad',
   'skool', 'wop', 'smma',
   'clipping', 'daily clips',
-  '💸', '💰', '🤑',
+  '💸', '💰', '🤑', '💪', '🏋️',
+  // Fitness fan/clip pages — explicit reposter/fan page identity
+  'fan page', 'bodybuilding', 'gym motivation', 'physique page',
+  'gym clips', 'fitness clips', 'bodybuilder',
   // Clips pages for known figures — handle/name signals guarantee clipper/reposter identity
   // @davidgogginspiration, @hormozi.clips, @tate.edits etc. → auto-pass hard filter
   'goggins', 'hormozi', 'gadzhi', 'tate.edits', 'tate.clips',
@@ -183,7 +187,12 @@ export class ICPEvaluator {
       }
 
       // Brand keyword check (fullName and username)
-      const brandKeyword = BRAND_KEYWORDS.find(kw =>
+      // For faceless_clipper, skip 'gym' and 'club' — these are POSITIVE fitness signals
+      // (e.g. @gymclips123, @bodybuilding.club) not corporate brand indicators.
+      const brandKeywordsForIcp = icpType === 'faceless_clipper'
+        ? BRAND_KEYWORDS.filter(kw => kw !== 'gym' && kw !== 'club')
+        : BRAND_KEYWORDS;
+      const brandKeyword = brandKeywordsForIcp.find(kw =>
         nameLower.includes(kw) || handle.includes(kw)
       );
       if (brandKeyword) {
@@ -362,7 +371,7 @@ export class ICPEvaluator {
     if (/^[\p{Emoji_Presentation}\p{Extended_Pictographic}\s]+$/u.test(displayName.trim()) && displayName.trim().length > 0) score += 10;
 
     // Fitness-related handle token (lifter, gains, physique, creed, pump, bulk, shred, gym, fit) → +8
-    const fitnessTokens = ['lifter', 'gains', 'physique', 'creed', 'pump', 'bulk', 'shred', 'gym', 'fit', 'body', 'muscle', 'swole', 'grind'];
+    const fitnessTokens = ['lifter', 'gains', 'physique', 'creed', 'pump', 'bulk', 'shred', 'gym', 'fit', 'body', 'muscle', 'swole', 'grind', 'beast', 'fan', 'bodybuilder', 'bodybuilding', 'motivation'];
     if (fitnessTokens.some(t => h.includes(t) || n.includes(t))) score += 8;
 
     // Generic / random handle pattern (no obvious niche words) → slight positive
@@ -460,6 +469,15 @@ TARGET ARCHETYPES — pass if the profile clearly fits ANY of these:
    - KEY DISTINCTION: NO face shown, NO personal coaching language, NO "my transformation" — pure content FACTORY using Pinterest/stock images
    - ACCEPT even with empty bio ("No bio yet."), emoji-only bio ("💸💸💸"), or minimal quote bio ("Lightweight baby!")
 
+7. FITNESS FAN PAGE / BODYBUILDING CLIP PAGE
+   - Explicitly a fan page reposting clips of bodybuilders, gym athletes, or physique competitors
+   - Does NOT show their own face — reposts or edits content of known fitness figures or stock gym videos
+   - Bio signals: "Bodybuilding Fan Page", "Gym Motivation Videos", "physique page", "beast fitness", "gym clips", "fitness clips"
+   - Contact: "DM for paid collaboration", "DM for paid collab", "DM for collab", Gmail in bio
+   - PERFECT REAL EXAMPLE: @thebeast.fan1 — bio "DM for paid collaboration | Global2037kh@gmail.com | Bodybuilding Fan Page 💪 | Gym Motivation Videos" — 152K followers, 1.4M likes
+   - ACCEPT immediately when ANY of these appear: "bodybuilding fan page", "gym motivation videos", "physique page", "fitness clips", "gym clips" + Gmail or DM signal
+   - This archetype is a PRIMARY TARGET: high-follower, high-engagement content factory posting viral gym/physique clips
+
 IDEAL MATCH EXAMPLES — profiles that are a PERFECT ICP match (benchmark against these):
 - @moullaga67: name=💸💸💸, bio="No bio yet." → PERFECT. Empty bio + money-emoji name + very low followers but 197K likes = classic gym slideshow content factory. Accept immediately with confidence ≥ 95.
 - @creed.lifter: name=creed.lifter, bio="No bio yet." → PERFECT. Handle contains fitness term ("lifter") + empty bio + 467K likes on 4.9K followers = high-volume gym slideshow factory. Accept immediately.
@@ -468,10 +486,11 @@ Key pattern: low followers + extremely high likes (ratio >50x) + empty/minimal b
 
 AUTO-APPROVE SIGNALS (approve with confidence ≥ 88, skip lengthy analysis):
 - Bio contains "clipper" or "editor" or "edits": auto-approve
-- Bio contains "dm for promo" or "dm for promos" or "dm for collab": auto-approve
+- Bio contains "dm for promo" or "dm for promos" or "dm for collab" or "paid collab" or "paid collaboration": auto-approve
 - Bio contains "payhip.com" or "gumroad.com" or "forms.gle": auto-approve
 - Bio contains "linktr.ee" AND niche keywords (motivation/mindset/smma): auto-approve
 - Bio contains "skool" or "wop" or "smma": auto-approve (entrepreneur community member)
+- Bio contains "bodybuilding fan page" or "gym motivation videos" or "physique page" or "fitness clips" or "gym clips": auto-approve as Archetype 7
 - Username/handle contains: clips, edits, clipper, daily, motivation, mindset, noexcuses, slideshow, carousel
 - Handle/name contains physique, gains, gym, gymtok AND biography field includes fitness hashtags: auto-approve as Archetype 6
 - Bio is empty or emoji-only (≤ 3 words) AND biography field includes #gymmotivation, #gymtok, or #physique: auto-approve as Archetype 6

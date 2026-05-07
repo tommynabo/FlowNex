@@ -179,11 +179,11 @@ export class ContentVerificationService {
     item: VideoItem,
     icpType: ICPType,
   ): Promise<SingleVideoAnalysis> {
-    // No data at all → pass by default.
-    // Score 70 (above CONTENT_SCORE_THRESHOLD=65) ensures the aggregated average
-    // also passes when ALL items have no data — prevents false negatives.
+    // No data at all → neutral pass.
+    // Score 50 is honest: we have no signal, so we don't inflate the aggregate.
+    // verifyCreatorContent detects all-unavailable and bypasses the threshold check.
     if (!item.thumbnailUrl && !item.transcript) {
-      return { content_alignment_score: 70, is_icp_match: true, reasoning: 'No data available — passed by default' };
+      return { content_alignment_score: 50, is_icp_match: true, reasoning: 'No data available — passed by default' };
     }
 
     const systemPrompt = this.buildSystemPrompt(icpType);
@@ -234,10 +234,9 @@ export class ContentVerificationService {
         if (attempt < 2) await new Promise(r => setTimeout(r, 1500));
       }
     }
-    // API failure → pass by default
-    // Score 70 keeps the average ≥ FACELESS_CLIPPER_CONTENT_SCORE_THRESHOLD (60) even when
-    // ALL 5 videos fail Vision API. Score 50 caused false negatives for AI-verified leads.
-    return { content_alignment_score: 70, is_icp_match: true, reasoning: 'Vision API unavailable — passed by default' };
+    // API failure → neutral score (honest: we had data but couldn't analyze it).
+    // verifyCreatorContent detects all-unavailable below and bypasses threshold check.
+    return { content_alignment_score: 50, is_icp_match: true, reasoning: 'Vision API unavailable — passed by default' };
   }
 
   /**
@@ -280,6 +279,22 @@ export class ContentVerificationService {
     const analyses = await Promise.all(
       items.map(item => this.analyzeVideoContent(item, icpType)),
     );
+
+    // If Vision API is down for ALL videos, bypass the content check entirely.
+    // Relying on the AI soft filter (which already ran) is safer than
+    // blocking legitimate faceless accounts based on fabricated scores.
+    const allUnavailable = analyses.every(
+      a => a.reasoning.includes('Vision API unavailable') || a.reasoning.includes('No data available')
+    );
+    if (allUnavailable) {
+      return {
+        overall_score: 50,
+        is_icp_match: true,
+        analyzed_videos: 0,
+        analyzed_at: new Date().toISOString(),
+        reasoning: 'Vision API unavailable — content check bypassed',
+      };
+    }
 
     // 4. Average score
     const overall_score = Math.round(

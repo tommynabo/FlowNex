@@ -76,6 +76,13 @@ const ANTI_ICP_BIO_KEYWORDS = [
   // Fashion & beauty niches — wrong ICP entirely
   'fashion', 'beauty', 'makeup', 'skincare', 'cosmetics', 'outfit', 'ootd',
   'nail', 'lash', 'glam', 'moda', 'belleza', 'maquillaje',
+  // "That girl" / personal face-forward lifestyle creators — micro-influencers posting their
+  // own face, outfits, dance, GRWM, or daily vlogs. NOT faceless factories.
+  // @shathatgirl bio pattern: aesthetic gym selfies, outfit videos, dancing with face shown.
+  'that girl', 'thatgirl aesthetic', 'grwm', 'get ready with me',
+  'outfit of the day', 'ootd check', 'day in my life', 'come with me',
+  'vlog', 'daily vlog', 'my routine', 'morning routine', 'night routine',
+  'girl that', 'clean girl',
   // Cooking & food content creators — wrong ICP (we target fitness/motivation, not food)
   'chef', 'recipe creator', 'food creator', 'cook with me', 'cooking channel',
   'food blogger', 'food blog', 'baking channel',
@@ -102,6 +109,14 @@ const ANTI_ICP_HANDLE_KEYWORDS = [
   'kitchen',   // kitchen/cooking handles
   'foodblog',  // food blog handles
   'foodie',    // foodie lifestyle handles
+  // "That girl" / personal lifestyle micro-creator handles — face-forward personal brands
+  // whose content is outfit, dance, vlog, or aesthetic lifestyle (NOT faceless factories).
+  // @shathatgirl, @thatgirlkailyn, @grwmwithme — all personal brand red flags.
+  'thatgirl',  // "that girl" aesthetic personal brand (@shathatgirl, @thatgirlkay)
+  'grwm',      // "get ready with me" — personal face-forward lifestyle
+  'vlogwith',  // vlog-format personal accounts
+  'diaryof',   // diary-style personal accounts
+  'lifeof',    // "life of" personal lifestyle accounts
 ];
 
 // Tier-1: explicit creator-economy signals — pass ALONE (high precision).
@@ -536,7 +551,8 @@ REJECT (is_human_creator = false):
 CRITICAL ANTI-ICP (reject immediately, anti_icp: true):
 - UGC creators, user-generated content creators, "content for brands" accounts, brand-deal-focused accounts. These produce paid ad content for companies. We want organic clippers and editors, not commercial content producers. Reject immediately.
 - Personal fitness FACE creators: accounts posting their OWN workout videos, OWN body transformation ("my physique progress"), or with personal coaching bios ("Certified PT", "1-on-1 coaching", "DM for coaching"). These are personal brands — reject immediately.
-- NOTE: FITNESS FACELESS SLIDESHOW CREATORS (Archetype 6) are VALID TARGETS. Empty bio + fitness hashtags in video captions + high-volume slideshows = ACCEPT. When uncertain between "personal fitness brand" vs "fitness faceless factory", prefer ACCEPT.
+- NOTE: FITNESS FACELESS SLIDESHOW CREATORS (Archetype 6) are VALID TARGETS. Empty bio + fitness hashtags in video captions + high-volume slideshows = ACCEPT. When uncertain between "personal fitness brand" vs "fitness faceless factory", prefer REJECT — we would rather miss a faceless factory than contact a personal face creator.
+- "That girl" / face-forward lifestyle creators: accounts posting their OWN face in gym selfies, outfit videos, dancing, GRWM, daily vlog, or aesthetic lifestyle content. Bio signals: "that girl", "grwm", "get ready with me", "day in my life", "vlog", "morning routine", "outfit". Handle signals: contains "thatgirl", "grwm", personal first+last name combo. These are PERSONAL BRAND micro-influencers — NOT faceless factories. Reject immediately even if they also post gym content. Real example: @shathatgirl — personal face creator posting gym selfies and dancing videos. REJECTED.
 - Music promoters, DJ accounts, vinyl/record pages, sound promoters: bio has "dm for sound promos", "music promo", or handle contains "record"/"vinyl"/"djset". They use "dm for promo" language but are in the MUSIC niche — NOT our ICP. Reject immediately.
 - Dance creators, choreographers: bio says "dancer", "dancing", "choreograph". "Dm for promo/collabs" does NOT save them — wrong niche entirely. Reject immediately.
 - Scene pack / aesthetic edit accounts: bio says "scenepacks", "anime edits", "aesthetic edits". Entertainment editors who promote sounds/music, not motivation/hustle content factories. Reject immediately.

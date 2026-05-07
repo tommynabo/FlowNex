@@ -111,7 +111,8 @@ const GOOGLE_SEARCH_SCRAPER = 'nFJndFXA5zjCTuudP';
 //        { startUrls: ["https://tiktok.com/tag/hashtag"] } for hashtag discovery.
 // Output: video items with creator data nested in item.channel → handled by MODE C in groupTikTokItemsByProfile.
 // Minimum 10 items per startUrl required by this actor.
-const TIKTOK_PROFILE_SCRAPER = 'apidojo/tiktok-scraper';
+// ⚠️ Apify actor IDs use ~ as username/name separator (NOT /). Using / generates a 404.
+const TIKTOK_PROFILE_SCRAPER = 'apidojo~tiktok-scraper';
 
 // Anti-ICP negative keywords — only the 5 most critical terms.
 // Shorter queries avoid Google truncation that caused empty results.
@@ -1018,12 +1019,16 @@ export class TikTokFacelessEngine {
       // startup cost (~30s) is only unreasonable for 0–2 handles. For 3+ handles the
       // TikTok scraper runs and returns real heartCount, videoCount, biography and videos.
       const useTinyBatchSnippet = !skipTtScraper && ttBatch.length < 3;
+      // Track whether this attempt used snippet data instead of real TikTok profile scraping.
+      // Snippet profiles have no real bio/video data → require higher AI confidence (95% vs 75%).
+      let usedSnippetFallback = false;
 
       if (skipTtScraper || useTinyBatchSnippet) {
         // ── Snippet mode ──────────────────────────────────────────────────────
         const reason = skipTtScraper ? 'TikTok scraper skipped' : `batch demasiado pequeño (${ttBatch.length} < 3)`;
         onLog('👤 STEP 2/4 — Snippet mode (' + reason + ', 0 créditos Apify): ' + ttBatch.length + ' handles');
         normalizedProfiles = this.buildProfilesFromSnippets(ttBatch, handleToSnippet, handleToTitle);
+        usedSnippetFallback = true;
         onLog('👤 STEP 2/4 ✓ — ' + normalizedProfiles.length + ' profiles built from Google snippets');
       } else {
         // ── Live TikTok scraper ───────────────────────────────────────────────
@@ -1068,6 +1073,7 @@ export class TikTokFacelessEngine {
           }
           // Fall back to snippet profiles instead of skipping the whole attempt
           normalizedProfiles = this.buildProfilesFromSnippets(ttBatch, handleToSnippet, handleToTitle);
+          usedSnippetFallback = true;
           onLog('👤 STEP 2/4 — ' + normalizedProfiles.length + ' profiles from Google snippets (fallback)');
         }
       }
@@ -1215,7 +1221,7 @@ export class TikTokFacelessEngine {
 
       onLog('🤖 STEP 4a — Filtro IA para ' + needsAIVerification.length + ' candidatos (verificando ICP faceless)...');
       const softFiltered = needsAIVerification.length > 0
-        ? await icpEvaluator.applySoftFilter(needsAIVerification, onLog, 'faceless_clipper')
+        ? await icpEvaluator.applySoftFilter(needsAIVerification, onLog, 'faceless_clipper', usedSnippetFallback ? 95 : 75)
         : [];
       const aiVerified = softFiltered.filter(l => l.icp_verified === true);
       const icpVerified = [...tier1PreVerified, ...a6AutoVerified, ...aiVerified];

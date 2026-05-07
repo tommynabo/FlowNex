@@ -76,6 +76,9 @@ const ANTI_ICP_BIO_KEYWORDS = [
   // Fashion & beauty niches — wrong ICP entirely
   'fashion', 'beauty', 'makeup', 'skincare', 'cosmetics', 'outfit', 'ootd',
   'nail', 'lash', 'glam', 'moda', 'belleza', 'maquillaje',
+  // Cooking & food content creators — wrong ICP (we target fitness/motivation, not food)
+  'chef', 'recipe creator', 'food creator', 'cook with me', 'cooking channel',
+  'food blogger', 'food blog', 'baking channel',
 ];
 
 // Handle-only anti-ICP substrings — checked against the USERNAME only, not bio.
@@ -94,6 +97,11 @@ const ANTI_ICP_HANDLE_KEYWORDS = [
   'beauty',    // beauty/makeup handles
   'makeup',    // makeup tutorial accounts
   'skincare',  // skincare niche handles
+  'cook',      // cooking account handles (e.g. @cookingwithmaria, @cookbro)
+  'recipe',    // recipe page handles
+  'kitchen',   // kitchen/cooking handles
+  'foodblog',  // food blog handles
+  'foodie',    // foodie lifestyle handles
 ];
 
 // Tier-1: explicit creator-economy signals — pass ALONE (high precision).
@@ -390,10 +398,10 @@ export class ICPEvaluator {
    * On failure, marks batch leads as icp_verified = false (strict fallback — never assume pass).
    * Returns ALL leads with icp_verified flag set; caller decides whether to filter.
    */
-  async applySoftFilter(leads: Lead[], onLog: LogCallback, icpType: ICPType = 'personal_brand'): Promise<Lead[]> {
+  async applySoftFilter(leads: Lead[], onLog: LogCallback, icpType: ICPType = 'personal_brand', minConfidence = 75): Promise<Lead[]> {
     if (!leads.length) return [];
 
-    onLog(`[ICP SOFT] Evaluating ${leads.length} profiles with AI (batches of ${ICP_SOFT_FILTER_BATCH_SIZE}, icpType: ${icpType})...`);
+    onLog(`[ICP SOFT] Evaluating ${leads.length} profiles with AI (batches of ${ICP_SOFT_FILTER_BATCH_SIZE}, icpType: ${icpType}${minConfidence !== 75 ? `, minConfidence: ${minConfidence}%` : ''})...`);
 
     const FITNESS_SYSTEM_PROMPT = `You are a talent scout for a fitness creator outreach agency targeting US/Canada Instagram accounts. Your job is to decide whether each profile belongs to a GYM/FITNESS CONTENT CREATOR — this includes both professional coaches AND everyday gym-goers who create content about the gym lifestyle.
 
@@ -518,6 +526,7 @@ CRITICAL ANTI-ICP (reject immediately, anti_icp: true):
 - Music promoters, DJ accounts, vinyl/record pages, sound promoters: bio has "dm for sound promos", "music promo", or handle contains "record"/"vinyl"/"djset". They use "dm for promo" language but are in the MUSIC niche — NOT our ICP. Reject immediately.
 - Dance creators, choreographers: bio says "dancer", "dancing", "choreograph". "Dm for promo/collabs" does NOT save them — wrong niche entirely. Reject immediately.
 - Scene pack / aesthetic edit accounts: bio says "scenepacks", "anime edits", "aesthetic edits". Entertainment editors who promote sounds/music, not motivation/hustle content factories. Reject immediately.
+- Food/cooking creators: accounts that post cooking content, recipes, food tutorials, or cooking vlogs. Bio signals: "chef", "recipe creator", "cook with me", "food blogger", "cooking channel". These are in a completely different niche — reject immediately even if they also post gym content occasionally.
 - Local physical businesses: restaurants, cafes, acai, bakeries, physical retail
 - Corporate/HR consulting, therapists, spiritual coaches (no wealth/business angle)
 - Accounts posting primarily in a non-English language
@@ -588,7 +597,7 @@ Reply ONLY with a valid JSON array matching the input order:
 
           const passes = (result as any).is_physical_fitness_creator ?? result.is_human_creator;
           const isAntiIcp = (result as any).anti_icp === true;
-          if (usernameMatch && passes === true && result.confidence >= 75 && !isAntiIcp) {
+          if (usernameMatch && passes === true && result.confidence >= minConfidence && !isAntiIcp) {
             lead.icp_verified = true;
             verifiedCount++;
             onLog(`[ICP SOFT] ✓ @${lead.ig_handle} → ICP verified (${result.confidence}% confidence)`);

@@ -153,16 +153,15 @@ async function scrapeTikTokPosts(handles: string[], token: string): Promise<Map<
 function buildSystemPrompt(icpType: ICPType): string {
   const facelessCriteria = `
 APPROVE (score ≥ 65) if the content matches ANY of these patterns:
-- Faceless motivation: no face shown, voiceover + b-roll, discipline, entrepreneurship, self-improvement
-- Clipper/reposter: edited clips from known figures (Hormozi, Tate, Gadzhi, Goggins, etc.)
-- Slideshow/carousel: motivational quotes, mindset tips, wealth/success, hustle, grind culture
-- Gym motivation: body transformation, before/after physique, "no days off" WITH motivational message
-- Online business tips: passive income, make money online, dropshipping, SMMA, wifi money
+- Fitness / gym / physique content: workouts, training clips, bodybuilding, physique comparisons, transformation, "no days off" — face visible or not
+- Faceless motivation: voiceover + b-roll, discipline, self-improvement, hustle, mindset
+- Clipper/reposter: edited clips from known fitness or motivation figures (Tom Platz, CT Fletcher, Goggins, Hormozi, Tate, etc.)
+- Slideshow/carousel: motivational quotes, mindset tips, hustle, grind culture
+- Online business tips: passive income, make money online, SMMA, wifi money
 
 REJECT (score < 65) if the majority of content is:
-- Personal face-forward lifestyle (selfies, vlogs, food/travel) with no motivational angle
-- Pure gym tutorial/form-check by a certified trainer (educational, NOT motivational)
-- Entertainment, comedy, gaming, or niches unrelated to motivation/mindset/fitness/business`.trim();
+- Clearly wrong niche with zero fitness/motivation connection: beauty/makeup tutorials, cooking, fashion hauls, dance, comedy, gaming, travel (no fitness)
+- Entertainment entirely unrelated to gym/fitness/health/motivation/mindset`.trim();
 
   const personalBrandCriteria = `
 APPROVE (score ≥ 65) if the content shows:

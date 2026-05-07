@@ -306,44 +306,46 @@ export class ContentVerificationService {
   // ── Prompt Builder ───────────────────────────────────────────────────────────
 
   private buildSystemPrompt(icpType: ICPType): string {
-    // ── Faceless Clipper: binary face-counting classifier ─────────────────────
-    // Deliberately avoids semantic niche judgments — instead asks a single deterministic
-    // visual question: "is the account owner's face in this frame?"
-    // GPT-4o-mini is much more reliable at face detection than at inferring niche from
-    // a single low-res thumbnail. Scoring is formulaic, not interpretive.
+    // ── Fitness Niche Classifier (replaces old face-counting binary) ───────────
+    // The primary question is now "is this fitness/gym/motivation content?" rather than
+    // "is the creator's face visible?". We accept gym creators regardless of whether
+    // their own face, back, or a famous athlete's face appears in the thumbnail — what
+    // matters is that the NICHE is fitness/physique/motivation/hustle/discipline.
     //
     // Score per video (then averaged across up to 5 thumbnails):
-    //   TYPE_A (faceless stock/Pinterest/text-overlay) → 82 base (+8 if gym hashtag in caption, max 90)
-    //   TYPE_B (personal face — owner's own body/face clearly visible) → 15 base (capped at 25)
+    //   TYPE_A (fitness niche — ACCEPT): any gym/workout/physique/motivation/hustle content → 82 base (+8 if gym hashtag, max 90)
+    //   TYPE_B (wrong niche — REJECT): clearly non-fitness content (beauty, cooking, fashion, dance, etc.) → 15 base (capped at 25)
     //   TYPE_C (unclear/avatar/ambiguous) → 50
     // Averaged score ≥ 60 → is_icp_match: true  (FACELESS_CLIPPER_CONTENT_SCORE_THRESHOLD = 60)
     //
     // Expected benchmark scores (should all pass ≥ 60):
-    //   @moullaga67    (all TYPE_A stock gym images) → avg ~88 → PASS ✓
-    //   @creed.lifter  (all TYPE_A stock physique)   → avg ~88 → PASS ✓
-    //   @landon.vaughn17 (text-card + stock gym)     → avg ~85 → PASS ✓
-    //   @johnsmith_fitness (personal trainer, TYPE_B face) → avg ~18 → FAIL ✗
+    //   @moullaga67       (stock gym images) → avg ~88 → PASS ✓
+    //   @creed.lifter     (stock physique)   → avg ~88 → PASS ✓
+    //   @grindset.28      (Tom Platz clip — famous fitness figure) → avg ~88 → PASS ✓
+    //   @hustlerwavez     (creator's own face in gym) → avg ~82 → PASS ✓
+    //   @nonstopclimbing8 (creator's back in gym workout) → avg ~82 → PASS ✓
+    //   @makeup_tutorials (beauty/makeup content — wrong niche) → avg ~18 → FAIL ✗
     if (icpType === 'faceless_clipper') {
-      return `You are a visual content classifier for a creator outreach agency.
+      return `You are a content niche classifier for a creator outreach agency.
 Analyze ONE video thumbnail and caption from a TikTok creator.
 
-TASK: Determine if this content belongs to a FACELESS FITNESS SLIDESHOW FACTORY — an account posting gym/physique content using stock photos or Pinterest images with NO face of the account owner visible. This is the IDEAL target creator type.
+TASK: Determine if this content belongs to the FITNESS / GYM / MOTIVATION / HUSTLE / DISCIPLINE niche. Face visibility does NOT matter — we accept all gym and motivation creators regardless of whether a face appears.
 
 CLASSIFY the thumbnail as ONE of:
-- TYPE_A (Faceless factory — IDEAL): Stock gym photo, anonymous physique image, motivational text-card, fitness graphic, or equipment/landscape shot with NO identifiable face of the account owner visible. The content could belong to any anonymous account.
-- TYPE_B (Personal face content — REJECT): The account owner's own face, body performing exercises, or personal transformation clearly visible. This is a personal-brand creator, NOT a factory.
-- TYPE_C (Unclear — neutral): Avatar image, very low quality, logo, or genuinely ambiguous.
+- TYPE_A (Fitness niche — ACCEPT): Content related to gym workouts, physique, bodybuilding, powerlifting, calisthenics, fitness motivation, discipline/hustle mindset, transformation, or any recognizable fitness figure (athlete, bodybuilder, etc.). Includes: stock gym photos, creator's own gym content (face or no face), famous athlete clips (e.g. Tom Platz, CT Fletcher), motivational text overlays, workout tutorials, physique comparisons. Face visibility is irrelevant — classify as TYPE_A if the NICHE is fitness or motivation.
+- TYPE_B (Wrong niche — REJECT): Content clearly unrelated to fitness/gym/health/motivation — e.g. beauty tutorials, makeup, cooking/food, fashion hauls, dance routines, comedy skits, pets, travel vlogs with no fitness element. Only classify as TYPE_B when the content has ZERO connection to fitness, gym, or motivational self-improvement.
+- TYPE_C (Unclear — neutral): Avatar image, very low quality, logo, or genuinely ambiguous content where the niche cannot be determined.
 
 SCORING RULES — return content_alignment_score 0–100:
-- TYPE_A: start at 82. If caption contains ANY gym hashtag (#gymmotivation #physique #gains #gymtok #discipline #fitspo #hardwork #gymrat #nodaysoff #hustle): add 8 (max 90 total).
+- TYPE_A: start at 82. If caption contains ANY gym/motivation hashtag (#gymmotivation #physique #gains #gymtok #discipline #fitspo #hardwork #gymrat #nodaysoff #hustle #motivation #grind #mindset #noexcuses #transformation): add 8 (max 90 total).
 - TYPE_B: start at 15. Cap at 25 regardless of caption. Cannot exceed 25.
 - TYPE_C: 50.
 
-HARD APPROVE override: If the thumbnail is clearly a text-over-black-background motivational quote OR a stock muscular physique with zero face of the account owner visible → set score to at least 80.
-HARD REJECT override: If the creator's own face occupies ≥15% of the frame in a gym/workout context → set score to 20 at most.
+HARD APPROVE override: If the thumbnail clearly shows gym equipment, a physique/workout/training movement, a motivational quote, or a recognizable fitness/bodybuilding figure → set score to at least 80, regardless of face visibility.
+HARD REJECT override: If the content is unmistakably in a non-fitness niche (makeup tutorial, cooking recipe, fashion haul, dance) with no fitness element whatsoever → set score to 20 at most.
 
 Respond ONLY with valid JSON, no markdown:
-{"content_type": "A", "content_alignment_score": 85, "is_icp_match": true, "reasoning": "Stock physique photo, no face, #gymmotivation in caption"}`;
+{"content_type": "A", "content_alignment_score": 85, "is_icp_match": true, "reasoning": "Gym workout content, creator training in gym, fitness niche confirmed"}`;
     }
 
     const personalBrandCriteria = `

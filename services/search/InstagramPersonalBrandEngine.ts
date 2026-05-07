@@ -221,6 +221,15 @@ export class InstagramPersonalBrandEngine {
     return 'Other';
   }
 
+  /**
+   * Detects any email-like pattern (@domain) in a snippet/title string.
+   * Deliberately broad — catches gmail.com, custom domains, etc.
+   * Used for Bucket A priority sorting before the Instagram profile scraper.
+   */
+  private hasEmailSignalInSnippet(text: string): boolean {
+    return /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+/.test(text);
+  }
+
   private extractFollowersFromSnippet(text: string): number | null {
     if (!text) return null;
     const m = text.match(/(\d[\d,.]*)\s*([KkMmBb])?\s*(?:[Ff]ollowers?|[Ss]eguidores?)/);
@@ -674,16 +683,19 @@ export class InstagramPersonalBrandEngine {
       }
 
       const handleToSnippet = new Map<string, string>();
+      const handleToTitle   = new Map<string, string>();
       const rawHandles: string[] = [];
       for (const item of allOrganicResults) {
         const url = ((item.url as string) || (item.link as string) || '').toLowerCase();
-        const snippet = ((item.description as string) || (item.snippet as string) || (item.title as string) || '');
+        const snippet = ((item.description as string) || (item.snippet as string) || '');
+        const title   = (item.title as string) || '';
         const igMatch = url.match(/instagram\.com\/([^/?#\s]+)/);
         if (igMatch) {
           const h = igMatch[1].trim();
           if (h && !SKIP_HANDLES.has(h) && !seenHandles.has(h)) {
             rawHandles.push(h);
             if (snippet) handleToSnippet.set(h, snippet);
+            if (title)   handleToTitle.set(h, title);
           }
         }
       }
@@ -694,19 +706,29 @@ export class InstagramPersonalBrandEngine {
 
       // Snippet follower pre-filter (free — no API cost)
       let snippetFiltered = 0; let snippetPassed = 0; let snippetUnknown = 0;
-      const novelHandles: string[] = [];
+      const bucketA: string[] = []; // email signal visible in Google snippet → scrape first
+      const bucketB: string[] = []; // no email in snippet → may have Gmail in Linktree/Contact
       for (const h of uniqueRawHandles) {
         const snippet = handleToSnippet.get(h) || '';
+        const title   = handleToTitle.get(h) || '';
         const snippetFollowers = this.extractFollowersFromSnippet(snippet);
         if (snippetFollowers !== null) {
           if (snippetFollowers < minFollowers || snippetFollowers > maxFollowers) { snippetFiltered++; continue; }
           snippetPassed++;
         } else { snippetUnknown++; }
-        novelHandles.push(h);
+        // Bucket A: any @domain pattern visible in snippet or title
+        if (this.hasEmailSignalInSnippet(snippet + ' ' + title)) {
+          bucketA.push(h);
+        } else {
+          bucketB.push(h);
+        }
       }
+      // Bucket A first — highest probability of having a findable email
+      const novelHandles = [...bucketA, ...bucketB];
       if (snippetFiltered > 0 || snippetPassed > 0) {
-        onLog(`[PRE-FILTER] Snippet regex: ${snippetFiltered} descartados pre-scrape, ${snippetPassed} pasan, ${snippetUnknown} sin dato`);
+        onLog(`[PRE-FILTER] Snippet: ${snippetFiltered} descartados pre-scrape, ${snippetPassed} pasan, ${snippetUnknown} sin dato`);
       }
+      onLog(`[BUCKET SORT] A (email en snippet): ${bucketA.length} | B (sin email en snippet): ${bucketB.length}`);
 
       onLog('🔎 STEP 1/4 ✓ — ' + allOrganicResults.length + ' organic → ' + novelHandles.length + ' handles nuevos (Instagram)');
 
@@ -721,10 +743,17 @@ export class InstagramPersonalBrandEngine {
       consecutiveZeros = 0;
 
       // ── STEP 2: Instagram profile scraper ────────────────────────────────────
-      onLog('👤 STEP 2/4 — Fetching ' + novelHandles.length + ' Instagram profiles...');
+      // Cap the batch sent to Apify: if Bucket A alone covers 3× the slots needed,
+      // only scrape Bucket A this attempt (saves credits). Otherwise scrape all, cap 40.
+      const slotsNeeded = targetCount - accepted.length;
+      const MAX_IG_BATCH = (bucketA.length >= slotsNeeded * 3)
+        ? Math.min(bucketA.length, 40)
+        : Math.min(novelHandles.length, 40);
+      const batchToScrape = novelHandles.slice(0, MAX_IG_BATCH);
+      onLog('👤 STEP 2/4 — Fetching ' + batchToScrape.length + ' Instagram profiles (Bucket A: ' + Math.min(bucketA.length, MAX_IG_BATCH) + ', Bucket B: ' + Math.max(0, batchToScrape.length - Math.min(bucketA.length, MAX_IG_BATCH)) + ')...');
       let profiles: unknown[];
       try {
-        profiles = await this.callApifyActor(INSTAGRAM_PROFILE_SCRAPER, { usernames: novelHandles }, onLog, 1024);
+        profiles = await this.callApifyActor(INSTAGRAM_PROFILE_SCRAPER, { usernames: batchToScrape }, onLog, 1024);
       } catch (e: unknown) {
         onLog('👤 STEP 2/4 ✗ Profile scraper failed: ' + (e instanceof Error ? e.message : String(e)));
         continue;

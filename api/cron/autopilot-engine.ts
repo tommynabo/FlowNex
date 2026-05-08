@@ -119,15 +119,7 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
 
   const { data: campaigns, error: dbErr } = await supabase
     .from('campaigns')
-    .select(`
-      id, user_id, name, hashtags,
-      icp_min_followers, icp_max_followers, icp_regions, icp_content_types, icp_type,
-      instantly_campaign_id,
-      autopilot_enabled, autopilot_start_hour, autopilot_end_hour,
-      autopilot_batch_size, autopilot_daily_limit,
-      autopilot_leads_today, autopilot_reset_date, autopilot_last_run_at,
-      autopilot_timezone
-    `)
+    .select('*')
     .eq('autopilot_enabled', true)
     .eq('status', 'active');
 

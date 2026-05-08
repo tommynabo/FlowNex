@@ -19,7 +19,27 @@
  */
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { FACELESS_CLIPPER_KEYWORD_POOLS } from '../search/TikTokFacelessEngine';
+
+// ── Keyword pools (copied here to avoid importing browser-side TikTokFacelessEngine) ──
+const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
+  ['"gmail.com"', '"clipper"', '"editor"', '"edits"', '"daily clips"', '"dm for promo"'],
+  ['"gmail.com"', '"no excuses"', '"best version"', '"discipline"', '"slideshow"', '"no face"'],
+  ['"gmail.com"', '"hormozi"', '"iman gadzhi"', '"david goggins"', '"tate"', '"goggins"'],
+  ['"gmail.com"', '"smma"', '"skool"', '"wop"', '"online business"', '"make money online"'],
+  ['"business inquiries"', '"for business"', '"for collabs"', '"clips"', '"motivation"', '"mindset"'],
+  ['"dm for promo"', '"dm for promos"', '"dm for rates"', '"hustle"', '"grind"', '"discipline"'],
+  ['"payhip.com"', '"gumroad.com"', '"forms.gle"', '"clips"', '"motivation"', '"slideshow"'],
+  ['"gmail.com"', '"hormozi clips"', '"goggins edits"', '"tate clips"', '"gadzhi clips"', '"alex hormozi"'],
+  ['"skool"', '"wop"', '"clipping"', '"dm for collab"', '"gmail.com"', '"daily clips"'],
+  ['"#gymmotivation"', '"#motivation"', '"#discipline"', '"#hardwork"', '"slideshow"'],
+  ['"#gymtok"', '"#fitness"', '"#hustle"', '"slideshow"', '"#bestversion"'],
+  ['"#physique"', '"#gains"', '"#gym"', '"slideshow"', '"#motivation"'],
+  ['"@clipper"', '"@editor"', '"@motivation"', '"gmail.com"', '"dm for promo"'],
+  ['"@hormozi"', '"@gadzhi"', '"@goggins"', '"@tate"', '"gmail.com"', '"edits"'],
+  ['"bodybuilding fan page"', '"gym motivation"', '"gmail.com"', '"dm for collab"', '"physique page"', '"fan page"'],
+  ['"fitness clips"', '"gym clips"', '"bodybuilder"', '"gmail.com"', '"dm for paid"', '"paid collab"'],
+  ['"DM LEAN"', '"DM SHRED"', '"DM BULK"', '"DM PROGRAM"', '"skinny-fat"', '"skinny fat"'],
+];
 
 // ── Apify actor IDs (same as TikTokFacelessEngine) ───────────────────────────
 const GOOGLE_SEARCH_SCRAPER  = 'nFJndFXA5zjCTuudP';

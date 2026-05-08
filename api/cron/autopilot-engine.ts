@@ -24,7 +24,9 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient }                       from '@supabase/supabase-js';
-import { runAutopilotBatch, CampaignRow }     from '../../services/autopilot/CronSearchOrchestrator';
+// CronSearchOrchestrator is loaded dynamically inside the handler to catch
+// any module-resolution errors and surface them as JSON instead of FUNCTION_INVOCATION_FAILED
+import type { CampaignRow }                   from '../../services/autopilot/CronSearchOrchestrator';
 
 // ── Supabase (service role — bypasses RLS for cron writes) ───────────────────
 
@@ -71,6 +73,17 @@ function isInsideWindow(currentHour: number, startHour: number, endHour: number)
 // ── Handler ───────────────────────────────────────────────────────────────────
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Top-level try-catch: surfaces any crash as JSON instead of FUNCTION_INVOCATION_FAILED
+  try {
+    return await _handler(req, res);
+  } catch (fatal) {
+    const msg = fatal instanceof Error ? fatal.message : String(fatal);
+    console.error('[autopilot-engine] FATAL:', msg);
+    return res.status(500).json({ error: 'Fatal crash', detail: msg });
+  }
+}
+
+async function _handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET' && req.method !== 'POST') {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
@@ -180,6 +193,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let batchResult                       = { leadsFound: 0, addedToInstantly: 0, skippedDuplicate: 0, errors: [] as string[] };
 
     try {
+      // Dynamic import to surface module-resolution errors as JSON
+      const { runAutopilotBatch } = await import('../../services/autopilot/CronSearchOrchestrator');
       batchResult = await runAutopilotBatch(campaign, supabase, apifyToken, instantlyKey);
       if (batchResult.errors.length > 0 && batchResult.leadsFound === 0) {
         batchStatus  = 'error';

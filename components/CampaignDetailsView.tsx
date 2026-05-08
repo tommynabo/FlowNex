@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Campaign, SearchConfigState, Lead } from '../lib/types';
-import { ArrowLeft, Search, Table, Download, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Search, Table, Download, ChevronLeft, ChevronRight, Bot } from 'lucide-react';
 import { SearchConfig } from './SearchConfig';
 import { AgentTerminal } from './AgentTerminal';
 import { LeadsTable } from './LeadsTable';
+import { AutopilotPanel } from './AutopilotPanel';
 
 const PAGE_SIZE = 25;
 
@@ -24,6 +25,7 @@ interface CampaignDetailsViewProps {
   leads: Lead[];
   onViewMessage: (lead: Lead) => void;
   lastSearchCount: number;
+  onUpdateCampaign: (updates: Partial<Campaign>) => void;
 }
 
 export function CampaignDetailsView({
@@ -42,8 +44,9 @@ export function CampaignDetailsView({
   leads,
   onViewMessage,
   lastSearchCount,
+  onUpdateCampaign,
 }: CampaignDetailsViewProps) {
-  const [activeTab, setActiveTab] = useState<'generator' | 'results'>('generator');
+  const [activeTab, setActiveTab] = useState<'generator' | 'results' | 'autopilot'>('generator');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [page, setPage] = useState(1);
@@ -123,6 +126,15 @@ export function CampaignDetailsView({
             <Table className="w-4 h-4" />
             Results Pipeline
           </button>
+          <button
+            onClick={() => setActiveTab('autopilot')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+              activeTab === 'autopilot' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Bot className="w-4 h-4" />
+            Autopilot
+          </button>
         </div>
       </div>
 
@@ -146,6 +158,10 @@ export function CampaignDetailsView({
             onToggleExpand={onToggleTerminal}
           />
         </div>
+      )}
+
+      {activeTab === 'autopilot' && (
+        <AutopilotPanel campaign={campaign} onUpdate={onUpdateCampaign} />
       )}
 
       {activeTab === 'results' && (

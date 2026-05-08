@@ -66,6 +66,31 @@ export interface IcpFilters {
   icpType: ICPType;            // 'personal_brand' | 'faceless_clipper'
 }
 
+export interface AutopilotSettings {
+  enabled: boolean;
+  startHour: number;        // 0–23
+  endHour: number;          // 0–23 (can cross midnight, e.g. 22→6)
+  batchSize: number;        // leads to scrape per cron run (1–20)
+  dailyLimit: number;       // max leads per day (1–500)
+  leadsToday: number;       // counter reset daily by the cron
+  resetDate: string | null; // 'YYYY-MM-DD' — date the counter was last reset
+  lastRunAt: string | null; // ISO timestamp of last successful run
+}
+
+export interface AutopilotRun {
+  id: string;
+  campaignId: string;
+  userId: string;
+  startedAt: string;
+  finishedAt: string | null;
+  leadsFound: number;
+  leadsAddedToInstantly: number;
+  status: 'running' | 'success' | 'error' | 'skipped';
+  errorMessage: string | null;
+  batchSize: number | null;
+  dailyTotalAfter: number | null;
+}
+
 export interface Campaign {
   id: string;
   name: string;
@@ -77,6 +102,7 @@ export interface Campaign {
   createdAt: Date;
   userId: string;
   instantlyCampaignId?: string;
+  autopilot?: AutopilotSettings;
 }
 
 export interface FlowNextConfig {

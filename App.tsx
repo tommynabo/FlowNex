@@ -96,6 +96,12 @@ function App() {
     }
   };
 
+  const handleUpdateCampaign = (campaignId: string, updates: Partial<Campaign>) => {
+    setCampaigns(prev => prev.map(c =>
+      c.id === campaignId ? { ...c, ...updates } : c
+    ));
+  };
+
   const addSetterLog = (message: string) => {
     setSetterLogs(prev => [...prev, message]);
     setSetterTerminalVisible(true);
@@ -315,6 +321,16 @@ function App() {
           createdAt: new Date(r.created_at),
           userId: r.user_id,
           instantlyCampaignId: r.instantly_campaign_id ?? undefined,
+          autopilot: r.autopilot_enabled !== undefined ? {
+            enabled:    r.autopilot_enabled   ?? false,
+            startHour:  r.autopilot_start_hour  ?? 22,
+            endHour:    r.autopilot_end_hour    ?? 6,
+            batchSize:  r.autopilot_batch_size  ?? 5,
+            dailyLimit: r.autopilot_daily_limit ?? 50,
+            leadsToday: r.autopilot_leads_today ?? 0,
+            resetDate:  r.autopilot_reset_date  ?? null,
+            lastRunAt:  r.autopilot_last_run_at ?? null,
+          } : undefined,
         })));
       }
     } catch (e) {
@@ -671,6 +687,7 @@ function App() {
                   })()}
                   onViewMessage={setSelectedLead}
                   lastSearchCount={lastSearchCount}
+                  onUpdateCampaign={(updates) => activeCampaign && handleUpdateCampaign(activeCampaign.id, updates)}
                 />
               ) : (
                 <CampaignsView

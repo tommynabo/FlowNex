@@ -9,6 +9,10 @@
         {
             "path": "/api/cron/content-verification",
             "schedule": "*/10 * * * *"
+        },
+        {
+            "path": "/api/cron/autopilot-engine",
+            "schedule": "0 * * * *"
         }
     ]
 }

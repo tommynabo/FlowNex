@@ -43,7 +43,7 @@ import type { LogCallback, ResultCallback } from './SearchService';
 // contact-intent phrases. Google indexes TikTok bio text — profiles whose bio contains their
 // email are guaranteed contactable AND are naturally nano/micro-size (big creators never put
 // personal Gmail in bio). This eliminates the ~95% email-discovery failure of the old approach.
-const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
+export const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
   // 0. Clipper / editor identity + Gmail — highest precision, guaranteed email
   ['"gmail.com"', '"clipper"', '"editor"', '"edits"', '"daily clips"', '"dm for promo"'],
   // 1. EN faceless motivation / no-excuses + Gmail — contactable mindset creators

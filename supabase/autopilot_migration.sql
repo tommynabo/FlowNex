@@ -40,19 +40,16 @@ CREATE INDEX IF NOT EXISTS autopilot_runs_started_at_idx  ON public.autopilot_ru
 
 ALTER TABLE public.autopilot_runs ENABLE ROW LEVEL SECURITY;
 
-DO $$ BEGIN
-  -- Users read only their own runs
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='autopilot_runs' AND policyname='autopilot_runs_select') THEN
-    CREATE POLICY "autopilot_runs_select" ON public.autopilot_runs
-      FOR SELECT USING (auth.uid() = user_id);
-  END IF;
-  -- Service role writes (cron uses service role key which bypasses RLS, but policy needed for completeness)
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='autopilot_runs' AND policyname='autopilot_runs_insert') THEN
-    CREATE POLICY "autopilot_runs_insert" ON public.autopilot_runs
-      FOR INSERT WITH CHECK (true);
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='autopilot_runs' AND policyname='autopilot_runs_update') THEN
-    CREATE POLICY "autopilot_runs_update" ON public.autopilot_runs
-      FOR UPDATE USING (true);
-  END IF;
-END $$;
+-- Users read only their own runs
+DROP POLICY IF EXISTS "autopilot_runs_select" ON public.autopilot_runs;
+CREATE POLICY "autopilot_runs_select" ON public.autopilot_runs
+  FOR SELECT USING (auth.uid() = user_id);
+
+-- Service role writes (cron uses service role key which bypasses RLS)
+DROP POLICY IF EXISTS "autopilot_runs_insert" ON public.autopilot_runs;
+CREATE POLICY "autopilot_runs_insert" ON public.autopilot_runs
+  FOR INSERT WITH CHECK (true);
+
+DROP POLICY IF EXISTS "autopilot_runs_update" ON public.autopilot_runs;
+CREATE POLICY "autopilot_runs_update" ON public.autopilot_runs
+  FOR UPDATE USING (true);

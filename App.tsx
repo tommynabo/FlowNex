@@ -330,6 +330,7 @@ function App() {
             leadsToday: r.autopilot_leads_today ?? 0,
             resetDate:  r.autopilot_reset_date  ?? null,
             lastRunAt:  r.autopilot_last_run_at ?? null,
+            timezone:   r.autopilot_timezone    ?? 'UTC',
           } : undefined,
         })));
       }

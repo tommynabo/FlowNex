@@ -68,13 +68,14 @@ export interface IcpFilters {
 
 export interface AutopilotSettings {
   enabled: boolean;
-  startHour: number;        // 0–23
+  startHour: number;        // 0–23 (in the campaign's timezone)
   endHour: number;          // 0–23 (can cross midnight, e.g. 22→6)
   batchSize: number;        // leads to scrape per cron run (1–20)
   dailyLimit: number;       // max leads per day (1–500)
   leadsToday: number;       // counter reset daily by the cron
   resetDate: string | null; // 'YYYY-MM-DD' — date the counter was last reset
   lastRunAt: string | null; // ISO timestamp of last successful run
+  timezone: string;         // IANA timezone string, e.g. 'Europe/Madrid'
 }
 
 export interface AutopilotRun {

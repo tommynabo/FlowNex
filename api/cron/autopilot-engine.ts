@@ -38,6 +38,24 @@ function getSupabase() {
 // ── Hourly window check ───────────────────────────────────────────────────────
 
 /**
+ * Returns the current hour (0–23) in a given IANA timezone.
+ * Falls back to UTC if the timezone string is invalid.
+ */
+function getCurrentHourInTz(timezone: string): number {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      hour: 'numeric',
+      hour12: false,
+    }).formatToParts(new Date());
+    const h = parseInt(parts.find(p => p.type === 'hour')?.value ?? '0', 10);
+    return h % 24;
+  } catch {
+    return new Date().getUTCHours();
+  }
+}
+
+/**
  * Returns true if currentHour is inside [startHour, endHour].
  * Supports windows that cross midnight, e.g. startHour=22, endHour=6.
  */
@@ -91,7 +109,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       instantly_campaign_id,
       autopilot_enabled, autopilot_start_hour, autopilot_end_hour,
       autopilot_batch_size, autopilot_daily_limit,
-      autopilot_leads_today, autopilot_reset_date, autopilot_last_run_at
+      autopilot_leads_today, autopilot_reset_date, autopilot_last_run_at,
+      autopilot_timezone
     `)
     .eq('autopilot_enabled', true)
     .eq('status', 'active');
@@ -100,7 +119,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: `DB query failed: ${dbErr.message}` });
   }
 
-  const currentHour = new Date().getUTCHours();
+  const currentHour = new Date().getUTCHours(); // kept for logging only
   const todayDate   = new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
 
   const summary: Array<{
@@ -116,10 +135,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   for (const campaign of (campaigns ?? []) as CampaignRow[]) {
     const startHour = campaign.autopilot_start_hour ?? 22;
     const endHour   = campaign.autopilot_end_hour   ?? 6;
+    const campaignTz = (campaign as CampaignRow & { autopilot_timezone?: string }).autopilot_timezone ?? 'UTC';
+    const localHour  = getCurrentHourInTz(campaignTz);
 
     // ── Window check ──────────────────────────────────────────────────────────
-    if (!isInsideWindow(currentHour, startHour, endHour)) {
-      summary.push({ campaignId: campaign.id, campaignName: campaign.name, status: 'skipped', reason: `Outside window (${startHour}h–${endHour}h, now ${currentHour}h UTC)` });
+    if (!isInsideWindow(localHour, startHour, endHour)) {
+      summary.push({ campaignId: campaign.id, campaignName: campaign.name, status: 'skipped', reason: `Outside window (${startHour}h–${endHour}h in ${campaignTz}, now ${localHour}h)` });
       continue;
     }
 

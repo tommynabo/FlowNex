@@ -15,7 +15,8 @@ ALTER TABLE public.campaigns
   ADD COLUMN IF NOT EXISTS autopilot_daily_limit    SMALLINT    DEFAULT 50    CHECK (autopilot_daily_limit >= 1 AND autopilot_daily_limit <= 500),
   ADD COLUMN IF NOT EXISTS autopilot_leads_today    SMALLINT    DEFAULT 0,
   ADD COLUMN IF NOT EXISTS autopilot_reset_date     DATE,
-  ADD COLUMN IF NOT EXISTS autopilot_last_run_at    TIMESTAMPTZ;
+  ADD COLUMN IF NOT EXISTS autopilot_last_run_at    TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS autopilot_timezone       TEXT        DEFAULT 'UTC';
 
 -- ── 2. CREATE AUTOPILOT_RUNS AUDIT TABLE ─────────────────────────────────────
 

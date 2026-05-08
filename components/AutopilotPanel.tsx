@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Campaign, AutopilotSettings, AutopilotRun } from '../lib/types';
+import { Campaign, AutopilotRun } from '../lib/types';
 import { supabase } from '../lib/supabase';
 import {
   Bot,
@@ -13,6 +13,7 @@ import {
   ToggleRight,
   AlertCircle,
   ChevronRight,
+  Globe,
 } from 'lucide-react';
 
 interface AutopilotPanelProps {
@@ -23,20 +24,78 @@ interface AutopilotPanelProps {
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 const fmt24 = (h: number) => `${String(h).padStart(2, '0')}:00`;
 
-function estimateNextRun(startHour: number, endHour: number, leadsToday: number, dailyLimit: number): string {
-  if (leadsToday >= dailyLimit) return 'Daily limit reached';
-  const now = new Date();
-  const utcHour = now.getUTCHours();
-  // Find next hour inside the window
+// Curated IANA timezone list — covers Spain + main EN-speaking markets
+const TIMEZONES: { label: string; value: string }[] = [
+  { label: 'UTC (Universal)',             value: 'UTC' },
+  { label: 'Europa / Madrid (CET/CEST)',  value: 'Europe/Madrid' },
+  { label: 'Europa / London (GMT/BST)',   value: 'Europe/London' },
+  { label: 'Europa / Paris',             value: 'Europe/Paris' },
+  { label: 'Europa / Berlin',            value: 'Europe/Berlin' },
+  { label: 'Europa / Lisbon',            value: 'Europe/Lisbon' },
+  { label: 'América / New York (ET)',     value: 'America/New_York' },
+  { label: 'América / Chicago (CT)',      value: 'America/Chicago' },
+  { label: 'América / Denver (MT)',       value: 'America/Denver' },
+  { label: 'América / Los Angeles (PT)', value: 'America/Los_Angeles' },
+  { label: 'América / Toronto',          value: 'America/Toronto' },
+  { label: 'América / Vancouver',        value: 'America/Vancouver' },
+  { label: 'América / México City',      value: 'America/Mexico_City' },
+  { label: 'América / Bogotá',           value: 'America/Bogota' },
+  { label: 'América / Lima',             value: 'America/Lima' },
+  { label: 'América / Buenos Aires',     value: 'America/Argentina/Buenos_Aires' },
+  { label: 'América / Santiago',         value: 'America/Santiago' },
+  { label: 'América / São Paulo',        value: 'America/Sao_Paulo' },
+  { label: 'América / Caracas',          value: 'America/Caracas' },
+  { label: 'Australia / Sydney (AEST)',  value: 'Australia/Sydney' },
+  { label: 'Pacific / Auckland (NZST)', value: 'Pacific/Auckland' },
+  { label: 'Asia / Dubai (GST)',         value: 'Asia/Dubai' },
+];
+
+// Detect browser's IANA timezone, fallback to Europe/Madrid
+function detectTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Madrid';
+  } catch {
+    return 'Europe/Madrid';
+  }
+}
+
+// Get current hour (0–23) in a given IANA timezone
+function getCurrentHourInTz(timezone: string): number {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      hour: 'numeric',
+      hour12: false,
+    }).formatToParts(new Date());
+    const h = parseInt(parts.find(p => p.type === 'hour')?.value ?? '0', 10);
+    return h % 24;
+  } catch {
+    return new Date().getUTCHours();
+  }
+}
+
+// Shared dark select className — fixes white-on-white on macOS
+const SELECT_CLS =
+  'w-full bg-background text-foreground border border-border rounded-lg px-3 py-2 text-sm focus:border-primary outline-none [color-scheme:dark]';
+
+function estimateNextRun(
+  startHour: number,
+  endHour: number,
+  leadsToday: number,
+  dailyLimit: number,
+  timezone: string,
+): string {
+  if (leadsToday >= dailyLimit) return 'Límite diario alcanzado';
+  if (startHour === endHour) return 'Ventana inválida';
+  const localHour = getCurrentHourInTz(timezone);
   for (let offset = 1; offset <= 24; offset++) {
-    const h = (utcHour + offset) % 24;
+    const h = (localHour + offset) % 24;
     const inside = startHour <= endHour
       ? h >= startHour && h < endHour
       : h >= startHour || h < endHour;
     if (inside) {
-      const next = new Date(now);
-      next.setUTCHours(h, 0, 0, 0);
-      if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+      const next = new Date();
+      next.setHours(next.getHours() + offset, 0, 0, 0);
       return next.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' (local)';
     }
   }
@@ -46,14 +105,15 @@ function estimateNextRun(startHour: number, endHour: number, leadsToday: number,
 export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
   const ap = campaign.autopilot;
 
-  const [enabled,     setEnabled]     = useState(ap?.enabled     ?? false);
-  const [startHour,   setStartHour]   = useState(ap?.startHour   ?? 22);
-  const [endHour,     setEndHour]     = useState(ap?.endHour     ?? 6);
-  const [batchSize,   setBatchSize]   = useState(ap?.batchSize   ?? 5);
-  const [dailyLimit,  setDailyLimit]  = useState(ap?.dailyLimit  ?? 50);
-  const [saving,      setSaving]      = useState(false);
-  const [saveOk,      setSaveOk]      = useState(false);
-  const [runs,        setRuns]        = useState<AutopilotRun[]>([]);
+  const [enabled,    setEnabled]    = useState(ap?.enabled    ?? false);
+  const [startHour,  setStartHour]  = useState(ap?.startHour  ?? 22);
+  const [endHour,    setEndHour]    = useState(ap?.endHour    ?? 6);
+  const [batchSize,  setBatchSize]  = useState(ap?.batchSize  ?? 5);
+  const [dailyLimit, setDailyLimit] = useState(ap?.dailyLimit ?? 50);
+  const [timezone,   setTimezone]   = useState(ap?.timezone   || detectTimezone());
+  const [saving,     setSaving]     = useState(false);
+  const [saveOk,     setSaveOk]     = useState(false);
+  const [runs,       setRuns]       = useState<AutopilotRun[]>([]);
   const [loadingRuns, setLoadingRuns] = useState(true);
 
   const leadsToday = ap?.leadsToday ?? 0;
@@ -97,6 +157,7 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
       autopilot_end_hour:    endHour,
       autopilot_batch_size:  batchSize,
       autopilot_daily_limit: dailyLimit,
+      autopilot_timezone:    timezone,
     }).eq('id', campaign.id);
 
     setSaving(false);
@@ -109,9 +170,10 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
           endHour,
           batchSize,
           dailyLimit,
+          timezone,
           leadsToday,
-          resetDate:  ap?.resetDate  ?? null,
-          lastRunAt:  ap?.lastRunAt  ?? null,
+          resetDate: ap?.resetDate ?? null,
+          lastRunAt: ap?.lastRunAt ?? null,
         },
       });
       setTimeout(() => setSaveOk(false), 2500);
@@ -119,6 +181,17 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
   };
 
   const pct = dailyLimit > 0 ? Math.min(100, Math.round((leadsToday / dailyLimit) * 100)) : 0;
+
+  // UTC offset label for the selected timezone
+  const tzOffsetLabel = (() => {
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        timeZoneName: 'short',
+      }).formatToParts(new Date());
+      return parts.find(p => p.type === 'timeZoneName')?.value ?? '';
+    } catch { return ''; }
+  })();
 
   return (
     <div className="space-y-6 animate-[fadeIn_0.3s_ease-out]">
@@ -154,15 +227,36 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
         <div className="bg-card border border-border rounded-xl p-5 space-y-4">
           <div className="flex items-center gap-2">
             <Clock className="w-4 h-4 text-primary" />
-            <h3 className="font-semibold text-sm">Ventana horaria (UTC)</h3>
+            <h3 className="font-semibold text-sm">Ventana horaria</h3>
           </div>
+
+          {/* Timezone selector */}
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+              <Globe className="w-3 h-3" /> Zona horaria
+              {tzOffsetLabel && (
+                <span className="ml-1 text-primary font-medium">{tzOffsetLabel}</span>
+              )}
+            </label>
+            <select
+              value={timezone}
+              onChange={e => setTimezone(e.target.value)}
+              className={SELECT_CLS}
+            >
+              {TIMEZONES.map(tz => (
+                <option key={tz.value} value={tz.value}>{tz.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Hour pickers */}
           <div className="flex items-center gap-3">
             <div className="flex-1">
               <label className="text-xs text-muted-foreground mb-1 block">Hora inicio</label>
               <select
                 value={startHour}
                 onChange={e => setStartHour(Number(e.target.value))}
-                className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm focus:border-primary outline-none"
+                className={SELECT_CLS}
               >
                 {HOURS.map(h => (
                   <option key={h} value={h}>{fmt24(h)}</option>
@@ -175,7 +269,7 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
               <select
                 value={endHour}
                 onChange={e => setEndHour(Number(e.target.value))}
-                className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm focus:border-primary outline-none"
+                className={SELECT_CLS}
               >
                 {HOURS.map(h => (
                   <option key={h} value={h}>{fmt24(h)}</option>
@@ -260,7 +354,7 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
           <p className="text-xs text-muted-foreground mb-1">Próximo run</p>
           <p className="text-sm font-medium">
             {enabled
-              ? estimateNextRun(startHour, endHour, leadsToday, dailyLimit)
+              ? estimateNextRun(startHour, endHour, leadsToday, dailyLimit, timezone)
               : 'Autopilot inactivo'}
           </p>
         </div>

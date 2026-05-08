@@ -24,8 +24,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient }                       from '@supabase/supabase-js';
-import { runAutopilotBatch }                  from '../../services/autopilot/CronSearchOrchestrator';
-import type { CampaignRow }                   from '../../services/autopilot/CronSearchOrchestrator';
+import { runAutopilotBatch, CampaignRow }     from './CronSearchOrchestrator';
 
 // ── Supabase (service role — bypasses RLS for cron writes) ───────────────────
 

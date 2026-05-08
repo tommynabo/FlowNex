@@ -32,8 +32,8 @@ import type { CampaignRow }                   from '../../services/autopilot/Cro
 
 function getSupabase() {
   const url = process.env.VITE_SUPABASE_URL ?? process.env.SUPABASE_URL ?? '';
-  const key = process.env.SUPABASE_SERVICE_KEY ?? '';
-  if (!url || !key) throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_KEY env vars');
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY ?? '';
+  if (!url || !key) throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars');
   return createClient(url, key);
 }
 
@@ -99,11 +99,11 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // ── 2. Validate env vars ───────────────────────────────────────────────────
-  const apifyToken   = process.env.APIFY_TOKEN ?? '';
+  const apifyToken   = process.env.APIFY_TOKEN ?? process.env.VITE_APIFY_API_TOKEN ?? '';
   const instantlyKey = process.env.INSTANTLY_API_KEY ?? '';
 
   if (!apifyToken) {
-    return res.status(500).json({ error: 'Missing APIFY_TOKEN env var' });
+    return res.status(500).json({ error: 'Missing APIFY_TOKEN / VITE_APIFY_API_TOKEN env var' });
   }
   if (!instantlyKey) {
     return res.status(500).json({ error: 'Missing INSTANTLY_API_KEY env var' });

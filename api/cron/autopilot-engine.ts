@@ -24,8 +24,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient }                       from '@supabase/supabase-js';
-// CronSearchOrchestrator is loaded dynamically inside the handler to catch
-// any module-resolution errors and surface them as JSON instead of FUNCTION_INVOCATION_FAILED
+import { runAutopilotBatch }                  from '../../services/autopilot/CronSearchOrchestrator';
 import type { CampaignRow }                   from '../../services/autopilot/CronSearchOrchestrator';
 
 // ── Supabase (service role — bypasses RLS for cron writes) ───────────────────
@@ -185,8 +184,6 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
     let batchResult                       = { leadsFound: 0, addedToInstantly: 0, skippedDuplicate: 0, errors: [] as string[] };
 
     try {
-      // Dynamic import to surface module-resolution errors as JSON
-      const { runAutopilotBatch } = await import('../../services/autopilot/CronSearchOrchestrator');
       batchResult = await runAutopilotBatch(campaign, supabase, apifyToken, instantlyKey);
       if (batchResult.errors.length > 0 && batchResult.leadsFound === 0) {
         batchStatus  = 'error';

@@ -92,6 +92,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!apifyToken) {
     return res.status(500).json({ error: 'Missing APIFY_TOKEN env var' });
   }
+  if (!instantlyKey) {
+    return res.status(500).json({ error: 'Missing INSTANTLY_API_KEY env var' });
+  }
 
   // ── 3. Load active autopilot campaigns ────────────────────────────────────
   let supabase: ReturnType<typeof createClient>;

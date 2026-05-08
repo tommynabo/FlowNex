@@ -81,6 +81,7 @@ export interface CampaignRow {
   autopilot_end_hour: number;
   autopilot_reset_date: string | null;
   autopilot_last_run_at: string | null;
+  autopilot_timezone?: string;
 }
 
 export interface BatchResult {
@@ -162,12 +163,18 @@ async function runActorSync(
 
   // Poll until done (max timeoutSecs × 1000ms + 10s grace)
   const deadline = Date.now() + (timeoutSecs + 10) * 1000;
+  let finalStatus = '';
   while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, 2000));
     const status = await apifyGet(`acts/${actorId}/runs/${runId}`, token) as { data?: { status?: string } };
-    const s = status.data?.status ?? '';
-    if (s === 'SUCCEEDED') break;
-    if (s === 'FAILED' || s === 'ABORTED') throw new Error(`Apify actor ${actorId} ${s}`);
+    finalStatus = status.data?.status ?? '';
+    if (finalStatus === 'SUCCEEDED') break;
+    if (finalStatus === 'FAILED' || finalStatus === 'ABORTED') throw new Error(`Apify actor ${actorId} ${finalStatus}`);
+  }
+
+  // Guard: if polling expired before actor finished, don't read incomplete data
+  if (finalStatus !== 'SUCCEEDED') {
+    throw new Error(`Apify actor ${actorId} timed out (still ${finalStatus || 'RUNNING'} after ${timeoutSecs + 10}s)`);
   }
 
   const dataset = await apifyGet(`datasets/${datasetId}/items?limit=100`, token) as unknown[];
@@ -395,10 +402,8 @@ export async function runAutopilotBatch(
     const email = extractEmailFromBio(bio);
     if (!email) continue; // email-first strategy: skip if no email in bio
 
-    seenHandles.add(handle);
-    result.leadsFound++;
-
     // ── Save to Supabase leads table ──
+    // Note: seenHandles.add() called AFTER successful insert to allow retry on transient errors
     const { error: insertErr } = await supabase.from('leads').insert({
       user_id:       campaign.user_id,
       campaign_id:   campaign.id,
@@ -421,6 +426,10 @@ export async function runAutopilotBatch(
       result.errors.push(`DB insert failed for @${handle}: ${insertErr.message}`);
       continue;
     }
+
+    // Mark handle as seen only after successful insert
+    seenHandles.add(handle);
+    result.leadsFound++;
 
     // ── Add to Instantly ──
     if (instantlyId && instantlyKey) {

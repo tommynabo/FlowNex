@@ -82,6 +82,10 @@ export const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
   // Only fitness coaches actively selling 1:1 coaching use these exact CTAs in their bio.
   // "skinny-fat" is a precision niche term: near-zero false positives.
   ['"DM LEAN"', '"DM SHRED"', '"DM BULK"', '"DM PROGRAM"', '"skinny-fat"', '"skinny fat"'],
+  // 17. Dedicated #gymtok + #gymotivation pool — both hashtags confirmed high-yield for ICP.
+  // Pool 10 already uses #gymtok combined with other terms; this pool dedicates the budget
+  // specifically to the #gymtok × #gymotivation intersection (two separate TikTok hashtags).
+  ['"#gymtok"', '"#gymotivation"', '"#gym"', '"#gains"', '"slideshow"'],
 ];
 
 // ── Stats Block query constants ─────────────────────────────────────────────
@@ -152,7 +156,7 @@ const ANTI_ICP_NEGATIVES = '-restaurant -store -boutique -cooking -dance';
 // Pool is ordered roughly by expected A6-ICP yield (highest first).
 // @creed.lifter, @moullaga67, @landon.vaughn17 are all discoverable via these hashtags.
 const FITNESS_HASHTAG_POOL = [
-  'gymmotivation', 'gymtok', 'physique', 'gains', 'gymrat',
+  'gymmotivation', 'gymotivation', 'gymtok', 'physique', 'gains', 'gymrat',
   'fitspo', 'hardwork', 'discipline', 'motivation', 'lightweightbaby',
   'mindset', 'neversettle', 'nodaysoff', 'hustle', 'grindset',
 ] as const;

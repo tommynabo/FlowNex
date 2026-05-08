@@ -30,7 +30,7 @@ const FITNESS_REQUIRED_KEYWORDS = [
   'bodybuilding', 'weightlifting', 'lifting', 'physique', 'muscle',
   'strength', 'pilates', 'fitspo', 'fitlife', 'gymlife', 'gymrat',
   'fitnesscoach', 'personaltrainer', 'gains', 'shredded', 'bulk',
-  'macros', 'gymtok', 'fitnessmotivation', 'gymmotivation',
+  'macros', 'gymtok', 'fitnessmotivation', 'gymmotivation', 'gymotivation',
   'nutrition', 'diet', 'weightloss'
 ];
 
@@ -76,6 +76,9 @@ const ANTI_ICP_BIO_KEYWORDS = [
   // Fashion & beauty niches — wrong ICP entirely
   'fashion', 'beauty', 'makeup', 'skincare', 'cosmetics', 'outfit', 'ootd',
   'nail', 'lash', 'glam', 'moda', 'belleza', 'maquillaje',
+  // Princess / lifestyle aesthetic — face-forward personal brand, often beauty/fashion adjacent.
+  // Bio patterns: "✨princess✨", "princess lifestyle", "princess aesthetic"
+  'princess',
   // "That girl" / personal face-forward lifestyle creators — micro-influencers posting their
   // own face, outfits, dance, GRWM, or daily vlogs. NOT faceless factories.
   // @shathatgirl bio pattern: aesthetic gym selfies, outfit videos, dancing with face shown.
@@ -117,6 +120,7 @@ const ANTI_ICP_HANDLE_KEYWORDS = [
   'vlogwith',  // vlog-format personal accounts
   'diaryof',   // diary-style personal accounts
   'lifeof',    // "life of" personal lifestyle accounts
+  'princess',  // princess aesthetic/lifestyle (@princessfit, @fitprincess, @princesslifestyle)
 ];
 
 // Tier-1: explicit creator-economy signals — pass ALONE (high precision).
@@ -153,7 +157,7 @@ const FACELESS_CLIPPER_TIER2_KEYWORDS = [
   // Fitness faceless slideshow signals — present in video caption hashtags.
   // The Hashtag Discovery loop enriches empty bios with these caption terms so they
   // fire in the hard filter. Combined with motivation/discipline/gains → easily ≥3 hits.
-  'gymmotivation', 'gymtok', 'gymlife', 'fitspo', 'gymrat',
+  'gymmotivation', 'gymotivation', 'gymtok', 'gymlife', 'fitspo', 'gymrat',
   'physique', 'gains', 'fitness', 'gym',
   // Re-added at TIER2 (not TIER1): safe now UGC terms are in ANTI_ICP_BIO_KEYWORDS
   'slideshow', 'carousel',
@@ -245,6 +249,22 @@ export class ICPEvaluator {
         onLog(`[HARD FILTER] 🎵 @${handle} skip: music/audio handle signal "${antiHandleKw}" in username`);
         rejections.antiIcp++;
         continue;
+      }
+
+      // Video caption proxy check — uses recent video descriptions as a content signal.
+      // The scraper returns up to 5 videos per profile (_latestVideos[].desc).
+      // If any caption matches an ANTI_ICP_BIO_KEYWORD (makeup, dance, beauty, etc.)
+      // the profile is posting off-ICP content regardless of what their bio says.
+      // Cost: ~0 (pure string comparison on already-downloaded data).
+      const latestVideos = (profile as Record<string, unknown>)._latestVideos as Array<{ desc: string }> | undefined;
+      if (latestVideos && latestVideos.length > 0) {
+        const videoText = latestVideos.map(v => (v.desc || '').toLowerCase()).join(' ');
+        const videoAntiIcpKw = ANTI_ICP_BIO_KEYWORDS.find(kw => videoText.includes(kw));
+        if (videoAntiIcpKw) {
+          onLog(`[HARD FILTER] 🎬 @${handle} skip: anti-ICP content "${videoAntiIcpKw}" in recent video captions`);
+          rejections.antiIcp++;
+          continue;
+        }
       }
 
       // Non-gym / combat sport check — applies to BOTH icpTypes, no override.

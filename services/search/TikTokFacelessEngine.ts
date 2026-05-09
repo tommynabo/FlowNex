@@ -229,7 +229,7 @@ export class TikTokFacelessEngine {
    * buildSearchQuery). All gymtok queries contain email/CTA signals, so the
    * email gate activates normally (isStatsBlock: false).
    */
-  private buildGymtokQuery(attempt: number, slotIndex: number, targetRegions: string[] = []): { query: string; isStatsBlock: boolean } {
+  private buildGymtokQuery(attempt: number, slotIndex: number, targetRegions: string[] = []): { query: string; isStatsBlock: boolean; isGymtok: boolean } {
     const variantIdx = (attempt * 3 + slotIndex) % GYMTOK_QUERY_VARIANTS.length;
     const { query } = GYMTOK_QUERY_VARIANTS[variantIdx];
 
@@ -242,6 +242,7 @@ export class TikTokFacelessEngine {
     return {
       query: locationSuffix ? `${query} ${locationSuffix}` : query,
       isStatsBlock: false,
+      isGymtok: true,
     };
   }
 
@@ -976,20 +977,27 @@ export class TikTokFacelessEngine {
       const queryBatch = Array.from({ length: GOOGLE_QUERY_BATCH }, (_, i) =>
         i < 3
           ? this.buildGymtokQuery(attempt, i, targetRegions)
-          : this.buildSearchQuery(baseAttempt + i, targetRegions, poolOffset)
+          : { ...this.buildSearchQuery(baseAttempt + i, targetRegions, poolOffset), isGymtok: false }
       );
       onLog('');
       onLog('━━━ ATTEMPT ' + attempt + '/' + MAX_RETRIES + ' ━━━  ' + needed + ' lead(s) still needed');
+      // Log which #gymtok variants are active in this attempt
+      const gymtokVariantNames = ['A-email', 'B-CTA', 'C-hashtag×', 'D-faceless', 'E-nicho', 'F-monetización'];
+      const gymtokSlotLabels = [0, 1, 2].map(i => gymtokVariantNames[(attempt * 3 + i) % GYMTOK_QUERY_VARIANTS.length]).join(' | ');
+      onLog('[GYMTOK] 🏋️ Slots 1-3: ' + gymtokSlotLabels);
       onLog('🔎 STEP 1/4 — Google Search (' + GOOGLE_QUERY_BATCH + ' parallel runs, attempt ' + attempt + ')...');
 
       // ── STEP 1: Google Search site:tiktok.com — parallel runs ────────────────
       // Each query launches its own Apify run concurrently.
       // Wall-time ≈ single run (~40s) regardless of GOOGLE_QUERY_BATCH count.
-      // .catch(() => []) — if one run fails the others still deliver results.
+      // Results are kept grouped by run index so handles can be tagged with isGymtok.
       let searchResults: unknown[];
+      // Per-run result arrays — kept separate before flat() to track which run
+      // each handle came from (gymtok vs normal pool).
+      let perRunResults: unknown[][];
       let quotaExceeded = false;
       try {
-        const batchResults = await Promise.all(
+        perRunResults = await Promise.all(
           queryBatch.map(q =>
             this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
               queries: q.query,
@@ -1006,7 +1014,7 @@ export class TikTokFacelessEngine {
           onLog('[ENGINE] ⛔ Apify quota agotada — Abortando inmediatamente.');
           break;
         }
-        searchResults = batchResults.flat();
+        searchResults = perRunResults.flat();
       } catch (e: unknown) {
         const errMsg = e instanceof Error ? e.message : String(e);
         if (errMsg.startsWith('APIFY_QUOTA_EXCEEDED')) {
@@ -1026,28 +1034,36 @@ export class TikTokFacelessEngine {
         continue;
       }
 
-      // Extract TikTok handles from Google Search results
+      // Extract TikTok handles from Google Search results.
+      // perRunResults is kept grouped by run so we can tag each handle with isGymtok
+      // (slots 0-2 are gymtok runs; slots 3-4 are normal pool runs).
       const allOrganicResults: Record<string, unknown>[] = [];
-      for (const item of searchResults as Record<string, unknown>[]) {
-        const organic = item.organicResults as Record<string, unknown>[] | undefined;
-        if (Array.isArray(organic)) allOrganicResults.push(...organic);
-        else if (item.url || item.link) allOrganicResults.push(item);
-      }
-
+      const gymtokHandles = new Set<string>(); // handles that came from a #gymtok run
       const handleToSnippet = new Map<string, string>();
       const handleToTitle   = new Map<string, string>();
       const rawHandles: string[] = [];
-      for (const item of allOrganicResults) {
-        const url     = ((item.url as string) || (item.link as string) || '').toLowerCase();
-        const snippet = ((item.description as string) || (item.snippet as string) || '');
-        const title   = (item.title as string) || '';
-        const ttMatch = url.match(/tiktok\.com\/@([^/?#\s]+)/);
-        if (ttMatch) {
-          const h = ttMatch[1].trim();
-          if (h && !TIKTOK_SKIP_HANDLES.has(h) && !seenHandles.has(h)) {
-            rawHandles.push(h);
-            if (snippet) handleToSnippet.set(h, snippet);
-            if (title)   handleToTitle.set(h, title);
+
+      for (let runIdx = 0; runIdx < perRunResults.length; runIdx++) {
+        const runItems = perRunResults[runIdx] as Record<string, unknown>[];
+        const runIsGymtok = queryBatch[runIdx].isGymtok;
+        for (const item of runItems) {
+          const organic = item.organicResults as Record<string, unknown>[] | undefined;
+          const items = Array.isArray(organic) ? organic : (item.url || item.link ? [item] : []);
+          for (const r of items) {
+            allOrganicResults.push(r);
+            const url     = ((r.url as string) || (r.link as string) || '').toLowerCase();
+            const snippet = ((r.description as string) || (r.snippet as string) || '');
+            const title   = (r.title as string) || '';
+            const ttMatch = url.match(/tiktok\.com\/@([^/?#\s]+)/);
+            if (ttMatch) {
+              const h = ttMatch[1].trim();
+              if (h && !TIKTOK_SKIP_HANDLES.has(h) && !seenHandles.has(h)) {
+                rawHandles.push(h);
+                if (snippet) handleToSnippet.set(h, snippet);
+                if (title)   handleToTitle.set(h, title);
+                if (runIsGymtok) gymtokHandles.add(h);
+              }
+            }
           }
         }
       }
@@ -1079,7 +1095,12 @@ export class TikTokFacelessEngine {
         onLog(`[EMAIL GATE] 📊 Stats-block round — gate omitido, ${uniqueRawHandles.length} handles pasan sin restricción de email`);
       }
 
-      // Snippet pre-filter — follower range + ICP signal scoring (free, before TikTok scraper)
+      // Snippet pre-filter — follower range (free, before TikTok scraper).
+      // ICP signal scoring (scoreSnippetIcp) is BYPASSED for handles from #gymtok runs:
+      //   gymtok creators commonly have empty/emoji bios → Google snippets have no ICP
+      //   keywords → score=0 → previously discarded before reaching the real scraper.
+      //   The #gymtok query itself is the ICP signal; snippet scoring is redundant here.
+      // For handles from normal pool runs (slots 3-4), ICP scoring still applies.
       let snippetFiltered = 0;
       let snippetIcpFiltered = 0;
       const snippetScores = new Map<string, number>();
@@ -1087,25 +1108,31 @@ export class TikTokFacelessEngine {
       for (const h of emailGatedHandles) {
         const snippet = handleToSnippet.get(h) || '';
         const title   = handleToTitle.get(h) || '';
-        // Follower range check
+        // Follower range check — always applied (gymtok and normal)
         const snippetFollowers = this.extractFollowersFromSnippet(snippet);
         if (snippetFollowers !== null && (snippetFollowers < minFollowers || snippetFollowers > maxFollowers)) {
           snippetFiltered++;
           continue;
         }
-        // ICP signal check — only discard if snippet is long enough to be meaningful
-        // (short/empty snippets pass through: absence of keywords ≠ non-ICP)
-        const combinedText = (snippet + ' ' + title).toLowerCase();
-        const score = icpEvaluator.scoreSnippetIcp(combinedText);
-        snippetScores.set(h, score);
-        if (score === 0 && combinedText.length > 100) {
-          snippetIcpFiltered++;
-          continue;
+        // ICP signal check — skipped for gymtok handles (query already guarantees ICP context)
+        if (!gymtokHandles.has(h)) {
+          const combinedText = (snippet + ' ' + title).toLowerCase();
+          const score = icpEvaluator.scoreSnippetIcp(combinedText);
+          snippetScores.set(h, score);
+          if (score === 0 && combinedText.length > 100) {
+            snippetIcpFiltered++;
+            continue;
+          }
         }
         novelHandles.push(h);
       }
-      // Sort highest-ICP-score first — best candidates fill the TikTok scraper batch
-      novelHandles.sort((a, b) => (snippetScores.get(b) ?? 0) - (snippetScores.get(a) ?? 0));
+      // Sort: gymtok handles first (highest priority), then by ICP score descending
+      novelHandles.sort((a, b) => {
+        const aGym = gymtokHandles.has(a) ? 1 : 0;
+        const bGym = gymtokHandles.has(b) ? 1 : 0;
+        if (bGym !== aGym) return bGym - aGym;
+        return (snippetScores.get(b) ?? 0) - (snippetScores.get(a) ?? 0);
+      });
       if (snippetFiltered > 0 || snippetIcpFiltered > 0) {
         onLog(`[PRE-FILTER] Snippet: ${snippetFiltered} follower-range + ${snippetIcpFiltered} non-ICP descartados pre-scrape`);
       }
@@ -1124,28 +1151,23 @@ export class TikTokFacelessEngine {
       consecutiveZeros = 0;
       poolOffset = 0; // reset — new handles found, normal pool rotation resumes
 
-      // ── STEP 2: TikTok profile fetch (with snippet fallback) ─────────────────
-      // skipTtScraper is set after 2 consecutive 403 ACTOR_FORBIDDEN errors.
-      // In snippet mode: 0 extra Apify calls — profiles are built from Google data.
-      // Batch size: take all ICP-ranked handles up to 50 per run.
-      // The TikTok scraper startup cost (~15s) is fixed regardless of batch size —
-      // amortising it over 30-50 profiles instead of 15 doubles yield per Apify credit.
-      const MAX_TT_BATCH = Math.min(50, Math.max(30, novelHandles.length));
+      // ── STEP 2: TikTok profile fetch ──────────────────────────────────────────
+      // Always uses the live TikTok scraper — snippet mode for small batches is removed.
+      // Rationale: snippet profiles have no real bio/videos → hard filter rejects them
+      // on no-signal almost 100% of the time, wasting the entire Google Search budget.
+      // Even a 1-handle batch is worth scraping: real bio + video data lets the hard
+      // filter work correctly. skipTtScraper is the ONLY remaining snippet fallback
+      // (activated after 2 consecutive 403 ACTOR_FORBIDDEN errors from TikTok).
+      // Batch size: gymtok handles sorted first, then by ICP score — up to 50 per run.
+      const MAX_TT_BATCH = Math.min(50, Math.max(1, novelHandles.length));
       const ttBatch = novelHandles.slice(0, MAX_TT_BATCH);
       let normalizedProfiles: ReturnType<typeof this.groupTikTokItemsByProfile>;
-
-      // Force snippet mode only for very small batches (< 3 handles) — the fixed actor
-      // startup cost (~30s) is only unreasonable for 0–2 handles. For 3+ handles the
-      // TikTok scraper runs and returns real heartCount, videoCount, biography and videos.
-      const useTinyBatchSnippet = !skipTtScraper && ttBatch.length < 3;
       // Track whether this attempt used snippet data instead of real TikTok profile scraping.
-      // Snippet profiles have no real bio/video data → require higher AI confidence (95% vs 75%).
       let usedSnippetFallback = false;
 
-      if (skipTtScraper || useTinyBatchSnippet) {
-        // ── Snippet mode ──────────────────────────────────────────────────────
-        const reason = skipTtScraper ? 'TikTok scraper skipped' : `batch demasiado pequeño (${ttBatch.length} < 3)`;
-        onLog('👤 STEP 2/4 — Snippet mode (' + reason + ', 0 créditos Apify): ' + ttBatch.length + ' handles');
+      if (skipTtScraper) {
+        // ── Snippet fallback (403 only) ───────────────────────────────────────
+        onLog('👤 STEP 2/4 — Snippet fallback (TikTok scraper 403 blocked): ' + ttBatch.length + ' handles');
         normalizedProfiles = this.buildProfilesFromSnippets(ttBatch, handleToSnippet, handleToTitle);
         usedSnippetFallback = true;
         onLog('👤 STEP 2/4 ✓ — ' + normalizedProfiles.length + ' profiles built from Google snippets');

@@ -94,8 +94,13 @@ export class InstagramPersonalBrandEngine {
    *   attempt 1  → user's own keywords + first-location
    *   attempt 2+ → rotate KEYWORD_POOLS + LOCATION_SUFFIXES
    * When relaxed=true (attempt > 15), quotes are stripped to widen the funnel.
+   *
+   * buildSearchQuerySlot(slot, attempt, relaxed, locations) — same logic but
+   * slot (0, 1, 2) selects a DIFFERENT keyword pool + location within the same
+   * attempt so 3 queries can run in parallel without repeating each other.
    */
-  private buildSearchQuery(
+  private buildSearchQuerySlot(
+    slot: number,
     baseKeywords: string[],
     attempt: number,
     relaxed: boolean,
@@ -112,12 +117,16 @@ export class InstagramPersonalBrandEngine {
     let keywords: string[];
     let location: string;
 
-    if (attempt === 1) {
+    if (attempt === 1 && slot === 0) {
+      // Slot 0 on attempt 1 → user's own keywords
       keywords = baseKeywords.slice(0, 2).map(k => k.includes('"') ? k : `"${k}"`);
       location = firstLoc;
     } else {
-      const poolIdx = (attempt - 2) % KEYWORD_POOLS.length;
-      const locIdx = Math.floor((attempt - 2) / KEYWORD_POOLS.length) % locationSuffixes.length;
+      // Each slot advances the pool index by (slot) positions, spreading 3 parallel queries
+      // across 3 different keyword pools and 3 different locations to avoid duplicates.
+      const baseIdx = attempt === 1 ? slot : ((attempt - 2) * 3 + slot);
+      const poolIdx = baseIdx % KEYWORD_POOLS.length;
+      const locIdx  = Math.floor(baseIdx / KEYWORD_POOLS.length) % locationSuffixes.length;
       keywords = KEYWORD_POOLS[poolIdx];
       location = locationSuffixes[locIdx];
     }
@@ -624,7 +633,7 @@ export class InstagramPersonalBrandEngine {
 
     onLog('[IG-PB] Keywords base: ' + baseKeywords.join(', '));
     onLog('[IG-PB] ICP Type: personal_brand (Instagram only)');
-    onLog('[IG-PB] Keyword pool: ' + KEYWORD_POOLS.length + ' variantes | site:instagram.com');
+    onLog('[IG-PB] Keyword pool: ' + KEYWORD_POOLS.length + ' variantes | site:instagram.com | 🏃 3 queries en paralelo por attempt');
     onLog('[IG-PB] 🎯 Objetivo: ' + targetCount + ' creadores | Máx intentos: ' + MAX_RETRIES);
     onLog('[IG-PB] Followers: ' + (minFollowers > 0 ? this.formatFollowers(minFollowers) : '0') + ' – ' + (maxFollowers < 99_000_000 ? this.formatFollowers(maxFollowers) : '∞'));
     if (targetRegions.length > 0) onLog('[ICP] Regiones: ' + targetRegions.join(', '));
@@ -646,20 +655,28 @@ export class InstagramPersonalBrandEngine {
         onLog(`[ENGINE] 🔓 Query relaxation active (attempt ${attempt}) — switching to broad search`);
       }
 
-      const searchQuery = this.buildSearchQuery(baseKeywords, attempt, relaxed, activeLocationSuffixes);
+      // Build 3 distinct queries — one per slot — so they run in parallel without
+      // repeating the same keyword pool or location as each other.
+      const querySlots = [0, 1, 2].map(slot =>
+        this.buildSearchQuerySlot(slot, baseKeywords, attempt, relaxed, activeLocationSuffixes)
+      );
 
       onLog('');
       onLog('━━━ ATTEMPT ' + attempt + '/' + MAX_RETRIES + ' ━━━  ' + needed + ' lead(s) still needed');
-      onLog('🔎 STEP 1/4 — Google Search (Instagram): ' + searchQuery);
+      onLog('🔎 STEP 1/4 — Google Search x3 (Instagram): ' + querySlots[0]);
+      onLog('             Slot 2: ' + querySlots[1]);
+      onLog('             Slot 3: ' + querySlots[2]);
 
-      // ── STEP 1: Google Search site:instagram.com ─────────────────────────────
-      let searchResults: unknown[];
+      // ── STEP 1: Google Search site:instagram.com — 3 slots in parallel ────────
+      let perSlotResults: unknown[][];
       try {
-        searchResults = await this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
-          queries: searchQuery,
-          maxPagesPerQuery: 2,
-          resultsPerPage: 100,
-        }, onLog, 1024);
+        perSlotResults = await Promise.all(querySlots.map(q =>
+          this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
+            queries: q,
+            maxPagesPerQuery: 2,
+            resultsPerPage: 100,
+          }, onLog, 1024)
+        ));
       } catch (e: unknown) {
         onLog('[STEP 1] Google Search error: ' + (e instanceof Error ? e.message : String(e)));
         consecutiveZeros++;
@@ -667,19 +684,22 @@ export class InstagramPersonalBrandEngine {
         continue;
       }
 
-      if (!searchResults.length) {
-        onLog('🔎 No results for: ' + searchQuery);
+      // Flatten 3 slots into one organic result list
+      const allOrganicResults: Record<string, unknown>[] = [];
+      for (const slotResults of perSlotResults) {
+        if (!Array.isArray(slotResults)) continue;
+        for (const item of slotResults as Record<string, unknown>[]) {
+          const organic = item.organicResults as Record<string, unknown>[] | undefined;
+          if (Array.isArray(organic)) allOrganicResults.push(...organic);
+          else if (item.url || item.link) allOrganicResults.push(item);
+        }
+      }
+
+      if (!allOrganicResults.length) {
+        onLog('🔎 Sin resultados orgánicos en ninguno de los 3 slots');
         consecutiveZeros++;
         if (consecutiveZeros >= MAX_CONSEC_ZEROS) { onLog('[ENGINE] ' + MAX_CONSEC_ZEROS + ' empty rounds — deteniendo.'); break; }
         continue;
-      }
-
-      // Extract IG handles from Google Search results
-      const allOrganicResults: Record<string, unknown>[] = [];
-      for (const item of searchResults as Record<string, unknown>[]) {
-        const organic = item.organicResults as Record<string, unknown>[] | undefined;
-        if (Array.isArray(organic)) allOrganicResults.push(...organic);
-        else if (item.url || item.link) allOrganicResults.push(item);
       }
 
       const handleToSnippet = new Map<string, string>();
@@ -743,12 +763,11 @@ export class InstagramPersonalBrandEngine {
       consecutiveZeros = 0;
 
       // ── STEP 2: Instagram profile scraper ────────────────────────────────────
-      // Cap the batch sent to Apify: if Bucket A alone covers 3× the slots needed,
-      // only scrape Bucket A this attempt (saves credits). Otherwise scrape all, cap 40.
+      // Cap the batch sent to Apify proportional to how many leads are still needed.
+      // Buffer: 4× the slots remaining (a lead needs email + ICP → ~25% pass rate).
+      // Hard cap: 40 to avoid excessive Apify credits. Minimum 12 to avoid starvation.
       const slotsNeeded = targetCount - accepted.length;
-      const MAX_IG_BATCH = (bucketA.length >= slotsNeeded * 3)
-        ? Math.min(bucketA.length, 40)
-        : Math.min(novelHandles.length, 40);
+      const MAX_IG_BATCH = Math.min(novelHandles.length, Math.max(slotsNeeded * 4, 12));
       const batchToScrape = novelHandles.slice(0, MAX_IG_BATCH);
       onLog('👤 STEP 2/4 — Fetching ' + batchToScrape.length + ' Instagram profiles (Bucket A: ' + Math.min(bucketA.length, MAX_IG_BATCH) + ', Bucket B: ' + Math.max(0, batchToScrape.length - Math.min(bucketA.length, MAX_IG_BATCH)) + ')...');
       let profiles: unknown[];
@@ -845,7 +864,8 @@ export class InstagramPersonalBrandEngine {
 
       // ── STEP 3b: Email discovery ─────────────────────────────────────────────
       const slotsRemaining = targetCount - accepted.length;
-      const toDiscover = dbDeduped.slice(0, Math.max(slotsRemaining * 8, dbDeduped.length));
+      // Buffer: 3× slots needed (was Math.max which always took ALL candidates — bug).
+      const toDiscover = dbDeduped.slice(0, Math.min(slotsRemaining * 3, dbDeduped.length));
       onLog('📧 STEP 3b — Email discovery para ' + toDiscover.length + ' candidatos...');
       await Promise.all(this.chunkArray(toDiscover, 10).map(async (chunk) => {
         await Promise.all(chunk.map(async (lead) => {
@@ -859,10 +879,14 @@ export class InstagramPersonalBrandEngine {
           if (discovered && lead.decisionMaker) lead.decisionMaker.email = discovered;
         }));
       }));
-      const withEmail = toDiscover.filter(l => l.decisionMaker?.email?.toLowerCase().endsWith('@gmail.com'));
-      onLog('📧 STEP 3b ✓ — ' + withEmail.length + '/' + toDiscover.length + ' tienen Gmail (@gmail.com)');
+      // Accept any valid email (not just Gmail) — fitness coaches use @outlook.com,
+      // @hotmail.com, and custom domains (coach@name.com). Gmail-only gate was
+      // dropping ~60% of valid ICP candidates before they reached the AI soft filter.
+      const withEmail = toDiscover.filter(l => /^.+@.+\..+$/.test((l.decisionMaker?.email || '').trim()));
+      const gmailCount = withEmail.filter(l => l.decisionMaker?.email?.toLowerCase().endsWith('@gmail.com')).length;
+      onLog('📧 STEP 3b ✓ — ' + withEmail.length + '/' + toDiscover.length + ' tienen email válido (Gmail: ' + gmailCount + ', otros: ' + (withEmail.length - gmailCount) + ')');
 
-      if (!withEmail.length) { onLog('⚠ Ningún candidato tiene Gmail. Rotando query...'); continue; }
+      if (!withEmail.length) { onLog('⚠ Ningún candidato tiene email. Rotando query...'); continue; }
 
       // ── STEP 4a: AI Soft Filter ───────────────────────────────────────────────
       onLog('🤖 STEP 4a — Filtro IA para ' + withEmail.length + ' candidatos (verificando ICP fitness)...');

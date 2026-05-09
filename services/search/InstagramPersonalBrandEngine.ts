@@ -31,9 +31,12 @@ import type { LogCallback, ResultCallback } from './SearchService';
 // scraping. Email discovery success rate: ~5% (no signal) → ~85%+ (gmail in bio).
 //
 // Pool families:
-//   A (0-7):  Gmail-first — guaranteed contactable, highest yield
-//   B (8-13): DM/contact intent without Gmail — still contactable via bio/link
-//   C (14-17): Broad fitness keywords — fallback after relaxation (attempt > 15)
+//   A (0-6):  Gmail-first — guaranteed contactable, highest yield
+//   B (7-12): DM/contact intent without Gmail — still contactable via bio/link
+//   C (13-15): Broad fitness keywords — fallback after relaxation (attempt > 15)
+//
+// Excluded intentionally: nutrition coach, diet, meal prep, sports nutrition.
+// ICP = fitness/gym personal trainers — NOT nutrition/food coaches.
 //
 const KEYWORD_POOLS: string[][] = [
   // A0 — Gmail + personal trainer (most common fitness coach bio pattern)
@@ -42,15 +45,13 @@ const KEYWORD_POOLS: string[][] = [
   ['"gmail.com"', '"fitness coach"', '"workout"'],
   // A2 — Gmail + gym/lifting lifestyle creator
   ['"gmail.com"', '"gym"', '"lifting"'],
-  // A3 — Gmail + nutrition/diet coach
-  ['"gmail.com"', '"nutrition coach"', '"diet"'],
-  // A4 — Gmail + body transformation / fat loss
+  // A3 — Gmail + body transformation / fat loss
   ['"gmail.com"', '"body transformation"', '"fat loss"'],
-  // A5 — Gmail + online fitness coach (remote coaching bio pattern)
+  // A4 — Gmail + online fitness coach (remote coaching bio pattern)
   ['"gmail.com"', '"online fitness coach"', '"personal trainer online"'],
-  // A6 — Gmail + physique/muscle/bodybuilding
+  // A5 — Gmail + physique/muscle/bodybuilding
   ['"gmail.com"', '"physique"', '"bodybuilding"'],
-  // A7 — Gmail + crossfit/hiit/strength coach
+  // A6 — Gmail + crossfit/hiit/strength coach
   ['"gmail.com"', '"strength coach"', '"crossfit"'],
   // B0 — DM for collab signal (explicit contact intent)
   ['"dm for collab"', '"personal trainer"', '"fitness"'],
@@ -68,9 +69,7 @@ const KEYWORD_POOLS: string[][] = [
   ['"fitness content creator"', '"gym influencer"'],
   // C1 — Broad: gymrat / gains lifestyle
   ['"gymrat"', '"gains"'],
-  // C2 — Broad: meal prep / sports nutrition
-  ['"meal prep"', '"sports nutrition"'],
-  // C3 — Broad: gym motivation / lifting
+  // C2 — Broad: gym motivation / lifting
   ['"gym motivation"', '"lifting"'],
 ];
 

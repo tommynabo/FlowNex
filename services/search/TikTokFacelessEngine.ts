@@ -1083,6 +1083,11 @@ export class TikTokFacelessEngine {
       let emailGateDropped = 0;
       const emailGatedHandles = isEmailFirstBatch
         ? uniqueRawHandles.filter(h => {
+            // Gymtok handles bypass the email gate — the #gymtok query itself is the ICP
+            // signal. These creators often have empty bios with no email in the Google
+            // snippet, so gating on email drops ~90% of valid gymtok candidates before
+            // they even reach the TikTok scraper.
+            if (gymtokHandles.has(h)) return true;
             const combined = (handleToSnippet.get(h) || '') + ' ' + (handleToTitle.get(h) || '');
             const hasEmail = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/.test(combined);
             if (!hasEmail) emailGateDropped++;

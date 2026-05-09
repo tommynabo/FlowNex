@@ -164,6 +164,26 @@ const FITNESS_HASHTAG_POOL = [
 // TikTok URL path segments that are not profile pages
 const TIKTOK_SKIP_HANDLES = new Set(['tag', 'search', 'discover', 'music', 'video', 'live', 'trending', 'foryou', 't']);
 
+// ── #gymtok priority queries ─────────────────────────────────────────────────
+// 6 distinct query variants, each attacking a different angle of the #gymtok space.
+// Slots 0-2 of every 5-run batch are reserved for these queries, cycling through
+// all 6 variants across attempts so no single angle saturates Google's index.
+// All variants include email/CTA signals — gymtok creators regularly expose Gmail in bio.
+const GYMTOK_QUERY_VARIANTS: Array<{ query: string }> = [
+  // A — Email-first: #gymtok creators who explicitly list Gmail + physique/discipline keywords
+  { query: `site:tiktok.com "#gymtok" ("gmail.com" OR "dm for promo") ("physique" OR "discipline" OR "no excuses" OR "best version") -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}` },
+  // B — CTA-based: paid collab / promo DMs + natty/gains content signals
+  { query: `site:tiktok.com "#gymtok" ("dm for paid" OR "dm for collab" OR "paid collab" OR "dm for promo") ("natty" OR "gains" OR "transformation" OR "motivation") -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}` },
+  // C — Hashtag cross: #gymtok × #gymmotivation intersection + Gmail or business contact signal
+  { query: `site:tiktok.com "#gymtok" "#gymmotivation" ("gmail.com" OR "business inquiries") ("slideshow" OR "mindset" OR "discipline") -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}` },
+  // D — Faceless format: #gymtok + slideshow/no-face content format + contact signal
+  { query: `site:tiktok.com "#gymtok" ("slideshow" OR "no face" OR "faceless") ("gmail.com" OR "dm for promo" OR "for business") -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}` },
+  // E — Niche hashtag intersection: #gymtok + #natty/#physique/#gains + Gmail
+  { query: `site:tiktok.com "#gymtok" ("#natty" OR "#physique" OR "#gains" OR "#transformation") ("gmail.com" OR "dm for promo" OR "business inquiries") -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}` },
+  // F — Monetisation sweep: #gymtok + payhip/gumroad/for collabs + gym/fitness context
+  { query: `site:tiktok.com "#gymtok" ("business inquiries" OR "for collabs" OR "payhip" OR "gumroad") ("fitness" OR "gym" OR "workout" OR "hustle") -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}` },
+];
+
 // Number of parallel Google Search actor runs per attempt.
 // Each query launches its own run concurrently → wall-time ≈ single run (~40s) vs serial (~200s).
 // 5 parallel queries: 67% more candidates per attempt vs 3, wall-time barely increases (~5-10s extra).
@@ -195,6 +215,34 @@ export class TikTokFacelessEngine {
     const height = STATS_HEIGHTS[Math.floor(Math.random() * STATS_HEIGHTS.length)];
     const weight = STATS_WEIGHTS_LBS[Math.floor(Math.random() * STATS_WEIGHTS_LBS.length)];
     return `site:tiktok.com "${city}" "${height}" "${weight}" -site:tiktok.com/tag/ -restaurant -dance`;
+  }
+
+  /**
+   * Builds one of 6 #gymtok-dedicated Google Search queries for use in slots 0-2
+   * of each parallel batch run.
+   *
+   * Variant selection: (attempt * 3 + slotIndex) % 6
+   *   → each slot of each attempt picks a different variant
+   *   → after 2 attempts all 6 variants have been used at least once
+   *
+   * Location suffix is appended when ≤3 target regions are configured (same as
+   * buildSearchQuery). All gymtok queries contain email/CTA signals, so the
+   * email gate activates normally (isStatsBlock: false).
+   */
+  private buildGymtokQuery(attempt: number, slotIndex: number, targetRegions: string[] = []): { query: string; isStatsBlock: boolean } {
+    const variantIdx = (attempt * 3 + slotIndex) % GYMTOK_QUERY_VARIANTS.length;
+    const { query } = GYMTOK_QUERY_VARIANTS[variantIdx];
+
+    const locationSuffix = (() => {
+      if (!targetRegions.length || targetRegions.length > 3) return '';
+      const allTerms = targetRegions.flatMap(r => REGION_QUERY_TERMS[r] ?? []);
+      return allTerms.length ? '(' + allTerms.join(' OR ') + ')' : '';
+    })();
+
+    return {
+      query: locationSuffix ? `${query} ${locationSuffix}` : query,
+      isStatsBlock: false,
+    };
   }
 
   /**
@@ -897,7 +945,7 @@ export class TikTokFacelessEngine {
     const MAX_RETRIES = Math.max(30, Math.ceil(targetCount * 1.5));
 
     onLog('[TT-FC] ICP Type: faceless_clipper (TikTok only)');
-    onLog('[TT-FC] Keyword pool: ' + FACELESS_CLIPPER_KEYWORD_POOLS.length + ' variantes | site:tiktok.com');
+    onLog('[TT-FC] Keyword pool: ' + FACELESS_CLIPPER_KEYWORD_POOLS.length + ' variantes | site:tiktok.com | 🏋️ #gymtok priority: slots 1-3 of 5');
     onLog('[TT-FC] 🎯 Objetivo: ' + targetCount + ' creadores | Máx intentos: ' + MAX_RETRIES);
     onLog('[TT-FC] Followers: ' + (minFollowers > 0 ? this.formatFollowers(minFollowers) : '0') + ' – ' + (maxFollowers < 99_000_000 ? this.formatFollowers(maxFollowers) : '∞'));
     if (targetRegions.length > 0) onLog('[ICP] Regiones: ' + targetRegions.join(', '));
@@ -922,9 +970,13 @@ export class TikTokFacelessEngine {
       // This cuts actor startup cost by ÷GOOGLE_QUERY_BATCH compared to one-query-per-attempt.
       const baseAttempt = (attempt - 1) * GOOGLE_QUERY_BATCH + 1;
       // Build GOOGLE_QUERY_BATCH distinct queries, one per parallel run.
-      // poolOffset shifts the pool index when previous attempt(s) returned zero handles.
+      // Slots 0-2 (first 3 runs) are always #gymtok-dedicated queries, rotating through
+      // 6 distinct variants so no single angle saturates Google's index.
+      // Slots 3-4 (last 2 runs) follow the existing pool rotation logic.
       const queryBatch = Array.from({ length: GOOGLE_QUERY_BATCH }, (_, i) =>
-        this.buildSearchQuery(baseAttempt + i, targetRegions, poolOffset)
+        i < 3
+          ? this.buildGymtokQuery(attempt, i, targetRegions)
+          : this.buildSearchQuery(baseAttempt + i, targetRegions, poolOffset)
       );
       onLog('');
       onLog('━━━ ATTEMPT ' + attempt + '/' + MAX_RETRIES + ' ━━━  ' + needed + ' lead(s) still needed');

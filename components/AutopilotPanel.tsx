@@ -141,6 +141,7 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
         errorMessage:         (r.error_message as string) ?? null,
         batchSize:            (r.batch_size as number) ?? null,
         dailyTotalAfter:      (r.daily_total_after as number) ?? null,
+        targetLeads:          (r.target_leads as number) ?? null,
       })));
     }
     setLoadingRuns(false);
@@ -423,7 +424,7 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
                   )}
                 </div>
                 <div className="flex items-center gap-3 text-muted-foreground">
-                  <span>{run.leadsFound} leads</span>
+                  <span>{run.leadsFound}{run.targetLeads != null ? `/${run.targetLeads}` : ''} leads</span>
                   <span className="text-primary">{run.leadsAddedToInstantly} → Instantly</span>
                 </div>
               </div>

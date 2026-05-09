@@ -90,6 +90,7 @@ export interface AutopilotRun {
   errorMessage: string | null;
   batchSize: number | null;
   dailyTotalAfter: number | null;
+  targetLeads: number | null;
 }
 
 export interface Campaign {

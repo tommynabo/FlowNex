@@ -57,8 +57,13 @@ CREATE TABLE IF NOT EXISTS public.autopilot_runs (
   status                   TEXT        DEFAULT 'running' CHECK (status IN ('running','success','error','skipped')),
   error_message            TEXT,
   batch_size               SMALLINT,
-  daily_total_after        SMALLINT
+  daily_total_after        SMALLINT,
+  target_leads             SMALLINT
 );
+
+-- Add target_leads to existing autopilot_runs tables (safe to run multiple times)
+ALTER TABLE public.autopilot_runs
+  ADD COLUMN IF NOT EXISTS target_leads SMALLINT;
 
 CREATE INDEX IF NOT EXISTS autopilot_runs_campaign_id_idx ON public.autopilot_runs(campaign_id);
 CREATE INDEX IF NOT EXISTS autopilot_runs_user_id_idx     ON public.autopilot_runs(user_id);

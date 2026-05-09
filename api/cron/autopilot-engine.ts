@@ -11,7 +11,6 @@ import { createClient, SupabaseClient }       from '@supabase/supabase-js';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 
-const GOOGLE_SEARCH_SCRAPER  = 'nFJndFXA5zjCTuudP';
 const TIKTOK_PROFILE_SCRAPER = 'apidojo~tiktok-scraper';
 const APIFY_BASE             = 'https://api.apify.com/v2';
 
@@ -120,6 +119,41 @@ function getCurrentHourInTz(timezone: string): number {
 function isInsideWindow(currentHour: number, startHour: number, endHour: number): boolean {
   if (startHour <= endHour) return currentHour >= startHour && currentHour < endHour;
   return currentHour >= startHour || currentHour < endHour;
+}
+
+function calcWindowHours(startHour: number, endHour: number): number {
+  if (startHour === endHour) return 0;
+  return startHour < endHour ? endHour - startHour : (24 - startHour) + endHour;
+}
+
+function getTodayInTz(timezone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(new Date());
+    const y = parts.find(p => p.type === 'year')?.value  ?? '';
+    const m = parts.find(p => p.type === 'month')?.value ?? '';
+    const d = parts.find(p => p.type === 'day')?.value   ?? '';
+    return `${y}-${m}-${d}`;
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
+// ─── SERPER (Google Search) ───────────────────────────────────────────────────
+
+async function serperGoogleSearch(query: string, apiKey: string): Promise<Array<{ link: string }>> {
+  const res = await fetch('https://google.serper.dev/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-KEY': apiKey },
+    body: JSON.stringify({ q: query, num: 20 }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Serper POST /search → HTTP ${res.status}: ${text.substring(0, 200)}`);
+  }
+  const data = await res.json() as { organic?: Array<{ link?: string }> };
+  return (data.organic ?? []).filter(r => r.link).map(r => ({ link: r.link! }));
 }
 
 // ─── APIFY HELPERS ────────────────────────────────────────────────────────────
@@ -266,8 +300,10 @@ function buildSearchQuery(attempt: number, regions: string[] = []): string {
 async function runAutopilotBatch(
   campaign: CampaignRow,
   supabase: SupabaseClient,
+  serperKey: string,
   apifyToken: string,
   instantlyKey: string,
+  targetLeads: number,
 ): Promise<BatchResult> {
   const result: BatchResult = { leadsFound: 0, addedToInstantly: 0, skippedDuplicate: 0, errors: [] };
 
@@ -277,86 +313,90 @@ async function runAutopilotBatch(
   const instantlyId  = campaign.instantly_campaign_id;
   const regions      = campaign.icp_regions ?? [];
 
-  // Step 1: Dedup
+  // Step 1: Dedup — load known handles once, update in-memory during the run
   const { data: existingLeads } = await supabase
     .from('leads').select('ig_handle').eq('campaign_id', campaign.id).not('ig_handle', 'is', null);
   const seenHandles = new Set<string>(
     (existingLeads ?? []).map((r: { ig_handle: string }) => r.ig_handle?.toLowerCase()).filter(Boolean),
   );
 
-  // Step 2: Google Search
-  const attemptOffset = Math.floor(Math.random() * FACELESS_CLIPPER_KEYWORD_POOLS.length);
-  let googleResults: unknown[] = [];
-  try {
-    googleResults = await runActorSync(
-      GOOGLE_SEARCH_SCRAPER,
-      { queries: buildSearchQuery(attemptOffset, regions), resultsPerPage: 10, maxPagesPerQuery: 1, languageCode: 'en', countryCode: 'us' },
-      apifyToken, 45, 1024,
-    );
-  } catch (e) {
-    result.errors.push(`Google Search failed: ${e instanceof Error ? e.message : String(e)}`);
-    return result;
-  }
+  // Loop up to 4 search iterations until we reach targetLeads
+  const baseOffset = Math.floor(Math.random() * FACELESS_CLIPPER_KEYWORD_POOLS.length);
+  for (let iteration = 0; iteration < 4 && result.leadsFound < targetLeads; iteration++) {
+    const attemptOffset = (baseOffset + iteration) % FACELESS_CLIPPER_KEYWORD_POOLS.length;
 
-  // Step 3: Extract handles
-  const candidateHandles: string[] = [];
-  for (const item of googleResults) {
-    const row = item as Record<string, unknown>;
-    const url = (row.url ?? row.link ?? '') as string;
-    if (!url.includes('tiktok.com')) continue;
-    const handle = extractHandleFromUrl(url);
-    if (handle && !seenHandles.has(handle) && !candidateHandles.includes(handle)) candidateHandles.push(handle);
-  }
-  if (candidateHandles.length === 0) { result.errors.push('No new handles found from Google Search'); return result; }
+    // Step 2: Google Search via Serper
+    let googleResults: Array<{ link: string }> = [];
+    try {
+      googleResults = await serperGoogleSearch(buildSearchQuery(attemptOffset, regions), serperKey);
+    } catch (e) {
+      result.errors.push(`Google Search failed (iter ${iteration + 1}): ${e instanceof Error ? e.message : String(e)}`);
+      break; // likely an API key / quota issue — no point retrying
+    }
 
-  // Step 4: TikTok profiles
-  const toFetch = candidateHandles.slice(0, batchSize);
-  let profileItems: unknown[] = [];
-  try {
-    profileItems = await runActorSync(
-      TIKTOK_PROFILE_SCRAPER,
-      { startUrls: toFetch.map(h => ({ url: `https://www.tiktok.com/@${h}` })), resultsType: 'details', resultsLimit: batchSize },
-      apifyToken, 50, 1024,
-    );
-  } catch (e) {
-    result.errors.push(`TikTok profile scraper failed: ${e instanceof Error ? e.message : String(e)}`);
-    return result;
-  }
+    // Step 3: Extract handles (only new ones not yet seen)
+    const candidateHandles: string[] = [];
+    for (const item of googleResults) {
+      const url = item.link ?? '';
+      if (!url.includes('tiktok.com')) continue;
+      const handle = extractHandleFromUrl(url);
+      if (handle && !seenHandles.has(handle) && !candidateHandles.includes(handle)) candidateHandles.push(handle);
+    }
+    if (candidateHandles.length === 0) {
+      result.errors.push(`No new handles found from Google Search (iter ${iteration + 1})`);
+      break; // no new data, further iterations won't help
+    }
 
-  // Step 5: Process profiles
-  for (const item of profileItems) {
-    if (result.leadsFound >= batchSize) break;
-    const profile     = item as TikTokProfileItem;
-    const meta        = profile.authorMeta ?? profile.channel ?? {};
-    const handle      = (meta.nickName ?? meta.name ?? '').toLowerCase().replace(/^@/, '');
-    const bio         = meta.signature ?? '';
-    const followers   = meta.fans ?? 0;
-    const displayName = meta.name ?? handle;
+    // Step 4: TikTok profiles — fetch a little extra to account for ICP filtering
+    const remaining = targetLeads - result.leadsFound;
+    const toFetch   = candidateHandles.slice(0, Math.min(batchSize, remaining + 5));
+    let profileItems: unknown[] = [];
+    try {
+      profileItems = await runActorSync(
+        TIKTOK_PROFILE_SCRAPER,
+        { startUrls: toFetch.map(h => ({ url: `https://www.tiktok.com/@${h}` })), resultsType: 'details', resultsLimit: toFetch.length },
+        apifyToken, 50, 1024,
+      );
+    } catch (e) {
+      result.errors.push(`TikTok profile scraper failed (iter ${iteration + 1}): ${e instanceof Error ? e.message : String(e)}`);
+      break;
+    }
 
-    if (!handle || seenHandles.has(handle)) { result.skippedDuplicate++; continue; }
-    if (!passesIcpFilter(bio, followers, minFollowers, maxFollowers)) continue;
-    const email = extractEmailFromBio(bio);
-    if (!email) continue;
+    // Step 5: Process profiles
+    for (const item of profileItems) {
+      if (result.leadsFound >= targetLeads) break;
+      const profile     = item as TikTokProfileItem;
+      const meta        = profile.authorMeta ?? profile.channel ?? {};
+      const handle      = (meta.nickName ?? meta.name ?? '').toLowerCase().replace(/^@/, '');
+      const bio         = meta.signature ?? '';
+      const followers   = meta.fans ?? 0;
+      const displayName = meta.name ?? handle;
 
-    const { error: insertErr } = await supabase.from('leads').insert({
-      user_id: campaign.user_id, campaign_id: campaign.id, name: displayName,
-      ig_handle: handle, follower_count: followers, niche: campaign.icp_content_types?.[0] ?? '',
-      audience_tier: followers >= 200_000 ? 'mid' : followers >= 50_000 ? 'micro' : 'nano',
-      job_title: 'Content Creator', email, bio,
-      ai_summary: `Autopilot scraped from TikTok. Bio: ${bio.substring(0, 200)}`,
-      vsl_sent_status: 'pending', email_status: 'pending', status: 'scraped', source: 'tiktok',
-    });
-    if (insertErr) { result.errors.push(`DB insert failed for @${handle}: ${insertErr.message}`); continue; }
+      if (!handle || seenHandles.has(handle)) { result.skippedDuplicate++; continue; }
+      if (!passesIcpFilter(bio, followers, minFollowers, maxFollowers)) continue;
+      const email = extractEmailFromBio(bio);
+      if (!email) continue;
 
-    seenHandles.add(handle);
-    result.leadsFound++;
-
-    if (instantlyId && instantlyKey) {
-      const ok = await addLeadToInstantly(instantlyKey, instantlyId, {
-        email, name: displayName, igHandle: handle,
-        niche: campaign.icp_content_types?.[0] ?? '', followerCount: followers, aiSummary: bio.substring(0, 300),
+      const { error: insertErr } = await supabase.from('leads').insert({
+        user_id: campaign.user_id, campaign_id: campaign.id, name: displayName,
+        ig_handle: handle, follower_count: followers, niche: campaign.icp_content_types?.[0] ?? '',
+        audience_tier: followers >= 200_000 ? 'mid' : followers >= 50_000 ? 'micro' : 'nano',
+        job_title: 'Content Creator', email, bio,
+        ai_summary: `Autopilot scraped from TikTok. Bio: ${bio.substring(0, 200)}`,
+        vsl_sent_status: 'pending', email_status: 'pending', status: 'scraped', source: 'tiktok',
       });
-      if (ok) result.addedToInstantly++;
+      if (insertErr) { result.errors.push(`DB insert failed for @${handle}: ${insertErr.message}`); continue; }
+
+      seenHandles.add(handle);
+      result.leadsFound++;
+
+      if (instantlyId && instantlyKey) {
+        const ok = await addLeadToInstantly(instantlyKey, instantlyId, {
+          email, name: displayName, igHandle: handle,
+          niche: campaign.icp_content_types?.[0] ?? '', followerCount: followers, aiSummary: bio.substring(0, 300),
+        });
+        if (ok) result.addedToInstantly++;
+      }
     }
   }
 
@@ -386,8 +426,10 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
   if (!isVercelCron && !(cronSecret && bearerToken === cronSecret)) return res.status(401).json({ error: 'Unauthorized' });
 
   // Env vars
+  const serperKey    = process.env.SERPER_API_KEY ?? '';
   const apifyToken   = process.env.APIFY_TOKEN ?? process.env.VITE_APIFY_API_TOKEN ?? '';
   const instantlyKey = process.env.INSTANTLY_API_KEY ?? '';
+  if (!serperKey)    return res.status(500).json({ error: 'Missing SERPER_API_KEY env var' });
   if (!apifyToken)   return res.status(500).json({ error: 'Missing APIFY_TOKEN / VITE_APIFY_API_TOKEN env var' });
   if (!instantlyKey) return res.status(500).json({ error: 'Missing INSTANTLY_API_KEY env var' });
 
@@ -400,12 +442,12 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
     .from('campaigns').select('*').eq('autopilot_enabled', true).eq('status', 'active');
   if (dbErr) return res.status(500).json({ error: `DB query failed: ${dbErr.message}` });
 
-  const currentHour = new Date().getUTCHours();
-  const todayDate   = new Date().toISOString().slice(0, 10);
+  const currentHourUTC = new Date().getUTCHours();
 
   const summary: Array<{
     campaignId: string; campaignName: string; status: string;
-    leadsFound?: number; addedToInstantly?: number; reason?: string; errors?: string[];
+    leadsFound?: number; addedToInstantly?: number; targetPerRun?: number;
+    windowHours?: number; reason?: string; errors?: string[];
   }> = [];
 
   for (const campaign of (campaigns ?? []) as CampaignRow[]) {
@@ -413,6 +455,7 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
     const endHour    = campaign.autopilot_end_hour   ?? 6;
     const campaignTz = campaign.autopilot_timezone   ?? 'UTC';
     const localHour  = getCurrentHourInTz(campaignTz);
+    const todayDate  = getTodayInTz(campaignTz);
 
     if (!isInsideWindow(localHour, startHour, endHour)) {
       summary.push({ campaignId: campaign.id, campaignName: campaign.name, status: 'skipped', reason: `Outside window (${startHour}h–${endHour}h in ${campaignTz}, now ${localHour}h)` });
@@ -425,14 +468,21 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
       await supabase.from('campaigns').update({ autopilot_leads_today: 0, autopilot_reset_date: todayDate }).eq('id', campaign.id);
     }
 
-    const dailyLimit = campaign.autopilot_daily_limit ?? 50;
+    const dailyLimit  = campaign.autopilot_daily_limit ?? 50;
     if (leadsToday >= dailyLimit) {
       summary.push({ campaignId: campaign.id, campaignName: campaign.name, status: 'skipped', reason: `Daily limit reached (${leadsToday}/${dailyLimit})` });
       continue;
     }
 
+    const windowHours  = calcWindowHours(startHour, endHour);
+    const targetPerRun = Math.min(
+      windowHours > 0 ? Math.ceil(dailyLimit / windowHours) : dailyLimit,
+      dailyLimit - leadsToday,
+    );
+
     const { data: runRow } = await supabase.from('autopilot_runs').insert({
-      campaign_id: campaign.id, user_id: campaign.user_id, status: 'running', batch_size: campaign.autopilot_batch_size ?? 5,
+      campaign_id: campaign.id, user_id: campaign.user_id, status: 'running',
+      batch_size: campaign.autopilot_batch_size ?? 5, target_leads: targetPerRun,
     }).select().single();
     const runId = (runRow as { id?: string } | null)?.id ?? null;
 
@@ -441,7 +491,7 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
     let batchResult: BatchResult          = { leadsFound: 0, addedToInstantly: 0, skippedDuplicate: 0, errors: [] };
 
     try {
-      batchResult = await runAutopilotBatch(campaign, supabase, apifyToken, instantlyKey);
+      batchResult = await runAutopilotBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetPerRun);
       if (batchResult.errors.length > 0 && batchResult.leadsFound === 0) {
         batchStatus = 'error'; errorMessage = batchResult.errors.join('; ');
       }
@@ -468,9 +518,10 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
     summary.push({
       campaignId: campaign.id, campaignName: campaign.name, status: batchStatus,
       leadsFound: batchResult.leadsFound, addedToInstantly: batchResult.addedToInstantly,
+      targetPerRun, windowHours,
       errors: batchResult.errors.length > 0 ? batchResult.errors : undefined,
     });
   }
 
-  return res.status(200).json({ ok: true, processedAt: new Date().toISOString(), currentHourUTC: currentHour, processed: summary.length, campaigns: summary });
+  return res.status(200).json({ ok: true, processedAt: new Date().toISOString(), currentHourUTC, processed: summary.length, campaigns: summary });
 }

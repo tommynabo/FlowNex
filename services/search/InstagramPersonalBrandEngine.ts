@@ -85,7 +85,34 @@ const MAX_CONSEC_ZEROS = 3;
 
 // Number of parallel Google Search actor runs per attempt.
 // 5 concurrent runs: +66% handles vs 3, wall-time barely increases (~5s extra).
+// Slot (GOOGLE_QUERY_BATCH - 1) is reserved for the Stats Block query.
 const GOOGLE_QUERY_BATCH = 5;
+
+// ── Instagram Stats Block — physical credential queries ──────────────────────
+// Personal trainers routinely include city, height and weight + Gmail in bio:
+//   "Chicago | 6'1" | 185lbs | Natural | DM for coaching | john@gmail.com"
+// Google indexes Instagram bio text verbatim → this query produces ultra-high
+// precision results for personal_brand ICP. Near-zero false positives: no
+// business/brand/agency puts physical stats + Gmail in their IG bio.
+// Three variants rotated randomly per attempt to maximise coverage:
+//   0 → city + height + weight + gmail (pure credential signal)
+//   1 → city + "personal trainer" + height + gmail
+//   2 → "personal trainer" + height + weight + gmail
+const STATS_CITIES_IG = [
+  'New York', 'Los Angeles', 'Chicago', 'Houston', 'Miami',
+  'Dallas', 'Atlanta', 'Phoenix', 'Denver', 'Seattle',
+  'San Diego', 'Austin', 'Orlando', 'Las Vegas', 'Nashville',
+  'Charlotte', 'Tampa', 'Portland', 'Boston', 'Minneapolis',
+];
+const STATS_HEIGHTS_IG = [
+  "5'5\"", "5'6\"", "5'7\"", "5'8\"", "5'9\"", "5'10\"", "5'11\"",
+  "6'", "6'1\"", "6'2\"", "6'3\"",
+];
+const STATS_WEIGHTS_LBS_IG = [
+  '125lbs', '130lbs', '135lbs', '140lbs', '145lbs', '150lbs', '155lbs',
+  '160lbs', '165lbs', '170lbs', '175lbs', '180lbs', '185lbs', '190lbs',
+  '195lbs', '200lbs', '210lbs', '220lbs',
+];
 
 const REGION_MAP: Record<string, string[]> = {
   US: ['united states', 'usa', 'u.s.a', 'u.s.', 'america', 'new york', 'los angeles', 'chicago', 'houston', 'phoenix', 'miami', 'dallas', 'seattle', 'denver', 'atlanta', 'boston', 'us'],
@@ -155,10 +182,11 @@ export class InstagramPersonalBrandEngine {
       keywords = baseKeywords.slice(0, 2).map(k => k.includes('"') ? k : `"${k}"`);
       location = firstLoc;
     } else {
-      // Each slot advances the pool index by (slot) positions, spreading 3 parallel queries
-      // across 3 different keyword pools and 3 different locations to avoid duplicates.
+      // Each slot advances the pool index by (slot) positions, spreading GOOGLE_QUERY_BATCH
+      // parallel queries across different keyword pools and locations to avoid duplicates.
+      // Step size = GOOGLE_QUERY_BATCH so consecutive attempts cover non-overlapping pool ranges.
       // poolOffset jumps the family when repeated zero-handle attempts are detected.
-      const baseIdx = attempt === 1 ? slot : ((attempt - 2) * 3 + slot + poolOffset);
+      const baseIdx = attempt === 1 ? slot : ((attempt - 2) * GOOGLE_QUERY_BATCH + slot + poolOffset);
       const poolIdx = baseIdx % KEYWORD_POOLS.length;
       const locIdx  = Math.floor(baseIdx / KEYWORD_POOLS.length) % locationSuffixes.length;
       keywords = KEYWORD_POOLS[poolIdx];
@@ -173,6 +201,26 @@ export class InstagramPersonalBrandEngine {
     return location
       ? `site:instagram.com ${kw} ${location} ${ANTI_ICP_NEGATIVES}`
       : `site:instagram.com ${kw} ${ANTI_ICP_NEGATIVES}`;
+  }
+
+  /**
+   * Stats Block query — targets personal trainers who list physical credentials + Gmail in bio.
+   * Bio pattern: "Chicago | 6'1" | 185lbs | Natural | DM for coaching | john@gmail.com"
+   * Google indexes Instagram bio verbatim → ultra-high precision, near-zero false positives.
+   *
+   * Three query variants rotated randomly:
+   *   0 → city + height + weight + gmail  (pure credential pattern)
+   *   1 → city + "personal trainer" + height + gmail
+   *   2 → "personal trainer" + height + weight + gmail
+   */
+  private buildStatsBlockQuery(): string {
+    const city   = STATS_CITIES_IG[Math.floor(Math.random() * STATS_CITIES_IG.length)];
+    const height = STATS_HEIGHTS_IG[Math.floor(Math.random() * STATS_HEIGHTS_IG.length)];
+    const weight = STATS_WEIGHTS_LBS_IG[Math.floor(Math.random() * STATS_WEIGHTS_LBS_IG.length)];
+    const variant = Math.floor(Math.random() * 3);
+    if (variant === 0) return `site:instagram.com "gmail.com" "${city}" "${height}" "${weight}" ${ANTI_ICP_NEGATIVES}`;
+    if (variant === 1) return `site:instagram.com "gmail.com" "${city}" "personal trainer" "${height}" ${ANTI_ICP_NEGATIVES}`;
+    return `site:instagram.com "gmail.com" "personal trainer" "${height}" "${weight}" ${ANTI_ICP_NEGATIVES}`;
   }
 
   // ── Apify helpers ─────────────────────────────────────────────────────────────
@@ -240,6 +288,12 @@ export class InstagramPersonalBrandEngine {
         const status = sd.data?.status ?? '';
         if (polls % 3 === 1) onLog('[APIFY] ' + status + ' (' + Math.round(elapsedMs / 1000) + 's)');
         if (status === 'SUCCEEDED') done = true;
+        else if (status === 'TIMED-OUT') {
+          // Apify saves partial results to the dataset even on server-side timeout.
+          // Mark done and download whatever was collected — avoids ~25s of dead polling.
+          done = true;
+          onLog('[APIFY] TIMED-OUT — descargando resultados parciales...');
+        }
         else if (status === 'FAILED' || status === 'ABORTED') throw new Error('Actor ' + status);
       } catch (pe: unknown) {
         const msg = pe instanceof Error ? pe.message : String(pe);
@@ -324,8 +378,10 @@ export class InstagramPersonalBrandEngine {
    * Instagram profile scraper entirely: email, follower count, and bio are all
    * extracted from what Google already returned. Zero extra Apify calls required.
    *
-   * follower default = 0 → profiles with no follower data in snippet are rejected
-   * immediately by the follower filter (e.g. minFollowers=10K) → no AI cost, no scraping.
+   * follower default = -1 (sentinel "unknown") → follower range check is SKIPPED for
+   * these profiles in applyHardFilter and the ICP candidate loop. The email confirmed
+   * in the Google snippet is the quality gate — we still discover/validate the email
+   * before accepting them as leads.
    */
   private buildProfilesFromSnippets(
     handles: string[],
@@ -336,7 +392,9 @@ export class InstagramPersonalBrandEngine {
       const snippet = handleToSnippet.get(handle) || '';
       const title   = handleToTitle.get(handle) || '';
       const combined = title + ' ' + snippet;
-      const followers = this.extractFollowersFromSnippet(combined) ?? 0;
+      // -1 sentinel: follower count not found in snippet. Hard filter and ICP loop
+      // skip the range check when followers === -1 (email confirmed = quality signal).
+      const followers = this.extractFollowersFromSnippet(combined) ?? -1;
       const emailMatch = combined.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
       const publicEmail = emailMatch ? emailMatch[0].toLowerCase().trim() : '';
       const biography = snippet.substring(0, 300);
@@ -763,9 +821,13 @@ export class InstagramPersonalBrandEngine {
 
       // Build GOOGLE_QUERY_BATCH distinct queries — one per parallel run — so they
       // cover different keyword pools and locations simultaneously.
+      // Slot GOOGLE_QUERY_BATCH-1 (last) is always a Stats Block query targeting personal
+      // trainers who put physical credentials + Gmail in bio: "Chicago | 6'1" | 185lbs".
       // poolOffset shifts the pool family when consecutive zero-handle attempts occur.
       const querySlots = Array.from({ length: GOOGLE_QUERY_BATCH }, (_, slot) =>
-        this.buildSearchQuerySlot(slot, baseKeywords, attempt, relaxed, activeLocationSuffixes, poolOffset)
+        slot === GOOGLE_QUERY_BATCH - 1
+          ? this.buildStatsBlockQuery()
+          : this.buildSearchQuerySlot(slot, baseKeywords, attempt, relaxed, activeLocationSuffixes, poolOffset)
       );
 
       onLog('');
@@ -928,7 +990,10 @@ export class InstagramPersonalBrandEngine {
         const handle = ((p.username as string) || '').toLowerCase().trim();
         if (!handle) continue;
 
-        const followers = (p.followersCount as number) || 0;
+        // followersCount === -1 is the Bucket A sentinel (email confirmed in snippet, count unknown).
+        // Cast safely: || 0 would turn -1 into 0; use nullish coalescing to preserve -1.
+        const followersRaw = (p.followersCount as number) ?? 0;
+        const followers = followersRaw;
         const bio = ((p.biography as string) || (p.bio as string) || '');
         const fullName = ((p.fullName as string) || (p.name as string) || '');
         const emailFromBio = this.extractEmailFromBio(bio);
@@ -938,8 +1003,9 @@ export class InstagramPersonalBrandEngine {
         const niche = this.detectNiche(bio, handle, fullName);
         const regionRaw = ((p.country as string) || (p.city as string) || '');
 
-        if (followers < minFollowers) { onLog('[ICP] ↓ @' + handle + ' — ' + this.formatFollowers(followers) + ' < ' + this.formatFollowers(minFollowers)); continue; }
-        if (followers > maxFollowers) { onLog('[ICP] ↑ @' + handle + ' — ' + this.formatFollowers(followers) + ' > ' + this.formatFollowers(maxFollowers)); continue; }
+        // Skip follower range check for Bucket A sentinel (-1 = unknown, email confirmed).
+        if (followers >= 0 && followers < minFollowers) { onLog('[ICP] ↓ @' + handle + ' — ' + this.formatFollowers(followers) + ' < ' + this.formatFollowers(minFollowers)); continue; }
+        if (followers >= 0 && followers > maxFollowers) { onLog('[ICP] ↑ @' + handle + ' — ' + this.formatFollowers(followers) + ' > ' + this.formatFollowers(maxFollowers)); continue; }
 
         // Region filter
         if (targetRegions.length > 0) {
@@ -964,9 +1030,9 @@ export class InstagramPersonalBrandEngine {
           id: 'ig-' + handle + '-' + Date.now(),
           source: 'instagram',
           ig_handle: handle,
-          follower_count: followers,
+          follower_count: Math.max(0, followers), // -1 sentinel → store as 0
           niche,
-          audience_tier: this.detectAudienceTier(followers),
+          audience_tier: this.detectAudienceTier(Math.max(0, followers)),
           location: regionRaw,
           website,
           decisionMaker: {

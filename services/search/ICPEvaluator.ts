@@ -202,16 +202,19 @@ export class ICPEvaluator {
       const nameLower = (profile.fullName || '').toLowerCase();
       const bioLower = (profile.biography || '').toLowerCase();
       const fullText = `${bioLower} ${nameLower} ${handle}`;
-      const followers = profile.followersCount || 0;
+      // Use the raw value — must NOT use || 0 because -1 is a Bucket A sentinel
+      // meaning "follower count unknown, email confirmed in Google snippet".
+      // When followers === -1, skip the range check entirely.
+      const followers = profile.followersCount ?? 0;
 
       // Follower range — TikTok faceless/clipper accounts scale much higher than Instagram personal brands
       const maxFollowers = icpType === 'faceless_clipper' ? 500_000 : HARD_FILTER_MAX_FOLLOWERS;
-      if (followers < HARD_FILTER_MIN_FOLLOWERS) {
+      if (followers >= 0 && followers < HARD_FILTER_MIN_FOLLOWERS) {
         onLog(`[HARD FILTER] ↓ @${handle} skip: ${followers.toLocaleString()} < min ${HARD_FILTER_MIN_FOLLOWERS.toLocaleString()} followers`);
         rejections.followerLow++;
         continue;
       }
-      if (followers > maxFollowers) {
+      if (followers >= 0 && followers > maxFollowers) {
         onLog(`[HARD FILTER] ↑ @${handle} skip: ${followers.toLocaleString()} > max ${maxFollowers.toLocaleString()} followers`);
         rejections.followerHigh++;
         continue;

@@ -81,7 +81,11 @@ const LOCATION_SUFFIXES_LATAM = ['Argentina', 'México', 'Colombia', 'Buenos Air
 const LOCATION_SUFFIXES_US_CA = [...LOCATION_SUFFIXES_US, ...LOCATION_SUFFIXES_CA];
 const LOCATION_SUFFIXES_ES_LATAM = [...LOCATION_SUFFIXES_ES, ...LOCATION_SUFFIXES_LATAM];
 
-const MAX_CONSEC_ZEROS = 5;
+const MAX_CONSEC_ZEROS = 3;
+
+// Number of parallel Google Search actor runs per attempt.
+// 5 concurrent runs: +66% handles vs 3, wall-time barely increases (~5s extra).
+const GOOGLE_QUERY_BATCH = 5;
 
 const REGION_MAP: Record<string, string[]> = {
   US: ['united states', 'usa', 'u.s.a', 'u.s.', 'america', 'new york', 'los angeles', 'chicago', 'houston', 'phoenix', 'miami', 'dallas', 'seattle', 'denver', 'atlanta', 'boston', 'us'],
@@ -181,14 +185,37 @@ export class InstagramPersonalBrandEngine {
     });
     if (!res.ok) {
       const err = await res.text();
+      // Detect quota / billing errors and throw a prefixed message so the loop
+      // can break immediately instead of retrying on a hard credit limit.
+      if (res.status === 402 || res.status === 403) {
+        try {
+          const parsed = JSON.parse(err) as Record<string, unknown>;
+          const details = typeof parsed.details === 'string'
+            ? JSON.parse(parsed.details) as Record<string, unknown>
+            : (parsed.details as Record<string, unknown>) ?? parsed;
+          const apifyErr = (details?.error ?? details) as Record<string, unknown> | undefined;
+          const msg = (apifyErr?.message as string) || '';
+          if (res.status === 402 || msg.includes('Monthly usage') || msg.includes('hard limit')) {
+            throw new Error('APIFY_QUOTA_EXCEEDED: ' + (msg || 'Insufficient Apify credits.'));
+          }
+        } catch (pe) {
+          const peMsg = pe instanceof Error ? pe.message : '';
+          if (peMsg.startsWith('APIFY_QUOTA_EXCEEDED')) throw pe;
+        }
+      }
       throw new Error(`/api/apify ${res.status}: ${err.substring(0, 300)}`);
     }
     return res.json();
   }
 
-  private async callApifyActor(actorId: string, input: unknown, onLog: LogCallback, memoryMbytes?: number): Promise<unknown[]> {
+  private async callApifyActor(actorId: string, input: unknown, onLog: LogCallback, timeoutMs?: number, runTimeoutSecs?: number, memoryMbytes?: number): Promise<unknown[]> {
     onLog('[APIFY] Lanzando ' + actorId.split('~').pop() + '...');
-    const runsPath = memoryMbytes ? `acts/${actorId}/runs?memory=${memoryMbytes}` : `acts/${actorId}/runs`;
+    // runTimeoutSecs → ?timeout= tells Apify to kill the actor server-side after N seconds.
+    // memoryMbytes  → ?memory= caps RAM per run.
+    const params: string[] = [];
+    if (runTimeoutSecs) params.push('timeout=' + runTimeoutSecs);
+    if (memoryMbytes)   params.push('memory=' + memoryMbytes);
+    const runsPath = `acts/${actorId}/runs` + (params.length ? '?' + params.join('&') : '');
     const startData = await this.apifyRequest(runsPath, 'POST', input) as {
       data?: { id?: string; defaultDatasetId?: string };
     };
@@ -201,10 +228,11 @@ export class InstagramPersonalBrandEngine {
     let polls = 0;
     let elapsedMs = 0;
     while (!done && this.isRunning && polls < 600) {
-      const delay = polls === 0 ? 1500 : 2000;
+      const delay = polls === 0 ? 800 : 1500;
       await new Promise(r => setTimeout(r, delay));
       elapsedMs += delay;
       polls++;
+      if (timeoutMs && elapsedMs >= timeoutMs) break; // client-side safety cap
       try {
         const sd = await this.apifyRequest(`acts/${actorId}/runs/${runId}`, 'GET') as {
           data?: { status?: string };
@@ -218,7 +246,13 @@ export class InstagramPersonalBrandEngine {
         if (msg.includes('FAILED') || msg.includes('ABORTED')) throw pe;
       }
     }
-    if (!done) throw new Error('Apify timeout after ' + Math.round(elapsedMs / 1000) + 's');
+
+    // Abort the Apify run if we exited without success (timeout or user stop).
+    if (!done) {
+      try { await this.apifyRequest(`actor-runs/${runId}/abort`, 'POST', {}); } catch { /* ignore */ }
+      if (!this.isRunning) return [];
+      throw new Error('Apify timeout after ' + Math.round(elapsedMs / 1000) + 's');
+    }
     if (!this.isRunning) return [];
 
     onLog('[APIFY] Descargando resultados...');
@@ -282,6 +316,42 @@ export class InstagramPersonalBrandEngine {
     if (suffix === 'm') return Math.round(raw * 1_000_000);
     if (suffix === 'b') return Math.round(raw * 1_000_000_000);
     return Math.round(raw);
+  }
+
+  /**
+   * BUCKET A BYPASS — builds RawApifyProfile objects from Google snippet data.
+   * For Bucket A handles whose email is visible in the Google snippet, we skip the
+   * Instagram profile scraper entirely: email, follower count, and bio are all
+   * extracted from what Google already returned. Zero extra Apify calls required.
+   *
+   * follower default = 0 → profiles with no follower data in snippet are rejected
+   * immediately by the follower filter (e.g. minFollowers=10K) → no AI cost, no scraping.
+   */
+  private buildProfilesFromSnippets(
+    handles: string[],
+    handleToSnippet: Map<string, string>,
+    handleToTitle: Map<string, string>,
+  ): RawApifyProfile[] {
+    return handles.map(handle => {
+      const snippet = handleToSnippet.get(handle) || '';
+      const title   = handleToTitle.get(handle) || '';
+      const combined = title + ' ' + snippet;
+      const followers = this.extractFollowersFromSnippet(combined) ?? 0;
+      const emailMatch = combined.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
+      const publicEmail = emailMatch ? emailMatch[0].toLowerCase().trim() : '';
+      const biography = snippet.substring(0, 300);
+      return {
+        username: handle,
+        fullName: '',
+        biography,
+        followersCount: followers,
+        externalUrl: '',
+        publicEmail,
+        countryCode: '',
+        country: '',
+        __platform: 'instagram' as const,
+      } as RawApifyProfile;
+    });
   }
 
   private chunkArray<T>(arr: T[], size: number): T[][] {
@@ -661,11 +731,11 @@ export class InstagramPersonalBrandEngine {
       : (hasEsRegion && hasEnRegion) ? [...LOCATION_SUFFIXES_US_CA, ...LOCATION_SUFFIXES_ES_LATAM]
       : LOCATION_SUFFIXES_US_CA;
 
-    const MAX_RETRIES = Math.min(75, Math.max(40, targetCount * 5));
+    const MAX_RETRIES = Math.max(20, targetCount * 3);
 
     onLog('[IG-PB] Keywords base: ' + baseKeywords.join(', '));
     onLog('[IG-PB] ICP Type: personal_brand (Instagram only)');
-    onLog('[IG-PB] Keyword pool: ' + KEYWORD_POOLS.length + ' variantes | site:instagram.com | 🏃 3 queries en paralelo por attempt');
+    onLog('[IG-PB] Keyword pool: ' + KEYWORD_POOLS.length + ' variantes | site:instagram.com | 🏃 ' + GOOGLE_QUERY_BATCH + ' queries en paralelo por attempt');
     onLog('[IG-PB] 🎯 Objetivo: ' + targetCount + ' creadores | Máx intentos: ' + MAX_RETRIES);
     onLog('[IG-PB] Followers: ' + (minFollowers > 0 ? this.formatFollowers(minFollowers) : '0') + ' – ' + (maxFollowers < 99_000_000 ? this.formatFollowers(maxFollowers) : '∞'));
     if (targetRegions.length > 0) onLog('[ICP] Regiones: ' + targetRegions.join(', '));
@@ -691,31 +761,38 @@ export class InstagramPersonalBrandEngine {
         onLog(`[ENGINE] 🔓 Query relaxation active (attempt ${attempt}) — switching to broad search`);
       }
 
-      // Build 3 distinct queries — one per slot — so they run in parallel without
-      // repeating the same keyword pool or location as each other.
+      // Build GOOGLE_QUERY_BATCH distinct queries — one per parallel run — so they
+      // cover different keyword pools and locations simultaneously.
       // poolOffset shifts the pool family when consecutive zero-handle attempts occur.
-      const querySlots = [0, 1, 2].map(slot =>
+      const querySlots = Array.from({ length: GOOGLE_QUERY_BATCH }, (_, slot) =>
         this.buildSearchQuerySlot(slot, baseKeywords, attempt, relaxed, activeLocationSuffixes, poolOffset)
       );
 
       onLog('');
       onLog('━━━ ATTEMPT ' + attempt + '/' + MAX_RETRIES + ' ━━━  ' + needed + ' lead(s) still needed');
-      onLog('🔎 STEP 1/4 — Google Search x3 (Instagram): ' + querySlots[0]);
-      onLog('             Slot 2: ' + querySlots[1]);
-      onLog('             Slot 3: ' + querySlots[2]);
+      onLog('🔎 STEP 1/4 — Google Search x' + GOOGLE_QUERY_BATCH + ' (Instagram):');
+      querySlots.forEach((q, i) => onLog('             Slot ' + (i + 1) + ': ' + q));
 
-      // ── STEP 1: Google Search site:instagram.com — 3 slots in parallel ────────
+      // ── STEP 1: Google Search site:instagram.com — parallel runs ─────────────
       let perSlotResults: unknown[][];
+      let quotaExceeded = false;
       try {
         perSlotResults = await Promise.all(querySlots.map(q =>
           this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
             queries: q,
             maxPagesPerQuery: 2,
-            resultsPerPage: 100,
-          }, onLog, 1024)
+            resultsPerPage: 40,
+          }, onLog, 90_000, 80, 1024).catch((e: unknown) => {
+            const msg = e instanceof Error ? e.message : String(e);
+            if (msg.startsWith('APIFY_QUOTA_EXCEEDED')) { quotaExceeded = true; }
+            return [] as unknown[];
+          })
         ));
+        if (quotaExceeded) { onLog('[ENGINE] ⛔ Apify quota agotada — abortando.'); break; }
       } catch (e: unknown) {
-        onLog('[STEP 1] Google Search error: ' + (e instanceof Error ? e.message : String(e)));
+        const errMsg = e instanceof Error ? e.message : String(e);
+        if (errMsg.startsWith('APIFY_QUOTA_EXCEEDED')) { onLog('[ENGINE] ⛔ Apify quota agotada — abortando.'); break; }
+        onLog('[STEP 1] Google Search error: ' + errMsg);
         consecutiveZeros++;
         if (consecutiveZeros >= MAX_CONSEC_ZEROS) { onLog('[ENGINE] ' + consecutiveZeros + ' consecutive failures — aborting.'); break; }
         continue;
@@ -801,22 +878,40 @@ export class InstagramPersonalBrandEngine {
       consecutiveZeros = 0;
       poolOffset = 0; // reset — new handles found, no longer in saturated space
 
-      // ── STEP 2: Instagram profile scraper ────────────────────────────────────
-      // Cap the batch sent to Apify proportional to how many leads are still needed.
-      // Buffer: 4× the slots remaining (a lead needs email + ICP → ~25% pass rate).
-      // Hard cap: 40 to avoid excessive Apify credits. Minimum 12 to avoid starvation.
+      // ── STEP 2: Instagram profile fetch ──────────────────────────────────────
+      // Bucket A handles already have their email visible in the Google snippet →
+      // build profiles from snippet data directly (zero Apify calls, instant).
+      // Bucket B handles require the Instagram profile scraper.
+      //
+      // This eliminates the ~80s scraper cost for rounds where all handles are
+      // Bucket A but have follower counts below minFollowers (very common with
+      // nano creators who put Gmail in bio but have <1K followers).
       const slotsNeeded = targetCount - accepted.length;
       const MAX_IG_BATCH = Math.min(novelHandles.length, Math.max(slotsNeeded * 4, 12));
-      const batchToScrape = novelHandles.slice(0, MAX_IG_BATCH);
-      onLog('👤 STEP 2/4 — Fetching ' + batchToScrape.length + ' Instagram profiles (Bucket A: ' + Math.min(bucketA.length, MAX_IG_BATCH) + ', Bucket B: ' + Math.max(0, batchToScrape.length - Math.min(bucketA.length, MAX_IG_BATCH)) + ')...');
-      let profiles: unknown[];
-      try {
-        profiles = await this.callApifyActor(INSTAGRAM_PROFILE_SCRAPER, { usernames: batchToScrape }, onLog, 1024);
-      } catch (e: unknown) {
-        onLog('👤 STEP 2/4 ✗ Profile scraper failed: ' + (e instanceof Error ? e.message : String(e)));
-        continue;
+
+      // Bucket A → snippet bypass (email already known, no API cost)
+      const bucketABatch = bucketA.slice(0, MAX_IG_BATCH);
+      const snippetProfiles = this.buildProfilesFromSnippets(bucketABatch, handleToSnippet, handleToTitle);
+
+      // Bucket B → profile scraper (only handles without email in snippet)
+      const bucketBBatch = bucketB.slice(0, Math.max(0, MAX_IG_BATCH - bucketABatch.length));
+      let scraperProfiles: unknown[] = [];
+      if (bucketBBatch.length > 0) {
+        onLog('👤 STEP 2/4 — Fetching ' + bucketBBatch.length + ' Instagram profiles (Bucket B only)...');
+        try {
+          scraperProfiles = await this.callApifyActor(INSTAGRAM_PROFILE_SCRAPER, { usernames: bucketBBatch }, onLog, 70_000, 60, 1024);
+        } catch (e: unknown) {
+          const errMsg = e instanceof Error ? e.message : String(e);
+          if (errMsg.startsWith('APIFY_QUOTA_EXCEEDED')) { onLog('[ENGINE] ⛔ Apify quota agotada — abortando.'); break; }
+          onLog('👤 STEP 2/4 ✗ Profile scraper failed: ' + errMsg + ' — continuing with snippet profiles only');
+          // Don't skip — snippet profiles may still yield leads
+        }
+      } else {
+        onLog('👤 STEP 2/4 — Bucket A: ' + bucketABatch.length + ' snippet profiles (scraper bypassed ✓)');
       }
-      onLog('👤 STEP 2/4 ✓ — ' + profiles.length + ' profiles received');
+
+      const profiles: unknown[] = [...snippetProfiles, ...scraperProfiles];
+      onLog('👤 STEP 2/4 ✓ — ' + profiles.length + ' profiles (' + snippetProfiles.length + ' snippet, ' + scraperProfiles.length + ' scraped)');
 
       // ── STEP 3: Hard ICP filter ──────────────────────────────────────────────
       onLog('🔍 STEP 3/4 — Applying hard ICP filters (' + profiles.length + ' profiles)...');

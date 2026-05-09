@@ -25,25 +25,53 @@ import { icpEvaluator, RawApifyProfile } from './ICPEvaluator';
 import { emailDiscoveryService } from './EmailDiscoveryService';
 import type { LogCallback, ResultCallback } from './SearchService';
 
-// ── Fitness-only keyword pool ────────────────────────────────────────────────
-// All variants are gym/fitness — no wellness, mindset, or personal development
+// ── Fitness keyword pool — EMAIL-FIRST strategy ──────────────────────────────
+// Google indexes Instagram bio text verbatim. Pools with "gmail.com" only surface
+// profiles whose bio literally contains their Gmail → contactable lead BEFORE any
+// scraping. Email discovery success rate: ~5% (no signal) → ~85%+ (gmail in bio).
+//
+// Pool families:
+//   A (0-7):  Gmail-first — guaranteed contactable, highest yield
+//   B (8-13): DM/contact intent without Gmail — still contactable via bio/link
+//   C (14-17): Broad fitness keywords — fallback after relaxation (attempt > 15)
+//
 const KEYWORD_POOLS: string[][] = [
-  ['"fitness coach"', '"personal trainer"'],
-  ['"gym coach"', '"bodybuilding coach"'],
-  ['"strength coach"', '"workout coach"'],
-  ['"crossfit coach"', '"hiit coach"'],
-  ['"physique coach"', '"muscle building"'],
+  // A0 — Gmail + personal trainer (most common fitness coach bio pattern)
+  ['"gmail.com"', '"personal trainer"', '"fitness"'],
+  // A1 — Gmail + fitness coach (self-description in bio)
+  ['"gmail.com"', '"fitness coach"', '"workout"'],
+  // A2 — Gmail + gym/lifting lifestyle creator
+  ['"gmail.com"', '"gym"', '"lifting"'],
+  // A3 — Gmail + nutrition/diet coach
+  ['"gmail.com"', '"nutrition coach"', '"diet"'],
+  // A4 — Gmail + body transformation / fat loss
+  ['"gmail.com"', '"body transformation"', '"fat loss"'],
+  // A5 — Gmail + online fitness coach (remote coaching bio pattern)
+  ['"gmail.com"', '"online fitness coach"', '"personal trainer online"'],
+  // A6 — Gmail + physique/muscle/bodybuilding
+  ['"gmail.com"', '"physique"', '"bodybuilding"'],
+  // A7 — Gmail + crossfit/hiit/strength coach
+  ['"gmail.com"', '"strength coach"', '"crossfit"'],
+  // B0 — DM for collab signal (explicit contact intent)
+  ['"dm for collab"', '"personal trainer"', '"fitness"'],
+  // B1 — Business inquiries + fitness
+  ['"business inquiries"', '"fitness coach"', '"gym"'],
+  // B2 — DM for promo/rates + fitness
+  ['"dm for promo"', '"fitness"', '"workout"'],
+  // B3 — Linktree + fitness (coaches who link email through linktree)
+  ['"linktr.ee"', '"personal trainer"', '"fitness coach"'],
+  // B4 — Paid collab + gym/physique niche
+  ['"paid collab"', '"gym"', '"physique"'],
+  // B5 — Gmail + gym vlog / workout content format
+  ['"gmail.com"', '"gym vlog"', '"workout video"'],
+  // C0 — Broad: fitness content creator / gym influencer (no email signal)
   ['"fitness content creator"', '"gym influencer"'],
-  ['"fitspo"', '"gymlife"'],
+  // C1 — Broad: gymrat / gains lifestyle
   ['"gymrat"', '"gains"'],
-  ['"calisthenics"', '"weightlifting"'],
-  ['"workout routine"', '"fitness tips"'],
-  ['"personal trainer online"', '"online fitness coach"'],
-  ['"body transformation"', '"fat loss"'],
-  ['"gym vlog"', '"workout video"'],
-  ['"gym motivation"', '"lifting"'],
-  ['"nutrition coach"', '"diet coach"'],
+  // C2 — Broad: meal prep / sports nutrition
   ['"meal prep"', '"sports nutrition"'],
+  // C3 — Broad: gym motivation / lifting
+  ['"gym motivation"', '"lifting"'],
 ];
 
 const LOCATION_SUFFIXES_US = ['USA', 'United States', 'California', 'New York', 'Texas', 'Florida', 'American', 'US'];
@@ -105,6 +133,7 @@ export class InstagramPersonalBrandEngine {
     attempt: number,
     relaxed: boolean,
     locationSuffixes: string[],
+    poolOffset: number = 0,
   ): string {
     const hasUS = locationSuffixes.some(l => l.toLowerCase().includes('us') || l.toLowerCase().includes('united states') || l.toLowerCase().includes('america'));
     const hasCA = locationSuffixes.some(l => l.toLowerCase().includes('canada') || l.toLowerCase().includes('canadian'));
@@ -124,7 +153,8 @@ export class InstagramPersonalBrandEngine {
     } else {
       // Each slot advances the pool index by (slot) positions, spreading 3 parallel queries
       // across 3 different keyword pools and 3 different locations to avoid duplicates.
-      const baseIdx = attempt === 1 ? slot : ((attempt - 2) * 3 + slot);
+      // poolOffset jumps the family when repeated zero-handle attempts are detected.
+      const baseIdx = attempt === 1 ? slot : ((attempt - 2) * 3 + slot + poolOffset);
       const poolIdx = baseIdx % KEYWORD_POOLS.length;
       const locIdx  = Math.floor(baseIdx / KEYWORD_POOLS.length) % locationSuffixes.length;
       keywords = KEYWORD_POOLS[poolIdx];
@@ -221,9 +251,11 @@ export class InstagramPersonalBrandEngine {
 
   private detectNiche(bio: string, username: string, fullName: string): string {
     const text = (bio + ' ' + username + ' ' + fullName).toLowerCase();
-    if (/fitness|gym|workout|bodybuilding|strength|crossfit/.test(text)) return 'Fitness';
+    // Fitness first — must precede Personal Dev to prevent "personal" in handle (e.g.
+    // @nypersonaltrainer) from triggering personaldevelopment regex first.
+    // Added: personal.?trainer, lifting, physique, gains, hiit, nutrition, diet, weightloss.
+    if (/fitness|gym|workout|bodybuilding|strength|crossfit|personal.?trainer|lifting|physique|gains|hiit|nutrition|diet|weightloss/.test(text)) return 'Fitness';
     if (/yoga|meditation|mindfulness|wellness|breathwork/.test(text)) return 'Wellness';
-    if (/nutrition|diet|healthyfood|mealprep|weightloss/.test(text)) return 'Nutrition';
     if (/mindset|personaldevelopment|selfimprovement|motivation|lifecoach/.test(text)) return 'Personal Dev';
     if (/entrepreneur|business|startup|marketing|sales/.test(text)) return 'Business';
     if (/running|marathon|triathlon|cycling|endurance/.test(text)) return 'Endurance';
@@ -644,6 +676,10 @@ export class InstagramPersonalBrandEngine {
     let attempt = 0;
     let consecutiveZeros = 0;
     let relaxedLogged = false;
+    // poolOffset: jumps 6 pools ahead on zero-handle attempts so the next iteration
+    // switches to a different keyword family (A→B→C) instead of staying in the same
+    // saturated search space. Reset to 0 when new handles are found.
+    let poolOffset = 0;
 
     while (accepted.length < targetCount && this.isRunning && attempt < MAX_RETRIES) {
       attempt++;
@@ -657,8 +693,9 @@ export class InstagramPersonalBrandEngine {
 
       // Build 3 distinct queries — one per slot — so they run in parallel without
       // repeating the same keyword pool or location as each other.
+      // poolOffset shifts the pool family when consecutive zero-handle attempts occur.
       const querySlots = [0, 1, 2].map(slot =>
-        this.buildSearchQuerySlot(slot, baseKeywords, attempt, relaxed, activeLocationSuffixes)
+        this.buildSearchQuerySlot(slot, baseKeywords, attempt, relaxed, activeLocationSuffixes, poolOffset)
       );
 
       onLog('');
@@ -755,12 +792,14 @@ export class InstagramPersonalBrandEngine {
       if (!novelHandles.length) {
         onLog('⚠ Sin handles nuevos — rotando...');
         consecutiveZeros++;
+        poolOffset += 6; // jump 6 pools ahead → switch keyword family (A→B→C) to escape saturation
         if (consecutiveZeros >= MAX_CONSEC_ZEROS) { onLog('[ENGINE] ' + MAX_CONSEC_ZEROS + ' rondas sin handles nuevos. Deteniendo.'); break; }
         continue;
       }
 
       for (const h of novelHandles) seenHandles.add(h);
       consecutiveZeros = 0;
+      poolOffset = 0; // reset — new handles found, no longer in saturated space
 
       // ── STEP 2: Instagram profile scraper ────────────────────────────────────
       // Cap the batch sent to Apify proportional to how many leads are still needed.

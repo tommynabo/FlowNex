@@ -218,9 +218,11 @@ export class ICPEvaluator {
       }
 
       // Brand keyword check (fullName and username)
-      // For faceless_clipper, skip 'gym' and 'club' — these are POSITIVE fitness signals
-      // (e.g. @gymclips123, @bodybuilding.club) not corporate brand indicators.
-      const brandKeywordsForIcp = icpType === 'faceless_clipper'
+      // For faceless_clipper AND personal_brand, skip 'gym' and 'club' — these are
+      // POSITIVE fitness signals (e.g. @gymclips123, @completebody.19th, @bodybuilding.club)
+      // not corporate brand indicators. Without this, @nycgymcoach or any handle/name
+      // containing 'gym' is incorrectly rejected as a commercial brand.
+      const brandKeywordsForIcp = (icpType === 'faceless_clipper' || icpType === 'personal_brand')
         ? BRAND_KEYWORDS.filter(kw => kw !== 'gym' && kw !== 'club')
         : BRAND_KEYWORDS;
       const brandKeyword = brandKeywordsForIcp.find(kw =>

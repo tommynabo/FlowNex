@@ -213,7 +213,7 @@ async function runActorSync(
     throw new Error(`Apify actor ${actorId} timed out (still ${finalStatus || 'RUNNING'} after ${timeoutSecs + 10}s)`);
   }
 
-  const dataset = await apifyGet(`datasets/${datasetId}/items?limit=100`, token) as unknown[];
+  const dataset = await apifyGet(`datasets/${datasetId}/items?limit=500`, token) as unknown[];
   return Array.isArray(dataset) ? dataset : [];
 }
 
@@ -349,37 +349,48 @@ async function runTikTokBatch(
       break; // no new data, further iterations won't help
     }
 
-    // Step 4: TikTok profiles — fetch a little extra to account for ICP filtering
+    // Step 4: TikTok profiles — correct apidojo input: plain string URLs + maxItems per handle
     const remaining = targetLeads - result.leadsFound;
-    const toFetch   = candidateHandles.slice(0, Math.min(batchSize, remaining + 5));
+    const toFetch   = candidateHandles.slice(0, Math.min(batchSize * 3, remaining + 10));
     let profileItems: unknown[] = [];
     try {
       profileItems = await runActorSync(
         TIKTOK_PROFILE_SCRAPER,
-        { startUrls: toFetch.map(h => ({ url: `https://www.tiktok.com/@${h}` })), resultsType: 'details', resultsLimit: toFetch.length },
-        apifyToken, 50, 1024,
+        {
+          startUrls: toFetch.map(h => `https://www.tiktok.com/@${h}`),
+          maxItems: toFetch.length * 15,
+        },
+        apifyToken, 55, 1024,
       );
     } catch (e) {
       result.errors.push(`TikTok profile scraper failed (iter ${iteration + 1}): ${e instanceof Error ? e.message : String(e)}`);
       break;
     }
 
-    // Step 5: Process profiles — apidojo MODE C (channel.*) + clockworks MODE A/B (authorMeta.*)
+    // Group raw video items by profile (apidojo returns N video items per creator)
+    const profileMap = new Map<string, { ch: NonNullable<TikTokProfileItem['channel']>; am: TikTokProfileItem['authorMeta'] }>();
     for (const item of profileItems) {
+      const p = item as TikTokProfileItem;
+      const ch = p.channel ?? null;
+      const am = p.authorMeta ?? null;
+      const h  = (ch?.username ?? ch?.name ?? am?.name ?? '').toLowerCase().replace(/^@/, '');
+      if (!h || profileMap.has(h)) continue;
+      if (ch) profileMap.set(h, { ch, am });
+    }
+    const uniqueProfiles = Array.from(profileMap.entries());
+
+    // Step 5: Process one entry per unique profile (deduped by grouping above)
+    for (const [handle, { ch, am }] of uniqueProfiles) {
       if (result.leadsFound >= targetLeads) break;
-      const profile = item as TikTokProfileItem;
-      const ch = profile.channel ?? null;
-      const am = profile.authorMeta ?? null;
-      // MODE C: channel.username → handle, channel.bio → bio, channel.followers → count
-      // MODE A/B: authorMeta.name → handle, authorMeta.signature → bio, authorMeta.fans → count
-      const handle      = (ch?.username ?? ch?.name ?? am?.name ?? '').toLowerCase().replace(/^@/, '');
       const bio         = ch?.bio ?? ch?.signature ?? am?.signature ?? '';
       const followers   = ch?.followers ?? ch?.fans ?? am?.fans ?? 0;
       const displayName = ch?.name ?? am?.nickName ?? handle;
+      // Email: scraper may return it directly (channel.email) or it lives in bio text
+      const email = ((ch as Record<string, unknown>)?.email as string | undefined)?.toLowerCase().trim()
+        || extractEmailFromBio(bio);
 
       if (!handle || seenHandles.has(handle)) { result.skippedDuplicate++; continue; }
       if (!passesIcpFilter(bio, followers, minFollowers, maxFollowers)) continue;
-      const email = extractEmailFromBio(bio);
       if (!email) continue;
 
       const { error: insertErr } = await supabase.from('leads').insert({

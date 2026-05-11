@@ -12,7 +12,7 @@
         },
         {
             "path": "/api/cron/autopilot-engine",
-            "schedule": "0 * * * *"
+            "schedule": "0,30 * * * *"
         }
     ]
 }

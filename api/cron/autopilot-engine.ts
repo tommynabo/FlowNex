@@ -159,7 +159,7 @@ async function serperGoogleSearch(query: string, apiKey: string): Promise<Array<
 // ─── APIFY HELPERS ────────────────────────────────────────────────────────────
 
 async function apifyPost(path: string, body: unknown, token: string): Promise<unknown> {
-  const res = await fetch(`${APIFY_BASE}/${path}?token=${token}`, {
+  const res = await fetch(`${APIFY_BASE}/${path}${path.includes('?') ? '&' : '?'}token=${token}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -172,7 +172,7 @@ async function apifyPost(path: string, body: unknown, token: string): Promise<un
 }
 
 async function apifyGet(path: string, token: string): Promise<unknown> {
-  const res = await fetch(`${APIFY_BASE}/${path}?token=${token}`);
+  const res = await fetch(`${APIFY_BASE}/${path}${path.includes('?') ? '&' : '?'}token=${token}`);
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Apify GET ${path} → HTTP ${res.status}: ${text.substring(0, 200)}`);

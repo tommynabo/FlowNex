@@ -83,7 +83,8 @@ interface BatchResult {
   leadsFound: number;
   addedToInstantly: number;
   skippedDuplicate: number;
-  errors: string[];
+  errors: string[];    // real failures — drives status: 'error'
+  warnings: string[]; // config/info notices — never drives status: 'error'
 }
 
 interface ApifyRunResponse {
@@ -313,14 +314,14 @@ async function runTikTokBatch(
   instantlyKey: string,
   targetLeads: number,
 ): Promise<BatchResult> {
-  const result: BatchResult = { leadsFound: 0, addedToInstantly: 0, skippedDuplicate: 0, errors: [] };
+  const result: BatchResult = { leadsFound: 0, addedToInstantly: 0, skippedDuplicate: 0, errors: [], warnings: [] };
 
   const batchSize    = campaign.autopilot_batch_size ?? 5;
   const minFollowers = campaign.icp_min_followers ?? 0;
   const maxFollowers = campaign.icp_max_followers ?? 99_000_000;
   const instantlyId  = campaign.instantly_campaign_id;
   const regions      = campaign.icp_regions ?? [];
-  if (!instantlyId) result.errors.push('Instantly skipped: instantly_campaign_id is not set on this campaign');
+  if (!instantlyId) result.warnings.push('Instantly skipped: instantly_campaign_id is not set on this campaign');
 
   // Step 1: Dedup — load known handles once, update in-memory during the run
   const { data: existingLeads } = await supabase
@@ -367,7 +368,7 @@ async function runTikTokBatch(
           startUrls: toFetch.map(h => `https://www.tiktok.com/@${h}`),
           maxItems: toFetch.length * 15,
         },
-        apifyToken, 55, 1024,
+        apifyToken, 90, 1024,
       );
     } catch (e) {
       result.errors.push(`TikTok profile scraper failed (iter ${iteration + 1}): ${e instanceof Error ? e.message : String(e)}`);
@@ -486,13 +487,13 @@ async function runInstagramBatch(
   instantlyKey: string,
   targetLeads: number,
 ): Promise<BatchResult> {
-  const result: BatchResult = { leadsFound: 0, addedToInstantly: 0, skippedDuplicate: 0, errors: [] };
+  const result: BatchResult = { leadsFound: 0, addedToInstantly: 0, skippedDuplicate: 0, errors: [], warnings: [] };
 
   const batchSize    = campaign.autopilot_batch_size ?? 5;
   const minFollowers = campaign.icp_min_followers ?? 0;
   const maxFollowers = campaign.icp_max_followers ?? 99_000_000;
   const instantlyId  = campaign.instantly_campaign_id;
-  if (!instantlyId) result.errors.push('Instantly skipped: instantly_campaign_id is not set on this campaign');
+  if (!instantlyId) result.warnings.push('Instantly skipped: instantly_campaign_id is not set on this campaign');
 
   const { data: existingLeads } = await supabase
     .from('leads').select('ig_handle').eq('campaign_id', campaign.id).not('ig_handle', 'is', null);
@@ -699,8 +700,13 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
 
     try {
       batchResult = await runAutopilotBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetPerRun);
+      // Only real errors (not config warnings) drive status:'error'
       if (batchResult.errors.length > 0 && batchResult.leadsFound === 0) {
-        batchStatus = 'error'; errorMessage = batchResult.errors.join('; ');
+        batchStatus  = 'error';
+        errorMessage = [...batchResult.errors, ...batchResult.warnings].join('; ');
+      } else if (batchResult.warnings.length > 0) {
+        // Has warnings but either found leads or no hard error — keep 'success', surface warnings in message
+        errorMessage = batchResult.warnings.join('; ');
       }
     } catch (e) {
       batchStatus = 'error'; errorMessage = e instanceof Error ? e.message : String(e);

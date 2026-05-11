@@ -1,4 +1,9 @@
 {
+    "functions": {
+        "api/cron/autopilot-engine.ts": {
+            "maxDuration": 300
+        }
+    },
     "rewrites": [
         {
             "source": "/(.*)",

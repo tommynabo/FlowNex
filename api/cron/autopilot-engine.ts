@@ -205,11 +205,11 @@ async function runActorSync(
     await new Promise(r => setTimeout(r, 2000));
     const status = await apifyGet(`acts/${actorId}/runs/${runId}`, token) as { data?: { status?: string } };
     finalStatus = status.data?.status ?? '';
-    if (finalStatus === 'SUCCEEDED') break;
+    if (finalStatus === 'SUCCEEDED' || finalStatus === 'TIMED-OUT') break; // TIMED-OUT → partial results saved in dataset
     if (finalStatus === 'FAILED' || finalStatus === 'ABORTED') throw new Error(`Apify actor ${actorId} ${finalStatus}`);
   }
 
-  if (finalStatus !== 'SUCCEEDED') {
+  if (finalStatus !== 'SUCCEEDED' && finalStatus !== 'TIMED-OUT') {
     throw new Error(`Apify actor ${actorId} timed out (still ${finalStatus || 'RUNNING'} after ${timeoutSecs + 10}s)`);
   }
 
@@ -252,6 +252,7 @@ async function addLeadToInstantly(
   instantlyKey: string,
   campaignId: string,
   lead: { email: string; name: string; igHandle: string; niche: string; followerCount: number; aiSummary: string },
+  errorsOut?: string[],
 ): Promise<boolean> {
   const nameParts = lead.name.trim().split(' ');
   const firstName = nameParts[0] || lead.igHandle;
@@ -274,8 +275,13 @@ async function addLeadToInstantly(
         },
       }),
     });
+    if (!res.ok && res.status !== 409) {
+      const text = await res.text();
+      errorsOut?.push(`Instantly HTTP ${res.status} for ${lead.email}: ${text.substring(0, 150)}`);
+    }
     return res.ok || res.status === 409;
-  } catch {
+  } catch (e) {
+    errorsOut?.push(`Instantly fetch failed for ${lead.email}: ${e instanceof Error ? e.message : String(e)}`);
     return false;
   }
 }
@@ -314,6 +320,7 @@ async function runTikTokBatch(
   const maxFollowers = campaign.icp_max_followers ?? 99_000_000;
   const instantlyId  = campaign.instantly_campaign_id;
   const regions      = campaign.icp_regions ?? [];
+  if (!instantlyId) result.errors.push('Instantly skipped: instantly_campaign_id is not set on this campaign');
 
   // Step 1: Dedup — load known handles once, update in-memory during the run
   const { data: existingLeads } = await supabase
@@ -345,8 +352,8 @@ async function runTikTokBatch(
       if (handle && !seenHandles.has(handle) && !candidateHandles.includes(handle)) candidateHandles.push(handle);
     }
     if (candidateHandles.length === 0) {
-      result.errors.push(`No new handles found from Google Search (iter ${iteration + 1})`);
-      break; // no new data, further iterations won't help
+      result.errors.push(`No new handles found from Google Search (iter ${iteration + 1}) — trying next pool`);
+      continue; // try a different keyword pool next iteration
     }
 
     // Step 4: TikTok profiles — correct apidojo input: plain string URLs + maxItems per handle
@@ -410,7 +417,7 @@ async function runTikTokBatch(
         const ok = await addLeadToInstantly(instantlyKey, instantlyId, {
           email, name: displayName, igHandle: handle,
           niche: campaign.icp_content_types?.[0] ?? '', followerCount: followers, aiSummary: bio.substring(0, 300),
-        });
+        }, result.errors);
         if (ok) result.addedToInstantly++;
       }
     }
@@ -452,8 +459,9 @@ const INSTAGRAM_SKIP_HANDLES = new Set([
 function buildInstagramSearchQuery(attempt: number): string {
   const poolIdx = attempt % INSTAGRAM_KEYWORD_POOLS.length;
   const terms   = INSTAGRAM_KEYWORD_POOLS[poolIdx];
-  const orGroup = '(' + terms.join(' OR ') + ')';
-  return `site:instagram.com ${orGroup} ${INSTAGRAM_ANTI_ICP_NEGATIVES}`;
+  // Use AND (space-separated) so Google returns pages where ALL terms appear.
+  // With OR, Google returns post/reel/tag pages that mention any one term → 0 profile handles.
+  return `site:instagram.com ${terms.join(' ')} ${INSTAGRAM_ANTI_ICP_NEGATIVES}`;
 }
 
 function extractHandleFromInstagramUrl(url: string): string | null {
@@ -484,6 +492,7 @@ async function runInstagramBatch(
   const minFollowers = campaign.icp_min_followers ?? 0;
   const maxFollowers = campaign.icp_max_followers ?? 99_000_000;
   const instantlyId  = campaign.instantly_campaign_id;
+  if (!instantlyId) result.errors.push('Instantly skipped: instantly_campaign_id is not set on this campaign');
 
   const { data: existingLeads } = await supabase
     .from('leads').select('ig_handle').eq('campaign_id', campaign.id).not('ig_handle', 'is', null);
@@ -513,8 +522,8 @@ async function runInstagramBatch(
       }
     }
     if (candidateHandles.length === 0) {
-      result.errors.push(`No new Instagram handles found (iter ${iteration + 1})`);
-      break;
+      result.errors.push(`No new Instagram handles found (iter ${iteration + 1}) — trying next pool`);
+      continue; // try a different keyword pool next iteration
     }
 
     const remaining = targetLeads - result.leadsFound;
@@ -573,7 +582,7 @@ async function runInstagramBatch(
         const ok = await addLeadToInstantly(instantlyKey, instantlyId, {
           email, name: displayName, igHandle: handle,
           niche: campaign.icp_content_types?.[0] ?? '', followerCount: followers, aiSummary: bio.substring(0, 300),
-        });
+        }, result.errors);
         if (ok) result.addedToInstantly++;
       }
     }

@@ -91,8 +91,10 @@ interface ApifyRunResponse {
 }
 
 interface TikTokProfileItem {
+  // MODE C: apidojo~tiktok-scraper (current) — one item per video, profile in channel
+  channel?:    { username?: string; name?: string; followers?: number; fans?: number; bio?: string; signature?: string };
+  // MODE A/B: clockworks (legacy) — profile in authorMeta
   authorMeta?: { name?: string; nickName?: string; fans?: number; signature?: string };
-  channel?:    { name?: string; nickName?: string; fans?: number; signature?: string };
 }
 
 // ─── SUPABASE ─────────────────────────────────────────────────────────────────
@@ -295,9 +297,9 @@ function buildSearchQuery(attempt: number, regions: string[] = []): string {
   return locationSuffix ? `${base} ${locationSuffix}` : base;
 }
 
-// ─── BATCH ORCHESTRATION ──────────────────────────────────────────────────────
+// ─── TIKTOK BATCH ORCHESTRATION ──────────────────────────────────────────────
 
-async function runAutopilotBatch(
+async function runTikTokBatch(
   campaign: CampaignRow,
   supabase: SupabaseClient,
   serperKey: string,
@@ -362,15 +364,18 @@ async function runAutopilotBatch(
       break;
     }
 
-    // Step 5: Process profiles
+    // Step 5: Process profiles — apidojo MODE C (channel.*) + clockworks MODE A/B (authorMeta.*)
     for (const item of profileItems) {
       if (result.leadsFound >= targetLeads) break;
-      const profile     = item as TikTokProfileItem;
-      const meta        = profile.authorMeta ?? profile.channel ?? {};
-      const handle      = (meta.nickName ?? meta.name ?? '').toLowerCase().replace(/^@/, '');
-      const bio         = meta.signature ?? '';
-      const followers   = meta.fans ?? 0;
-      const displayName = meta.name ?? handle;
+      const profile = item as TikTokProfileItem;
+      const ch = profile.channel ?? null;
+      const am = profile.authorMeta ?? null;
+      // MODE C: channel.username → handle, channel.bio → bio, channel.followers → count
+      // MODE A/B: authorMeta.name → handle, authorMeta.signature → bio, authorMeta.fans → count
+      const handle      = (ch?.username ?? ch?.name ?? am?.name ?? '').toLowerCase().replace(/^@/, '');
+      const bio         = ch?.bio ?? ch?.signature ?? am?.signature ?? '';
+      const followers   = ch?.followers ?? ch?.fans ?? am?.fans ?? 0;
+      const displayName = ch?.name ?? am?.nickName ?? handle;
 
       if (!handle || seenHandles.has(handle)) { result.skippedDuplicate++; continue; }
       if (!passesIcpFilter(bio, followers, minFollowers, maxFollowers)) continue;
@@ -401,6 +406,188 @@ async function runAutopilotBatch(
   }
 
   return result;
+}
+
+// ─── INSTAGRAM BATCH ─────────────────────────────────────────────────────────
+
+const INSTAGRAM_PROFILE_SCRAPER = 'apify~instagram-profile-scraper';
+
+const INSTAGRAM_KEYWORD_POOLS: string[][] = [
+  ['"gmail.com"', '"personal trainer"', '"fitness"'],
+  ['"gmail.com"', '"fitness coach"', '"workout"'],
+  ['"gmail.com"', '"gym"', '"lifting"'],
+  ['"gmail.com"', '"body transformation"', '"fat loss"'],
+  ['"gmail.com"', '"online fitness coach"'],
+  ['"gmail.com"', '"physique"', '"bodybuilding"'],
+  ['"gmail.com"', '"strength coach"', '"crossfit"'],
+  ['"dm for collab"', '"personal trainer"', '"fitness"'],
+  ['"business inquiries"', '"fitness coach"', '"gym"'],
+  ['"dm for promo"', '"fitness"', '"workout"'],
+  ['"linktr.ee"', '"personal trainer"', '"fitness coach"'],
+  ['"paid collab"', '"gym"', '"physique"'],
+  ['"gmail.com"', '"gym vlog"', '"workout video"'],
+  ['"fitness content creator"', '"gym influencer"'],
+  ['"gymrat"', '"gains"'],
+  ['"gym motivation"', '"lifting"'],
+];
+
+const INSTAGRAM_ANTI_ICP_NEGATIVES = '-restaurant -cafe -clinic -store -food -apparel';
+
+const INSTAGRAM_SKIP_HANDLES = new Set([
+  'p', 'reel', 'reels', 'explore', 'stories', 'accounts',
+  'tv', 'direct', 'hashtag', 'tagged', 'about', 'directory',
+]);
+
+function buildInstagramSearchQuery(attempt: number): string {
+  const poolIdx = attempt % INSTAGRAM_KEYWORD_POOLS.length;
+  const terms   = INSTAGRAM_KEYWORD_POOLS[poolIdx];
+  const orGroup = '(' + terms.join(' OR ') + ')';
+  return `site:instagram.com ${orGroup} ${INSTAGRAM_ANTI_ICP_NEGATIVES}`;
+}
+
+function extractHandleFromInstagramUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url.startsWith('http') ? url : 'https://' + url);
+    if (!parsed.hostname.includes('instagram.com')) return null;
+    const parts  = parsed.pathname.split('/').filter(Boolean);
+    if (parts.length === 0) return null;
+    const handle = parts[0].replace(/^@/, '').toLowerCase();
+    if (INSTAGRAM_SKIP_HANDLES.has(handle) || handle.length < 2) return null;
+    return handle;
+  } catch {
+    return null;
+  }
+}
+
+async function runInstagramBatch(
+  campaign: CampaignRow,
+  supabase: SupabaseClient,
+  serperKey: string,
+  apifyToken: string,
+  instantlyKey: string,
+  targetLeads: number,
+): Promise<BatchResult> {
+  const result: BatchResult = { leadsFound: 0, addedToInstantly: 0, skippedDuplicate: 0, errors: [] };
+
+  const batchSize    = campaign.autopilot_batch_size ?? 5;
+  const minFollowers = campaign.icp_min_followers ?? 0;
+  const maxFollowers = campaign.icp_max_followers ?? 99_000_000;
+  const instantlyId  = campaign.instantly_campaign_id;
+
+  const { data: existingLeads } = await supabase
+    .from('leads').select('ig_handle').eq('campaign_id', campaign.id).not('ig_handle', 'is', null);
+  const seenHandles = new Set<string>(
+    (existingLeads ?? []).map((r: { ig_handle: string }) => r.ig_handle?.toLowerCase()).filter(Boolean),
+  );
+
+  const baseOffset = Math.floor(Math.random() * INSTAGRAM_KEYWORD_POOLS.length);
+  for (let iteration = 0; iteration < 4 && result.leadsFound < targetLeads; iteration++) {
+    const attemptOffset = (baseOffset + iteration) % INSTAGRAM_KEYWORD_POOLS.length;
+
+    let googleResults: Array<{ link: string }> = [];
+    try {
+      googleResults = await serperGoogleSearch(buildInstagramSearchQuery(attemptOffset), serperKey);
+    } catch (e) {
+      result.errors.push(`Google Search failed (iter ${iteration + 1}): ${e instanceof Error ? e.message : String(e)}`);
+      break;
+    }
+
+    const candidateHandles: string[] = [];
+    for (const item of googleResults) {
+      const url = item.link ?? '';
+      if (!url.includes('instagram.com')) continue;
+      const handle = extractHandleFromInstagramUrl(url);
+      if (handle && !seenHandles.has(handle) && !candidateHandles.includes(handle)) {
+        candidateHandles.push(handle);
+      }
+    }
+    if (candidateHandles.length === 0) {
+      result.errors.push(`No new Instagram handles found (iter ${iteration + 1})`);
+      break;
+    }
+
+    const remaining = targetLeads - result.leadsFound;
+    const toFetch   = candidateHandles.slice(0, Math.min(batchSize, remaining + 5));
+    let profileItems: unknown[] = [];
+    try {
+      profileItems = await runActorSync(
+        INSTAGRAM_PROFILE_SCRAPER,
+        { usernames: toFetch },
+        apifyToken, 60, 1024,
+      );
+    } catch (e) {
+      result.errors.push(`Instagram profile scraper failed (iter ${iteration + 1}): ${e instanceof Error ? e.message : String(e)}`);
+      break;
+    }
+
+    for (const item of profileItems) {
+      if (result.leadsFound >= targetLeads) break;
+      const p = item as Record<string, unknown>;
+      const handle = ((p.username as string) || '').toLowerCase().replace(/^@/, '');
+      if (!handle || seenHandles.has(handle)) { result.skippedDuplicate++; continue; }
+
+      const bio         = ((p.biography as string) || (p.bio as string) || '');
+      const followers   = (p.followersCount as number) ?? 0;
+      const displayName = ((p.fullName as string) || (p.name as string) || handle);
+
+      if (followers < minFollowers || (maxFollowers > 0 && followers > maxFollowers)) continue;
+
+      const bioLower = bio.toLowerCase();
+      let antiMatch = false;
+      for (const kw of ANTI_ICP_BIO_KEYWORDS) { if (bioLower.includes(kw)) { antiMatch = true; break; } }
+      if (antiMatch) continue;
+
+      const email = (
+        ((p.publicEmail as string) || '').toLowerCase().trim() ||
+        ((p.businessEmail as string) || '').toLowerCase().trim() ||
+        ((p.contactEmail as string) || '').toLowerCase().trim() ||
+        extractEmailFromBio(bio)
+      );
+      if (!email) continue;
+
+      const { error: insertErr } = await supabase.from('leads').insert({
+        user_id: campaign.user_id, campaign_id: campaign.id, name: displayName,
+        ig_handle: handle, follower_count: followers, niche: campaign.icp_content_types?.[0] ?? '',
+        audience_tier: followers >= 200_000 ? 'mid' : followers >= 50_000 ? 'micro' : 'nano',
+        job_title: 'Content Creator', email, bio,
+        ai_summary: `Autopilot scraped from Instagram. Bio: ${bio.substring(0, 200)}`,
+        vsl_sent_status: 'pending', email_status: 'pending', status: 'scraped', source: 'instagram',
+      });
+      if (insertErr) { result.errors.push(`DB insert failed for @${handle}: ${insertErr.message}`); continue; }
+
+      seenHandles.add(handle);
+      result.leadsFound++;
+
+      if (instantlyId && instantlyKey) {
+        const ok = await addLeadToInstantly(instantlyKey, instantlyId, {
+          email, name: displayName, igHandle: handle,
+          niche: campaign.icp_content_types?.[0] ?? '', followerCount: followers, aiSummary: bio.substring(0, 300),
+        });
+        if (ok) result.addedToInstantly++;
+      }
+    }
+  }
+
+  return result;
+}
+
+// ─── AUTOPILOT BATCH ROUTER ──────────────────────────────────────────────────
+// Routes to the correct engine based on campaign.icp_type:
+//   'personal_brand'   → Instagram fitness coach engine
+//   'faceless_clipper' → TikTok faceless clipper engine (default)
+
+async function runAutopilotBatch(
+  campaign: CampaignRow,
+  supabase: SupabaseClient,
+  serperKey: string,
+  apifyToken: string,
+  instantlyKey: string,
+  targetLeads: number,
+): Promise<BatchResult> {
+  if (campaign.icp_type === 'personal_brand') {
+    return runInstagramBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetLeads);
+  }
+  return runTikTokBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetLeads);
 }
 
 // ─── VERCEL HANDLER ───────────────────────────────────────────────────────────

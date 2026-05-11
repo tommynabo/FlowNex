@@ -89,7 +89,6 @@ class SetterAgentService {
     const { data, error } = await supabase
       .from('lead_conversations')
       .select('*')
-      .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -104,7 +103,6 @@ class SetterAgentService {
     const { data, error } = await supabase
       .from('lead_conversations')
       .select('*')
-      .eq('user_id', userId)
       .eq('status', 'pending_review')
       .order('created_at', { ascending: false });
 
@@ -205,8 +203,7 @@ class SetterAgentService {
   async getStats(userId: string): Promise<SetterStats> {
     const { data, error } = await supabase
       .from('lead_conversations')
-      .select('status, confidence_score')
-      .eq('user_id', userId);
+      .select('status, confidence_score');
 
     if (error || !data) {
       return { total: 0, pendingReview: 0, approved: 0, rejected: 0, corrected: 0, sent: 0, avgConfidence: 0 };
@@ -234,7 +231,6 @@ class SetterAgentService {
     const { data, error } = await supabase
       .from('setter_feedback')
       .select('*')
-      .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(limit);
 

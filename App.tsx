@@ -217,7 +217,6 @@ function App() {
       const { data: searchData, error: searchError } = await supabase
         .from('search_history')
         .select('*')
-        .eq('user_id', uid)
         .order('executed_at', { ascending: false });
 
       if (searchError) {
@@ -299,7 +298,6 @@ function App() {
       const { data, error } = await supabase
         .from('campaigns')
         .select('*')
-        .eq('user_id', uid)
         .order('created_at', { ascending: false });
       if (error) { console.warn('[CAMPAIGNS] Load error:', error.message); return; }
       if (data) {

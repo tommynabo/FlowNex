@@ -845,6 +845,7 @@ export class InstagramPersonalBrandEngine {
           }, onLog, 90_000, 80, 1024).catch((e: unknown) => {
             const msg = e instanceof Error ? e.message : String(e);
             if (msg.startsWith('APIFY_QUOTA_EXCEEDED')) { quotaExceeded = true; }
+            else { onLog('[APIFY] ❌ Error Google Search: ' + msg); }
             return [] as unknown[];
           })
         ));

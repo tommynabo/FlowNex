@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.94.1",
+    "apify-client": "^2.23.3",
     "cheerio": "^1.2.0",
     "lucide-react": "^0.563.0",
     "react": "^19.2.4",

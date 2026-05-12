@@ -84,9 +84,10 @@ const TIME_PRESETS = [
   '22:00', '22:30', '23:00', '00:00', '02:00', '04:00',
 ];
 
-// Shared dark input className
+// Shared dark input/select classNames
 const INPUT_TIME_CLS =
   'w-full bg-background text-foreground border border-border rounded-lg px-3 py-2 text-sm focus:border-primary outline-none [color-scheme:dark]';
+const SELECT_CLS = INPUT_TIME_CLS;
 
 function estimateNextRun(
   startTime: string,

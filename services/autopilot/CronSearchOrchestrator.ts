@@ -1,4 +1,8 @@
 /**
+ * @deprecated — NOT used. Superseded by api/cron/autopilot-engine.ts which owns
+ * the full autopilot batch logic with correct interval math and unified ICPEvaluator filters.
+ * This file is kept for reference only and can be safely deleted.
+ *
  * CronSearchOrchestrator
  *
  * Server-side only (Vercel Serverless / Node.js).

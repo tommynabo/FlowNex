@@ -1,13 +1,14 @@
 /**
  * Vercel Cron Job: /api/cron/autopilot-engine
- * Schedule: every hour at :00 (see vercel.json → "0 * * * *")
+ * Schedule: every 10 min (see vercel.json → "*/10 * * * *")
  *
- * SELF-CONTAINED: no local imports — everything inlined to ensure Vercel
- * ESM bundler includes all code in the single function bundle.
+ * Imports ICPEvaluator for the unified ICP hard-filter pipeline (pure TypeScript,
+ * no browser dependencies — safe to run in Vercel Node.js serverless context).
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient, SupabaseClient }       from '@supabase/supabase-js';
+import { icpEvaluator, RawApifyProfile }       from '../../services/search/ICPEvaluator';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 
@@ -34,14 +35,8 @@ const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
   ['"DM LEAN"', '"DM SHRED"', '"DM BULK"', '"DM PROGRAM"', '"skinny-fat"', '"skinny fat"'],
 ];
 
-const ANTI_ICP_BIO_KEYWORDS = [
-  'restaurant', 'cafe', 'bakery', 'food truck', 'boutique', 'retail store',
-  'dental', 'dentist', 'clinic', 'salon', 'spa', 'franchise',
-  'dancer', 'dancing', 'choreograph', 'scenepack', 'sound promo', 'music promo',
-  'anime edit', 'fashion', 'beauty', 'makeup', 'skincare', 'nail', 'lash',
-  'ugc creator', 'user generated content', 'public speaker', 'keynote speaker',
-  'restaurante', 'cafetería', 'panadería', 'inmobiliaria', 'peluquería',
-];
+// ANTI_ICP_BIO_KEYWORDS removed — ICPEvaluator.applyHardFilter() now owns the
+// comprehensive rejection list and is called directly in each batch function.
 
 const ANTI_ICP_NEGATIVES  = '-restaurant -store -boutique -cooking -dance';
 const TIKTOK_SKIP_HANDLES = new Set(['tag', 'search', 'discover', 'music', 'video', 'live', 'trending', 'foryou', 't']);
@@ -144,6 +139,24 @@ function calcWindowHours(startHour: number, startMinute: number, endHour: number
   if (start === end) return 0;
   const diffMins = start < end ? end - start : (24 * 60 - start) + end;
   return diffMins / 60;
+}
+
+/**
+ * Returns the number of minutes that should elapse between autopilot runs to
+ * distribute dailyLimit leads evenly across the active time window.
+ * Example: 30 leads ÷ 5/batch = 6 runs needed; 120-min window ÷ 6 = 20 min/run.
+ */
+function calcIntervalMinutes(windowTotalMins: number, dailyLimit: number, batchSize: number): number {
+  if (windowTotalMins <= 0 || batchSize <= 0) return 0;
+  const runsNeeded = Math.ceil(dailyLimit / batchSize);
+  return Math.floor(windowTotalMins / runsNeeded);
+}
+
+/** Returns true if enough time has elapsed since the last run (or if it has never run). */
+function isIntervalElapsed(lastRunAt: string | null, intervalMins: number): boolean {
+  if (!lastRunAt || intervalMins <= 0) return true;
+  const msSinceLastRun = Date.now() - new Date(lastRunAt).getTime();
+  return msSinceLastRun >= intervalMins * 60_000;
 }
 
 function getTodayInTz(timezone: string): string {
@@ -251,15 +264,6 @@ function extractHandleFromUrl(url: string): string | null {
   } catch {
     return null;
   }
-}
-
-function passesIcpFilter(bio: string, followers: number, minFollowers: number, maxFollowers: number): boolean {
-  if (followers < minFollowers || (maxFollowers > 0 && followers > maxFollowers)) return false;
-  const bioLower = bio.toLowerCase();
-  for (const kw of ANTI_ICP_BIO_KEYWORDS) {
-    if (bioLower.includes(kw)) return false;
-  }
-  return true;
 }
 
 function extractEmailFromBio(bio: string): string | null {
@@ -513,7 +517,11 @@ async function runTikTokBatch(
         || extractEmailFromBio(bio);
 
       if (!handle || seenHandles.has(handle)) { result.skippedDuplicate++; continue; }
-      if (!passesIcpFilter(bio, followers, minFollowers, maxFollowers)) continue;
+      // Comprehensive ICP filter — mirrors the manual TikTokFacelessEngine pipeline
+      const rawProfile: RawApifyProfile = { username: handle, fullName: displayName, biography: bio, followersCount: followers };
+      if (icpEvaluator.applyHardFilter([rawProfile], (m) => console.log('[ICP-TT]', m), 'faceless_clipper').length === 0) continue;
+      // Also enforce campaign-specific follower range
+      if (followers >= 0 && (followers < minFollowers || (maxFollowers > 0 && followers > maxFollowers))) continue;
       // Multi-stage email fallback
       let emailFinal = email ?? '';
       // Stage 2: Serper web search — most effective for TikTok creators
@@ -714,12 +722,11 @@ async function runInstagramBatch(
       const followers   = (p.followersCount as number) ?? 0;
       const displayName = ((p.fullName as string) || (p.name as string) || handle);
 
-      if (followers < minFollowers || (maxFollowers > 0 && followers > maxFollowers)) continue;
-
-      const bioLower = bio.toLowerCase();
-      let antiMatch = false;
-      for (const kw of ANTI_ICP_BIO_KEYWORDS) { if (bioLower.includes(kw)) { antiMatch = true; break; } }
-      if (antiMatch) continue;
+      // Comprehensive ICP filter — mirrors the manual InstagramPersonalBrandEngine pipeline
+      const rawProfile: RawApifyProfile = { username: handle, fullName: displayName, biography: bio, followersCount: followers };
+      if (icpEvaluator.applyHardFilter([rawProfile], (m) => console.log('[ICP-IG]', m), 'personal_brand').length === 0) continue;
+      // Also enforce campaign-specific follower range
+      if (followers >= 0 && (followers < minFollowers || (maxFollowers > 0 && followers > maxFollowers))) continue;
 
       const emailRaw = (
         ((p.publicEmail as string) || '').toLowerCase().trim() ||
@@ -854,15 +861,23 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
       continue;
     }
 
-    const windowHours  = calcWindowHours(startHour, startMinute, endHour, endMinute);
-    const targetPerRun = Math.min(
-      windowHours > 0 ? Math.ceil(dailyLimit / windowHours) : dailyLimit,
-      dailyLimit - leadsToday,
-    );
+    const batchSize    = campaign.autopilot_batch_size ?? 5;
+    const windowMins   = calcWindowHours(startHour, startMinute, endHour, endMinute) * 60;
+    const intervalMins = calcIntervalMinutes(windowMins, dailyLimit, batchSize);
+    // ── Interval check: only fire if enough time has elapsed since the last run ──────────────
+    if (!isIntervalElapsed(campaign.autopilot_last_run_at, intervalMins)) {
+      const minsAgo = campaign.autopilot_last_run_at
+        ? Math.floor((Date.now() - new Date(campaign.autopilot_last_run_at).getTime()) / 60_000)
+        : 0;
+      const minsUntilNext = intervalMins - minsAgo;
+      summary.push({ campaignId: campaign.id, campaignName: campaign.name, status: 'skipped', reason: `Interval not elapsed — next run in ~${minsUntilNext} min (interval: ${intervalMins} min, batch: ${batchSize}, window: ${Math.round(windowMins)} min, daily: ${dailyLimit})` });
+      continue;
+    }
+    const targetPerRun = Math.min(batchSize, dailyLimit - leadsToday);
 
     const { data: runRow } = await supabase.from('autopilot_runs').insert({
       campaign_id: campaign.id, user_id: campaign.user_id, status: 'running',
-      batch_size: campaign.autopilot_batch_size ?? 5, target_leads: targetPerRun,
+      batch_size: batchSize, target_leads: targetPerRun,
     }).select().single();
     const runId = (runRow as { id?: string } | null)?.id ?? null;
 
@@ -907,7 +922,7 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
     summary.push({
       campaignId: campaign.id, campaignName: campaign.name, status: batchStatus,
       leadsFound: batchResult.leadsFound, addedToInstantly: batchResult.addedToInstantly,
-      targetPerRun, windowHours,
+      targetPerRun, windowHours: windowMins / 60,
       errors: batchResult.errors.length > 0 ? batchResult.errors : undefined,
     });
   }

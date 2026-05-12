@@ -2,6 +2,12 @@
     "functions": {
         "api/cron/autopilot-engine.ts": {
             "maxDuration": 300
+        },
+        "api/ig-email.ts": {
+            "maxDuration": 30
+        },
+        "api/tiktok-email.ts": {
+            "maxDuration": 30
         }
     },
     "rewrites": [

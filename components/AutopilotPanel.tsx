@@ -222,6 +222,20 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
         </button>
       </div>
 
+      {/* Warning: Instantly Campaign ID not configured */}
+      {enabled && !campaign.instantlyCampaignId && (
+        <div className="flex items-start gap-3 bg-red-500/10 border border-red-500/30 rounded-xl p-4">
+          <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium text-red-400">Instantly Campaign ID no configurado</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              El autopilot encontrará leads pero no los añadirá a Instantly.
+              Configura el ID de la campaña de Instantly en la pestaña de configuración de la campaña.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
         {/* Schedule */}

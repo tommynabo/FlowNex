@@ -145,11 +145,11 @@ function getTodayInTz(timezone: string): string {
 
 // ─── SERPER (Google Search) ───────────────────────────────────────────────────
 
-async function serperGoogleSearch(query: string, apiKey: string): Promise<Array<{ link: string }>> {
+async function serperGoogleSearch(query: string, apiKey: string, page = 1): Promise<Array<{ link: string }>> {
   const res = await fetch('https://google.serper.dev/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-API-KEY': apiKey },
-    body: JSON.stringify({ q: query, num: 20 }),
+    body: JSON.stringify({ q: query, num: 20, ...(page > 1 ? { page } : {}) }),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -200,18 +200,21 @@ async function runActorSync(
   const datasetId = start.data?.defaultDatasetId;
   if (!runId || !datasetId) throw new Error(`Apify: missing runId/datasetId for ${actorId}`);
 
-  const deadline = Date.now() + (timeoutSecs + 10) * 1000;
+  const deadline = Date.now() + (timeoutSecs + 30) * 1000;
   let finalStatus = '';
   while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, 2000));
     const status = await apifyGet(`acts/${actorId}/runs/${runId}`, token) as { data?: { status?: string } };
     finalStatus = status.data?.status ?? '';
-    if (finalStatus === 'SUCCEEDED' || finalStatus === 'TIMED-OUT') break; // TIMED-OUT → partial results saved in dataset
+    if (finalStatus === 'SUCCEEDED' || finalStatus === 'TIMED-OUT' || finalStatus === 'TIMING-OUT') break;
     if (finalStatus === 'FAILED' || finalStatus === 'ABORTED') throw new Error(`Apify actor ${actorId} ${finalStatus}`);
   }
 
-  if (finalStatus !== 'SUCCEEDED' && finalStatus !== 'TIMED-OUT') {
-    throw new Error(`Apify actor ${actorId} timed out (still ${finalStatus || 'RUNNING'} after ${timeoutSecs + 10}s)`);
+  // On TIMING-OUT, give Apify 4 extra seconds to flush partial results to the dataset
+  if (finalStatus === 'TIMING-OUT') await new Promise(r => setTimeout(r, 4000));
+
+  if (finalStatus !== 'SUCCEEDED' && finalStatus !== 'TIMED-OUT' && finalStatus !== 'TIMING-OUT') {
+    throw new Error(`Apify actor ${actorId} timed out (still ${finalStatus || 'RUNNING'} after ${timeoutSecs + 30}s)`);
   }
 
   const dataset = await apifyGet(`datasets/${datasetId}/items?limit=500`, token) as unknown[];
@@ -304,6 +307,52 @@ function buildSearchQuery(attempt: number, regions: string[] = []): string {
   return locationSuffix ? `${base} ${locationSuffix}` : base;
 }
 
+// ─── CRON EMAIL DISCOVERY HELPERS ──────────────────────────────────────────────
+// Call the self-hosted API routes from within the cron to run multi-stage email
+// discovery. selfBase = `https://${VERCEL_PROJECT_PRODUCTION_URL}` (auto-set by Vercel).
+
+async function cronIgEmail(handle: string, selfBase: string): Promise<string> {
+  try {
+    const res = await fetch(`${selfBase}/api/ig-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: handle }),
+    });
+    if (!res.ok) return '';
+    const data = await res.json() as { email?: string | null };
+    return (data.email ?? '').toLowerCase().trim();
+  } catch { return ''; }
+}
+
+async function cronTikTokEmail(handle: string, selfBase: string): Promise<string> {
+  try {
+    const res = await fetch(`${selfBase}/api/tiktok-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: handle }),
+    });
+    if (!res.ok) return '';
+    const data = await res.json() as { email?: string | null };
+    return (data.email ?? '').toLowerCase().trim();
+  } catch { return ''; }
+}
+
+// Extract an IG handle from a TikTok bio (e.g. "ig: @handle" / "instagram.com/handle")
+// then resolve its business email via /api/ig-email.
+async function cronIgCrossRef(bio: string, selfBase: string): Promise<string> {
+  const igPatterns = [
+    /(?:ig|insta(?:gram)?)\s*:?\s*@?([a-z0-9._]{1,30})/i,
+    /instagram\.com\/([a-z0-9._]{1,30})/i,
+  ];
+  let igHandle = '';
+  for (const pat of igPatterns) {
+    const m = bio.match(pat);
+    if (m?.[1]) { igHandle = m[1].replace(/[^a-z0-9._]/gi, ''); break; }
+  }
+  if (!igHandle) return '';
+  return cronIgEmail(igHandle, selfBase);
+}
+
 // ─── TIKTOK BATCH ORCHESTRATION ──────────────────────────────────────────────
 
 async function runTikTokBatch(
@@ -313,6 +362,7 @@ async function runTikTokBatch(
   apifyToken: string,
   instantlyKey: string,
   targetLeads: number,
+  selfBase: string | null,
 ): Promise<BatchResult> {
   const result: BatchResult = { leadsFound: 0, addedToInstantly: 0, skippedDuplicate: 0, errors: [], warnings: [] };
 
@@ -399,13 +449,22 @@ async function runTikTokBatch(
 
       if (!handle || seenHandles.has(handle)) { result.skippedDuplicate++; continue; }
       if (!passesIcpFilter(bio, followers, minFollowers, maxFollowers)) continue;
-      if (!email) continue;
+      // Multi-stage email fallback — Stage 3: /api/tiktok-email proxy + IG cross-ref from bio
+      let emailFinal = email ?? '';
+      if (!emailFinal && selfBase) {
+        const [ttEmail, igCrossRef] = await Promise.all([
+          cronTikTokEmail(handle, selfBase),
+          cronIgCrossRef(bio, selfBase),
+        ]);
+        emailFinal = ttEmail || igCrossRef;
+      }
+      if (!emailFinal) continue;
 
       const { error: insertErr } = await supabase.from('leads').insert({
         user_id: campaign.user_id, campaign_id: campaign.id, name: displayName,
         ig_handle: handle, follower_count: followers, niche: campaign.icp_content_types?.[0] ?? '',
         audience_tier: followers >= 200_000 ? 'mid' : followers >= 50_000 ? 'micro' : 'nano',
-        job_title: 'Content Creator', email, bio,
+        job_title: 'Content Creator', email: emailFinal, bio,
         ai_summary: `Autopilot scraped from TikTok. Bio: ${bio.substring(0, 200)}`,
         vsl_sent_status: 'pending', email_status: 'pending', status: 'scraped', source: 'tiktok',
       });
@@ -416,7 +475,7 @@ async function runTikTokBatch(
 
       if (instantlyId && instantlyKey) {
         const ok = await addLeadToInstantly(instantlyKey, instantlyId, {
-          email, name: displayName, igHandle: handle,
+          email: emailFinal, name: displayName, igHandle: handle,
           niche: campaign.icp_content_types?.[0] ?? '', followerCount: followers, aiSummary: bio.substring(0, 300),
         }, result.errors);
         if (ok) result.addedToInstantly++;
@@ -486,6 +545,7 @@ async function runInstagramBatch(
   apifyToken: string,
   instantlyKey: string,
   targetLeads: number,
+  selfBase: string | null,
 ): Promise<BatchResult> {
   const result: BatchResult = { leadsFound: 0, addedToInstantly: 0, skippedDuplicate: 0, errors: [], warnings: [] };
 
@@ -505,25 +565,33 @@ async function runInstagramBatch(
   for (let iteration = 0; iteration < 4 && result.leadsFound < targetLeads; iteration++) {
     const attemptOffset = (baseOffset + iteration) % INSTAGRAM_KEYWORD_POOLS.length;
 
-    let googleResults: Array<{ link: string }> = [];
-    try {
-      googleResults = await serperGoogleSearch(buildInstagramSearchQuery(attemptOffset), serperKey);
-    } catch (e) {
-      result.errors.push(`Google Search failed (iter ${iteration + 1}): ${e instanceof Error ? e.message : String(e)}`);
-      break;
-    }
-
+    const query = buildInstagramSearchQuery(attemptOffset);
     const candidateHandles: string[] = [];
-    for (const item of googleResults) {
-      const url = item.link ?? '';
-      if (!url.includes('instagram.com')) continue;
-      const handle = extractHandleFromInstagramUrl(url);
-      if (handle && !seenHandles.has(handle) && !candidateHandles.includes(handle)) {
-        candidateHandles.push(handle);
+    let serperFailed = false;
+
+    // Try up to 5 Serper pages before moving to the next keyword pool.
+    // This breaks the 20-result ceiling when all top results are already in the DB.
+    for (let serperPage = 1; serperPage <= 5 && candidateHandles.length === 0; serperPage++) {
+      let pageResults: Array<{ link: string }> = [];
+      try {
+        pageResults = await serperGoogleSearch(query, serperKey, serperPage);
+      } catch (e) {
+        result.errors.push(`Google Search failed (iter ${iteration + 1}, page ${serperPage}): ${e instanceof Error ? e.message : String(e)}`);
+        serperFailed = true;
+        break;
+      }
+      if (pageResults.length === 0) break; // no more results from Serper
+      for (const item of pageResults) {
+        const url = item.link ?? '';
+        if (!url.includes('instagram.com')) continue;
+        const h = extractHandleFromInstagramUrl(url);
+        if (h && !seenHandles.has(h) && !candidateHandles.includes(h)) candidateHandles.push(h);
       }
     }
+
+    if (serperFailed) break;
     if (candidateHandles.length === 0) {
-      result.errors.push(`No new Instagram handles found (iter ${iteration + 1}) — trying next pool`);
+      result.errors.push(`No new Instagram handles found (iter ${iteration + 1}) — all pages exhausted`);
       continue; // try a different keyword pool next iteration
     }
 
@@ -558,19 +626,24 @@ async function runInstagramBatch(
       for (const kw of ANTI_ICP_BIO_KEYWORDS) { if (bioLower.includes(kw)) { antiMatch = true; break; } }
       if (antiMatch) continue;
 
-      const email = (
+      const emailRaw = (
         ((p.publicEmail as string) || '').toLowerCase().trim() ||
         ((p.businessEmail as string) || '').toLowerCase().trim() ||
         ((p.contactEmail as string) || '').toLowerCase().trim() ||
         extractEmailFromBio(bio)
       );
-      if (!email) continue;
+      // Multi-stage email fallback — Stage 3: /api/ig-email proxy
+      let emailFinal = emailRaw;
+      if (!emailFinal && selfBase) {
+        emailFinal = await cronIgEmail(handle, selfBase);
+      }
+      if (!emailFinal) continue;
 
       const { error: insertErr } = await supabase.from('leads').insert({
         user_id: campaign.user_id, campaign_id: campaign.id, name: displayName,
         ig_handle: handle, follower_count: followers, niche: campaign.icp_content_types?.[0] ?? '',
         audience_tier: followers >= 200_000 ? 'mid' : followers >= 50_000 ? 'micro' : 'nano',
-        job_title: 'Content Creator', email, bio,
+        job_title: 'Content Creator', email: emailFinal, bio,
         ai_summary: `Autopilot scraped from Instagram. Bio: ${bio.substring(0, 200)}`,
         vsl_sent_status: 'pending', email_status: 'pending', status: 'scraped', source: 'instagram',
       });
@@ -581,7 +654,7 @@ async function runInstagramBatch(
 
       if (instantlyId && instantlyKey) {
         const ok = await addLeadToInstantly(instantlyKey, instantlyId, {
-          email, name: displayName, igHandle: handle,
+          email: emailFinal, name: displayName, igHandle: handle,
           niche: campaign.icp_content_types?.[0] ?? '', followerCount: followers, aiSummary: bio.substring(0, 300),
         }, result.errors);
         if (ok) result.addedToInstantly++;
@@ -604,11 +677,12 @@ async function runAutopilotBatch(
   apifyToken: string,
   instantlyKey: string,
   targetLeads: number,
+  selfBase: string | null,
 ): Promise<BatchResult> {
   if (campaign.icp_type === 'personal_brand') {
-    return runInstagramBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetLeads);
+    return runInstagramBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetLeads, selfBase);
   }
-  return runTikTokBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetLeads);
+  return runTikTokBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetLeads, selfBase);
 }
 
 // ─── VERCEL HANDLER ───────────────────────────────────────────────────────────
@@ -649,6 +723,14 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
   const { data: campaigns, error: dbErr } = await supabase
     .from('campaigns').select('*').eq('autopilot_enabled', true).eq('status', 'active');
   if (dbErr) return res.status(500).json({ error: `DB query failed: ${dbErr.message}` });
+
+  // Self-hosted API base URL for email discovery helpers.
+  // VERCEL_PROJECT_PRODUCTION_URL is stable across deployments; VERCEL_URL changes per preview.
+  const selfBase = process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : null;
 
   const currentHourUTC = new Date().getUTCHours();
 
@@ -699,14 +781,18 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
     let batchResult: BatchResult          = { leadsFound: 0, addedToInstantly: 0, skippedDuplicate: 0, errors: [] };
 
     try {
-      batchResult = await runAutopilotBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetPerRun);
+      batchResult = await runAutopilotBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetPerRun, selfBase);
       // Only real errors (not config warnings) drive status:'error'
       if (batchResult.errors.length > 0 && batchResult.leadsFound === 0) {
         batchStatus  = 'error';
-        errorMessage = [...batchResult.errors, ...batchResult.warnings].join('; ');
-      } else if (batchResult.warnings.length > 0) {
+        errorMessage = [...batchResult.errors, ...(batchResult.warnings ?? [])].join('; ');
+      } else if (batchResult.leadsFound > 0 && batchResult.addedToInstantly === 0 && !campaign.instantly_campaign_id) {
+        // Leads found but Instantly is not configured — surface as error so it's visible in the UI
+        batchStatus  = 'error';
+        errorMessage = `Found ${batchResult.leadsFound} leads but instantly_campaign_id is not set on this campaign — configure it in the campaign settings`;
+      } else if ((batchResult.warnings ?? []).length > 0) {
         // Has warnings but either found leads or no hard error — keep 'success', surface warnings in message
-        errorMessage = batchResult.warnings.join('; ');
+        errorMessage = (batchResult.warnings ?? []).join('; ');
       }
     } catch (e) {
       batchStatus = 'error'; errorMessage = e instanceof Error ? e.message : String(e);

@@ -127,7 +127,7 @@ const REGION_MAP: Record<string, string[]> = {
 };
 
 // Google Search Scraper — queries site:instagram.com [keywords], extracts handles from URLs
-const GOOGLE_SEARCH_SCRAPER = 'scraperlink/google-search-results-serp-scraper';
+const GOOGLE_SEARCH_SCRAPER = 'scraperlink~google-search-results-serp-scraper';
 const INSTAGRAM_PROFILE_SCRAPER = 'apify~instagram-profile-scraper';
 
 // Anti-ICP negative keywords — purge local businesses and generic corporate accounts

@@ -11,7 +11,7 @@ import { CandidateService, CampaignService } from '../../lib/services';
 export type LogCallback = (message: string) => void;
 
 // Apify Actor IDs
-const GOOGLE_SEARCH_SCRAPER = 'scraperlink/google-search-results-serp-scraper';
+const GOOGLE_SEARCH_SCRAPER = 'scraperlink~google-search-results-serp-scraper';
 
 /**
  * LinkedInSearchEngine: Specialized search engine for LinkedIn profiles

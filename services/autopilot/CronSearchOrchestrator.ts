@@ -46,7 +46,7 @@ const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
 ];
 
 // ── Apify actor IDs (same as TikTokFacelessEngine) ───────────────────────────
-const GOOGLE_SEARCH_SCRAPER  = 'scraperlink/google-search-results-serp-scraper';
+const GOOGLE_SEARCH_SCRAPER  = 'scraperlink~google-search-results-serp-scraper';
 const TIKTOK_PROFILE_SCRAPER = 'apidojo~tiktok-scraper';
 
 // ── Anti-ICP bio keywords (subset of ICPEvaluator — most impactful rejections) ──

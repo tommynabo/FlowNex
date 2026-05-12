@@ -140,7 +140,7 @@ const REGION_MAP: Record<string, string[]> = {
 };
 
 // Google Search Scraper — queries `site:instagram.com [keywords]`, extracts handles from URLs
-const GOOGLE_SEARCH_SCRAPER = 'scraperlink/google-search-results-serp-scraper';
+const GOOGLE_SEARCH_SCRAPER = 'scraperlink~google-search-results-serp-scraper';
 const INSTAGRAM_PROFILE_SCRAPER = 'apify~instagram-profile-scraper';
 // apify~tiktok-profile-scraper returns one profile object per username (not a video feed).
 // clockworks~tiktok-profile-scraper is the active actor (apify~ slug returns 404).

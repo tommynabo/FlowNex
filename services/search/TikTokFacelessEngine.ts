@@ -135,7 +135,7 @@ const REGION_MAP: Record<string, string[]> = {
 };
 
 // Google Search Scraper
-const GOOGLE_SEARCH_SCRAPER = 'scraperlink/google-search-results-serp-scraper';
+const GOOGLE_SEARCH_SCRAPER = 'scraperlink~google-search-results-serp-scraper';
 
 // apidojo/tiktok-scraper — $0.30/1K results (6.7x cheaper than clockworks $2/1K).
 // Input: { startUrls: ["https://tiktok.com/@handle"] } for profiles;

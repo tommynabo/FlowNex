@@ -324,39 +324,63 @@ function buildSearchQuery(attempt: number, regions: string[] = []): string {
   return locationSuffix ? `${base} ${locationSuffix}` : base;
 }
 
-// ─── CRON EMAIL DISCOVERY HELPERS ──────────────────────────────────────────────
-// Call the self-hosted API routes from within the cron to run multi-stage email
-// discovery. selfBase = `https://${VERCEL_PROJECT_PRODUCTION_URL}` (auto-set by Vercel).
+// ─── INLINE EMAIL DISCOVERY ──────────────────────────────────────────────────
+// The cron runs server-side (Node.js) — no CORS restrictions.
+// Fetch Instagram / TikTok directly instead of calling the API routes via HTTP.
+// This eliminates the VERCEL_URL / selfBase dependency entirely.
 
-async function cronIgEmail(handle: string, selfBase: string): Promise<string> {
+const _FETCH_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.5',
+  'Cache-Control': 'no-cache',
+};
+
+async function inlineIgEmail(handle: string): Promise<string> {
   try {
-    const res = await fetch(`${selfBase}/api/ig-email`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: handle }),
-    });
+    const ac = new AbortController();
+    const t  = setTimeout(() => ac.abort(), 10_000);
+    const res = await fetch(`https://www.instagram.com/${handle}/`, { headers: _FETCH_HEADERS, signal: ac.signal });
+    clearTimeout(t);
     if (!res.ok) return '';
-    const data = await res.json() as { email?: string | null };
-    return (data.email ?? '').toLowerCase().trim();
-  } catch { return ''; }
+    const html = await res.text();
+    for (const pat of [
+      /"public_email"\s*:\s*"([^"]+)"/,
+      /"business_email"\s*:\s*"([^"]+)"/,
+      /"contact_email"\s*:\s*"([^"]+)"/,
+      /mailto:([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/,
+    ]) {
+      const m = html.match(pat);
+      if (m?.[1] && m[1].includes('@') && !m[1].includes('example.com')) return m[1].toLowerCase().trim();
+    }
+  } catch { /* ignore */ }
+  return '';
 }
 
-async function cronTikTokEmail(handle: string, selfBase: string): Promise<string> {
+async function inlineTikTokEmail(handle: string): Promise<string> {
   try {
-    const res = await fetch(`${selfBase}/api/tiktok-email`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: handle }),
-    });
+    const ac = new AbortController();
+    const t  = setTimeout(() => ac.abort(), 10_000);
+    const res = await fetch(`https://www.tiktok.com/@${handle}`, { headers: _FETCH_HEADERS, signal: ac.signal });
+    clearTimeout(t);
     if (!res.ok) return '';
-    const data = await res.json() as { email?: string | null };
-    return (data.email ?? '').toLowerCase().trim();
-  } catch { return ''; }
+    const html = await res.text();
+    for (const pat of [
+      /"email"\s*:\s*"([^"]+)"/,
+      /"contactEmail"\s*:\s*"([^"]+)"/,
+      /"publicEmail"\s*:\s*"([^"]+)"/,
+      /mailto:([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/,
+    ]) {
+      const m = html.match(pat);
+      if (m?.[1] && m[1].includes('@') && !m[1].includes('tiktok.com') && !m[1].includes('example.com')) return m[1].toLowerCase().trim();
+    }
+  } catch { /* ignore */ }
+  return '';
 }
 
 // Extract an IG handle from a TikTok bio (e.g. "ig: @handle" / "instagram.com/handle")
-// then resolve its business email via /api/ig-email.
-async function cronIgCrossRef(bio: string, selfBase: string): Promise<string> {
+// then resolve its business email directly.
+async function inlineIgCrossRef(bio: string): Promise<string> {
   const igPatterns = [
     /(?:ig|insta(?:gram)?)\s*:?\s*@?([a-z0-9._]{1,30})/i,
     /instagram\.com\/([a-z0-9._]{1,30})/i,
@@ -367,7 +391,7 @@ async function cronIgCrossRef(bio: string, selfBase: string): Promise<string> {
     if (m?.[1]) { igHandle = m[1].replace(/[^a-z0-9._]/gi, ''); break; }
   }
   if (!igHandle) return '';
-  return cronIgEmail(igHandle, selfBase);
+  return inlineIgEmail(igHandle);
 }
 
 // ─── TIKTOK BATCH ORCHESTRATION ──────────────────────────────────────────────
@@ -379,7 +403,6 @@ async function runTikTokBatch(
   apifyToken: string,
   instantlyKey: string,
   targetLeads: number,
-  selfBase: string | null,
 ): Promise<BatchResult> {
   const result: BatchResult = { leadsFound: 0, addedToInstantly: 0, skippedDuplicate: 0, errors: [], warnings: [] };
 
@@ -466,12 +489,12 @@ async function runTikTokBatch(
 
       if (!handle || seenHandles.has(handle)) { result.skippedDuplicate++; continue; }
       if (!passesIcpFilter(bio, followers, minFollowers, maxFollowers)) continue;
-      // Multi-stage email fallback — Stage 3: /api/tiktok-email proxy + IG cross-ref from bio
+      // Multi-stage email fallback — Stage 3: inline TikTok HTML + IG cross-ref from bio
       let emailFinal = email ?? '';
-      if (!emailFinal && selfBase) {
+      if (!emailFinal) {
         const [ttEmail, igCrossRef] = await Promise.all([
-          cronTikTokEmail(handle, selfBase),
-          cronIgCrossRef(bio, selfBase),
+          inlineTikTokEmail(handle),
+          inlineIgCrossRef(bio),
         ]);
         emailFinal = ttEmail || igCrossRef;
       }
@@ -533,11 +556,39 @@ const INSTAGRAM_SKIP_HANDLES = new Set([
   'tv', 'direct', 'hashtag', 'tagged', 'about', 'directory',
 ]);
 
+// ── Stats Block — city × height × weight × gmail ─────────────────────────────
+// Personal trainers routinely put their city, height, weight + Gmail in their IG bio.
+// With 21 cities × 11 heights × 15 weights = 3,465 unique combinations, these
+// queries never exhaust. This is the primary fix for Instagram pool exhaustion.
+// Proven in the manual InstagramPersonalBrandEngine — high precision, zero false positives.
+const IG_STATS_CITIES = [
+  'New York', 'Los Angeles', 'Chicago', 'Houston', 'Miami', 'Dallas', 'Atlanta',
+  'Phoenix', 'Denver', 'Seattle', 'San Diego', 'Austin', 'Boston', 'Nashville',
+  'Tampa', 'Toronto', 'Vancouver', 'Calgary', 'London', 'Manchester', 'Glasgow',
+];
+const IG_STATS_HEIGHTS = [
+  "5'5\"", "5'6\"", "5'7\"", "5'8\"", "5'9\"", "5'10\"", "5'11\"",
+  "6'", "6'1\"", "6'2\"", "6'3\"",
+];
+const IG_STATS_WEIGHTS = [
+  '125lbs', '130lbs', '135lbs', '140lbs', '145lbs', '150lbs', '155lbs',
+  '160lbs', '165lbs', '170lbs', '175lbs', '180lbs', '185lbs', '190lbs', '200lbs',
+];
+
+function buildInstagramStatsQuery(): string {
+  const city   = IG_STATS_CITIES[Math.floor(Math.random() * IG_STATS_CITIES.length)];
+  const height = IG_STATS_HEIGHTS[Math.floor(Math.random() * IG_STATS_HEIGHTS.length)];
+  const weight = IG_STATS_WEIGHTS[Math.floor(Math.random() * IG_STATS_WEIGHTS.length)];
+  return `site:instagram.com "${city}" "${height}" "${weight}" "gmail.com" ${INSTAGRAM_ANTI_ICP_NEGATIVES}`;
+}
+
 function buildInstagramSearchQuery(attempt: number): string {
-  const poolIdx = attempt % INSTAGRAM_KEYWORD_POOLS.length;
+  // Odd attempts → Stats Block query (city × height × weight × gmail).
+  // These generate near-infinite unique queries and are the primary fix for pool exhaustion.
+  if (attempt % 2 === 1) return buildInstagramStatsQuery();
+  // Even attempts → fixed keyword pool (original approach, good for cold starts)
+  const poolIdx = Math.floor(attempt / 2) % INSTAGRAM_KEYWORD_POOLS.length;
   const terms   = INSTAGRAM_KEYWORD_POOLS[poolIdx];
-  // Use AND (space-separated) so Google returns pages where ALL terms appear.
-  // With OR, Google returns post/reel/tag pages that mention any one term → 0 profile handles.
   return `site:instagram.com ${terms.join(' ')} ${INSTAGRAM_ANTI_ICP_NEGATIVES}`;
 }
 
@@ -562,7 +613,6 @@ async function runInstagramBatch(
   apifyToken: string,
   instantlyKey: string,
   targetLeads: number,
-  selfBase: string | null,
 ): Promise<BatchResult> {
   const result: BatchResult = { leadsFound: 0, addedToInstantly: 0, skippedDuplicate: 0, errors: [], warnings: [] };
 
@@ -649,10 +699,10 @@ async function runInstagramBatch(
         ((p.contactEmail as string) || '').toLowerCase().trim() ||
         extractEmailFromBio(bio)
       );
-      // Multi-stage email fallback — Stage 3: /api/ig-email proxy
+      // Multi-stage email fallback — Stage 3: inline Instagram HTML fetch
       let emailFinal = emailRaw;
-      if (!emailFinal && selfBase) {
-        emailFinal = await cronIgEmail(handle, selfBase);
+      if (!emailFinal) {
+        emailFinal = await inlineIgEmail(handle);
       }
       if (!emailFinal) continue;
 
@@ -694,12 +744,11 @@ async function runAutopilotBatch(
   apifyToken: string,
   instantlyKey: string,
   targetLeads: number,
-  selfBase: string | null,
 ): Promise<BatchResult> {
   if (campaign.icp_type === 'personal_brand') {
-    return runInstagramBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetLeads, selfBase);
+    return runInstagramBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetLeads);
   }
-  return runTikTokBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetLeads, selfBase);
+  return runTikTokBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetLeads);
 }
 
 // ─── VERCEL HANDLER ───────────────────────────────────────────────────────────
@@ -740,14 +789,6 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
   const { data: campaigns, error: dbErr } = await supabase
     .from('campaigns').select('*').eq('autopilot_enabled', true).eq('status', 'active');
   if (dbErr) return res.status(500).json({ error: `DB query failed: ${dbErr.message}` });
-
-  // Self-hosted API base URL for email discovery helpers.
-  // VERCEL_PROJECT_PRODUCTION_URL is stable across deployments; VERCEL_URL changes per preview.
-  const selfBase = process.env.VERCEL_PROJECT_PRODUCTION_URL
-    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-    : process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : null;
 
   const currentHourUTC = new Date().getUTCHours();
 
@@ -801,7 +842,7 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
     let batchResult: BatchResult          = { leadsFound: 0, addedToInstantly: 0, skippedDuplicate: 0, errors: [] };
 
     try {
-      batchResult = await runAutopilotBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetPerRun, selfBase);
+      batchResult = await runAutopilotBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetPerRun);
       // Only real errors (not config warnings) drive status:'error'
       if (batchResult.errors.length > 0 && batchResult.leadsFound === 0) {
         batchStatus  = 'error';

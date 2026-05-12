@@ -140,7 +140,7 @@ const REGION_MAP: Record<string, string[]> = {
 };
 
 // Google Search Scraper — queries `site:instagram.com [keywords]`, extracts handles from URLs
-const GOOGLE_SEARCH_SCRAPER = 'nFJndFXA5zjCTuudP';
+const GOOGLE_SEARCH_SCRAPER = 'scraperlink/google-search-results-serp-scraper';
 const INSTAGRAM_PROFILE_SCRAPER = 'apify~instagram-profile-scraper';
 // apify~tiktok-profile-scraper returns one profile object per username (not a video feed).
 // clockworks~tiktok-profile-scraper is the active actor (apify~ slug returns 404).
@@ -1006,15 +1006,13 @@ export class InstagramSearchEngine {
       onLog('🔎 STEP 1/4 — Google Search: ' + searchQuery);
 
       // ── STEP 1: Google Search site:instagram.com → novel handles ────────────
-      // FAST SCRAPER (Pilar 5): nFJndFXA5zjCTuudP is an API-based Google Search
-      // scraper — returns JSON in ~1-2s. DO NOT replace with a headless/Puppeteer
-      // actor. This actor does NOT start a browser; it uses Google's public API.
+      // scraperlink/google-search-results-serp-scraper — $0.50/1K searches (7× cheaper).
+      // Returns JSON in ~2s. Results nested under item.results[].
       let searchResults: unknown[];
       try {
         searchResults = await this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
-          queries: searchQuery,
-          maxPagesPerQuery: 2,  // 2 pages × 100 = up to 200 organic results per attempt
-          resultsPerPage: 100,
+          keyword: searchQuery,
+          limit: 100,
         }, onLog, 1024);
       } catch (e: unknown) {
         onLog('[STEP 1] Google Search error: ' + (e instanceof Error ? e.message : String(e)));
@@ -1036,15 +1034,11 @@ export class InstagramSearchEngine {
         continue;
       }
 
-      // Extract IG handles — actor wraps results inside organicResults[] (same as LinkedIn engine)
+      // Extract IG handles — actor wraps results inside results[]
       const allOrganicResults: Record<string, unknown>[] = [];
       for (const item of searchResults as Record<string, unknown>[]) {
-        const organic = item.organicResults as Record<string, unknown>[] | undefined;
-        if (Array.isArray(organic)) {
-          allOrganicResults.push(...organic);
-        } else if (item.url || item.link) {
-          allOrganicResults.push(item); // fallback: top-level item already has url
-        }
+        const subResults = (item.results as Record<string, unknown>[] | undefined) ?? [];
+        allOrganicResults.push(...subResults);
       }
       // Build snippet map and extract handles with platform tag (Instagram + TikTok)
       const handleToSnippet = new Map<string, string>();

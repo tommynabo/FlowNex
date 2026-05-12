@@ -135,7 +135,7 @@ const REGION_MAP: Record<string, string[]> = {
 };
 
 // Google Search Scraper
-const GOOGLE_SEARCH_SCRAPER = 'nFJndFXA5zjCTuudP';
+const GOOGLE_SEARCH_SCRAPER = 'scraperlink/google-search-results-serp-scraper';
 
 // apidojo/tiktok-scraper — $0.30/1K results (6.7x cheaper than clockworks $2/1K).
 // Input: { startUrls: ["https://tiktok.com/@handle"] } for profiles;
@@ -1000,9 +1000,8 @@ export class TikTokFacelessEngine {
         perRunResults = await Promise.all(
           queryBatch.map(q =>
             this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
-              queries: q.query,
-              maxPagesPerQuery: 2,
-              resultsPerPage: 40,
+              keyword: q.query,
+              limit: 40,
             }, onLog, undefined, 90_000, 80, 1024).catch((e: unknown) => {
               const msg = e instanceof Error ? e.message : String(e);
               if (msg.startsWith('APIFY_QUOTA_EXCEEDED')) { quotaExceeded = true; }
@@ -1047,9 +1046,8 @@ export class TikTokFacelessEngine {
         const runItems = perRunResults[runIdx] as Record<string, unknown>[];
         const runIsGymtok = queryBatch[runIdx].isGymtok;
         for (const item of runItems) {
-          const organic = item.organicResults as Record<string, unknown>[] | undefined;
-          const items = Array.isArray(organic) ? organic : (item.url || item.link ? [item] : []);
-          for (const r of items) {
+          const subResults = (item.results as Record<string, unknown>[] | undefined) ?? [];
+          for (const r of subResults) {
             allOrganicResults.push(r);
             const url     = ((r.url as string) || (r.link as string) || '').toLowerCase();
             const snippet = ((r.description as string) || (r.snippet as string) || '');

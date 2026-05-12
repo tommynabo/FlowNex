@@ -46,7 +46,7 @@ const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
 ];
 
 // ── Apify actor IDs (same as TikTokFacelessEngine) ───────────────────────────
-const GOOGLE_SEARCH_SCRAPER  = 'nFJndFXA5zjCTuudP';
+const GOOGLE_SEARCH_SCRAPER  = 'scraperlink/google-search-results-serp-scraper';
 const TIKTOK_PROFILE_SCRAPER = 'apidojo~tiktok-scraper';
 
 // ── Anti-ICP bio keywords (subset of ICPEvaluator — most impactful rejections) ──
@@ -330,11 +330,10 @@ export async function runAutopilotBatch(
     googleResults = await runActorSync(
       GOOGLE_SEARCH_SCRAPER,
       {
-        queries: searchQuery,
-        resultsPerPage: 10,
-        maxPagesPerQuery: 1,
-        languageCode: 'en',
-        countryCode: 'us',
+        keyword: searchQuery,
+        limit: 20,
+        hl: 'en',
+        country: 'us',
       },
       apifyToken,
       45, // 45s server-side timeout
@@ -349,11 +348,14 @@ export async function runAutopilotBatch(
   const candidateHandles: string[] = [];
   for (const item of googleResults) {
     const row = item as Record<string, unknown>;
-    const url = (row.url ?? row.link ?? '') as string;
-    if (!url.includes('tiktok.com')) continue;
-    const handle = extractHandleFromUrl(url);
-    if (handle && !seenHandles.has(handle) && !candidateHandles.includes(handle)) {
-      candidateHandles.push(handle);
+    const subResults = (row.results as Record<string, unknown>[] | undefined) ?? [];
+    for (const r of subResults) {
+      const url = ((r.url as string) || (r.link as string) || '');
+      if (!url.includes('tiktok.com')) continue;
+      const handle = extractHandleFromUrl(url);
+      if (handle && !seenHandles.has(handle) && !candidateHandles.includes(handle)) {
+        candidateHandles.push(handle);
+      }
     }
   }
 

@@ -11,7 +11,7 @@ import { CandidateService, CampaignService } from '../../lib/services';
 export type LogCallback = (message: string) => void;
 
 // Apify Actor IDs
-const GOOGLE_SEARCH_SCRAPER = 'nFJndFXA5zjCTuudP';
+const GOOGLE_SEARCH_SCRAPER = 'scraperlink/google-search-results-serp-scraper';
 
 /**
  * LinkedInSearchEngine: Specialized search engine for LinkedIn profiles
@@ -639,11 +639,10 @@ export class LinkedInSearchEngine {
                 const resultsPerPage = Math.max(50, Math.min(100, maxResults * 3));
                 
                 const searchInput = {
-                    queries: `${siteOperator} ${currentQuery} ${langKeywords}`,
-                    maxPagesPerQuery: 1,
-                    resultsPerPage: resultsPerPage,
-                    languageCode: options.language === 'Spanish' ? 'es' : 'en',
-                    countryCode: options.language === 'Spanish' ? 'es' : 'us',
+                    keyword: `${siteOperator} ${currentQuery} ${langKeywords}`,
+                    limit: resultsPerPage >= 100 ? 100 : 50,
+                    hl: options.language === 'Spanish' ? 'es' : 'en',
+                    country: options.language === 'Spanish' ? 'es' : 'us',
                 };
 
                 onLog(`[LINKEDIN] 📊 1 página × ${resultsPerPage} resultados (modo rápido ~8s)...`);
@@ -651,7 +650,7 @@ export class LinkedInSearchEngine {
 
                 let allResults: any[] = [];
                 results.forEach(r => {
-                    if (r.organicResults) allResults = allResults.concat(r.organicResults);
+                    if (r.results) allResults = allResults.concat(r.results);
                 });
 
                 const profiles = allResults.filter((r: any) => r.url && r.url.includes('linkedin.com/in/'));

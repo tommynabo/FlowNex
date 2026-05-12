@@ -127,7 +127,7 @@ const REGION_MAP: Record<string, string[]> = {
 };
 
 // Google Search Scraper — queries site:instagram.com [keywords], extracts handles from URLs
-const GOOGLE_SEARCH_SCRAPER = 'nFJndFXA5zjCTuudP';
+const GOOGLE_SEARCH_SCRAPER = 'scraperlink/google-search-results-serp-scraper';
 const INSTAGRAM_PROFILE_SCRAPER = 'apify~instagram-profile-scraper';
 
 // Anti-ICP negative keywords — purge local businesses and generic corporate accounts
@@ -840,9 +840,8 @@ export class InstagramPersonalBrandEngine {
       try {
         perSlotResults = await Promise.all(querySlots.map(q =>
           this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
-            queries: q,
-            maxPagesPerQuery: 2,
-            resultsPerPage: 40,
+            keyword: q,
+            limit: 40,
           }, onLog, 90_000, 80, 1024).catch((e: unknown) => {
             const msg = e instanceof Error ? e.message : String(e);
             if (msg.startsWith('APIFY_QUOTA_EXCEEDED')) { quotaExceeded = true; }
@@ -859,14 +858,13 @@ export class InstagramPersonalBrandEngine {
         continue;
       }
 
-      // Flatten 3 slots into one organic result list
+      // Flatten 3 slots into one result list
       const allOrganicResults: Record<string, unknown>[] = [];
       for (const slotResults of perSlotResults) {
         if (!Array.isArray(slotResults)) continue;
         for (const item of slotResults as Record<string, unknown>[]) {
-          const organic = item.organicResults as Record<string, unknown>[] | undefined;
-          if (Array.isArray(organic)) allOrganicResults.push(...organic);
-          else if (item.url || item.link) allOrganicResults.push(item);
+          const subResults = (item.results as Record<string, unknown>[] | undefined) ?? [];
+          allOrganicResults.push(...subResults);
         }
       }
 

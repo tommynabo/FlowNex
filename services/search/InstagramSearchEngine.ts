@@ -1012,7 +1012,7 @@ export class InstagramSearchEngine {
       try {
         searchResults = await this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
           keyword: searchQuery,
-          limit: 100,
+          limit: '100',
         }, onLog, 1024);
       } catch (e: unknown) {
         onLog('[STEP 1] Google Search error: ' + (e instanceof Error ? e.message : String(e)));

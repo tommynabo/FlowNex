@@ -841,7 +841,7 @@ export class InstagramPersonalBrandEngine {
         perSlotResults = await Promise.all(querySlots.map(q =>
           this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
             keyword: q,
-            limit: 40,
+            limit: '40',
           }, onLog, 90_000, 80, 1024).catch((e: unknown) => {
             const msg = e instanceof Error ? e.message : String(e);
             if (msg.startsWith('APIFY_QUOTA_EXCEEDED')) { quotaExceeded = true; }

@@ -640,7 +640,7 @@ export class LinkedInSearchEngine {
                 
                 const searchInput = {
                     keyword: `${siteOperator} ${currentQuery} ${langKeywords}`,
-                    limit: resultsPerPage >= 100 ? 100 : 50,
+                    limit: resultsPerPage >= 100 ? '100' : '50',
                     hl: options.language === 'Spanish' ? 'es' : 'en',
                     country: options.language === 'Spanish' ? 'es' : 'us',
                 };

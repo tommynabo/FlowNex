@@ -331,7 +331,7 @@ export async function runAutopilotBatch(
       GOOGLE_SEARCH_SCRAPER,
       {
         keyword: searchQuery,
-        limit: 20,
+        limit: '20',
         hl: 'en',
         country: 'us',
       },

@@ -2,13 +2,13 @@
  * Vercel Cron Job: /api/cron/autopilot-engine
  * Schedule: every 10 min (see vercel.json → "*/10 * * * *")
  *
- * Imports ICPEvaluator for the unified ICP hard-filter pipeline (pure TypeScript,
- * no browser dependencies — safe to run in Vercel Node.js serverless context).
+ * Self-contained: ICP filter logic is inlined directly here.
+ * Cross-directory imports (e.g. ../../services/search/ICPEvaluator) can fail
+ * in Vercel's ESM bundler for cron serverless functions — inlining avoids that.
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient, SupabaseClient }       from '@supabase/supabase-js';
-import { icpEvaluator, RawApifyProfile }       from '../../services/search/ICPEvaluator';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 
@@ -35,8 +35,63 @@ const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
   ['"DM LEAN"', '"DM SHRED"', '"DM BULK"', '"DM PROGRAM"', '"skinny-fat"', '"skinny fat"'],
 ];
 
-// ANTI_ICP_BIO_KEYWORDS removed — ICPEvaluator.applyHardFilter() now owns the
-// comprehensive rejection list and is called directly in each batch function.
+// ─── INLINE ICP HARD FILTER ──────────────────────────────────────────────────
+// Full replica of ICPEvaluator.applyHardFilter() — inlined to keep this file
+// self-contained and guarantee correct Vercel serverless function bundling.
+
+interface RawApifyProfile {
+  username: string; fullName: string; biography: string; followersCount: number;
+  [key: string]: unknown;
+}
+
+const _ICP_BRAND_KW       = ['official', 'store', 'shop', 'brand', 'supplements', 'apparel', 'agency'];
+const _ICP_NON_GYM_KW     = ['cycling', 'cyclist', 'roadcycling', 'mtb', 'marathon', 'runningclub', 'trailrunning', 'ultramarathon', 'triathlon', 'triathlete', 'swimmer', 'openwater', 'footballplayer', 'soccerplayer', 'tennisplayer', 'golfer', 'wrestling', 'wrestler', 'mma', 'ufc', 'boxing', 'fighter', 'martial arts', 'jiujitsu', 'judo', 'karate'];
+const _ICP_FITNESS_KW     = ['fitness', 'gym', 'workout', 'training', 'crossfit', 'hiit', 'bodybuilding', 'weightlifting', 'lifting', 'physique', 'muscle', 'strength', 'pilates', 'fitspo', 'fitlife', 'gymlife', 'gymrat', 'fitnesscoach', 'personaltrainer', 'gains', 'shredded', 'bulk', 'macros', 'gymtok', 'fitnessmotivation', 'gymmotivation', 'gymotivation', 'nutrition', 'diet', 'weightloss'];
+const _ICP_MENTAL_KW      = ['psychologist', 'therapist', 'therapy', 'mentalhealth', 'psychiatric', 'psychiatrist', 'counselor', 'counselling', 'counseling', 'mindcoach', 'spiritualcoach', 'manifestation', 'lawofattraction'];
+const _ICP_ANTI_BIO_KW    = [
+  'restaurant', 'cafe', 'coffee shop', 'food truck', 'bakery', 'catering', 'acai', 'smoothie', 'juice bar', 'pizz', 'burger', 'sushi',
+  'boutique', 'retail store', 'e-commerce store', 'physical products',
+  'hr consulting', 'corporate leadership', 'corporate coach', 'corporate trainer',
+  'dental', 'dentist', 'clinic', 'salon', 'spa', 'franchis',
+  'restaurante', 'cafetería', 'panadería', 'tienda física', 'local comercial', 'inmobiliaria', 'peluquería', 'clínica', 'franquicia',
+  'ugc creator', 'user generated content', 'content for brands', 'brand deals', 'sponsored content creator', 'paid partnerships only',
+  'dancer', 'dancing', 'choreograph', 'scenepack', 'scenepacks',
+  'sound promo', 'sound promotion', 'music promo', 'music promotion', 'anime edit', 'anime edits',
+  'public speaker', 'keynote speaker', 'lawyer', 'attorney',
+  'fashion', 'beauty', 'makeup', 'skincare', 'cosmetics', 'outfit', 'ootd', 'nail', 'lash', 'glam', 'moda', 'belleza', 'maquillaje',
+  'princess', 'that girl', 'grwm', 'get ready with me', 'vlog', 'daily vlog', 'morning routine', 'night routine', 'girl that', 'clean girl',
+  'chef', 'recipe creator', 'food creator', 'cook with me', 'cooking channel', 'food blogger', 'food blog', 'baking channel',
+];
+const _ICP_ANTI_HANDLE_KW = ['record', 'vinyl', 'djset', 'djpage', 'musicpage', 'dancepage', 'fashion', 'beauty', 'makeup', 'skincare', 'cook', 'recipe', 'kitchen', 'foodblog', 'foodie', 'thatgirl', 'grwm', 'vlogwith', 'diaryof', 'lifeof', 'princess'];
+const _ICP_TIER1_KW       = ['clipper', 'editor', 'edits', 'editing', 'dm for promo', 'dm for promos', 'dm for collab', 'dm for rates', 'paid collab', 'paid collaboration', 'paid promotion', 'payhip', 'gumroad', 'skool', 'wop', 'smma', 'clipping', 'daily clips', 'fan page', 'bodybuilding', 'gym motivation', 'physique page', 'gym clips', 'fitness clips', 'bodybuilder', 'goggins', 'hormozi', 'gadzhi', 'skinny-fat', 'skinny fat', 'dm lean', 'dm shred', 'dm bulk', 'dm program'];
+const _ICP_TIER2_KW       = ['mindset', 'motivation', 'wealth', 'hustle', 'grind', 'entrepreneur', 'clips', 'clip', 'money', 'discipline', 'hardwork', 'noexcuses', 'bestversion', 'selfimprovement', 'passiveincome', 'financialfreedom', 'makemoney', 'onlinebusiness', 'hormozi', 'gadzhi', 'tate', 'goggins', 'dailymotivation', 'gymmotivation', 'gymtok', 'gymlife', 'fitspo', 'gymrat', 'physique', 'gains', 'fitness', 'gym', 'slideshow', 'lean', 'shred', 'bulk', 'transformation'];
+
+function applyIcpHardFilter(profiles: RawApifyProfile[], icpType: 'personal_brand' | 'faceless_clipper'): RawApifyProfile[] {
+  const maxFollowers = icpType === 'faceless_clipper' ? 500_000 : 150_000;
+  return profiles.filter(p => {
+    const handle  = (p.username  || '').toLowerCase().trim();
+    const nameLow = (p.fullName  || '').toLowerCase();
+    const bioLow  = (p.biography || '').toLowerCase();
+    const full    = `${bioLow} ${nameLow} ${handle}`;
+    const followers = p.followersCount ?? 0;
+    if (followers >= 0 && followers < 1_000)        return false;
+    if (followers >= 0 && followers > maxFollowers) return false;
+    if (_ICP_BRAND_KW.find(kw => nameLow.includes(kw) || handle.includes(kw))) return false;
+    if (_ICP_ANTI_BIO_KW.find(kw => full.includes(kw)))    return false;
+    if (_ICP_ANTI_HANDLE_KW.find(kw => handle.includes(kw))) return false;
+    if (icpType === 'personal_brand') {
+      if (_ICP_MENTAL_KW.find(kw => full.includes(kw))) return false;
+      const nonGym = _ICP_NON_GYM_KW.find(kw => full.includes(kw));
+      if (nonGym && !_ICP_FITNESS_KW.some(kw => full.includes(kw))) return false;
+      if (!_ICP_FITNESS_KW.some(kw => full.includes(kw))) return false;
+    }
+    if (icpType === 'faceless_clipper') {
+      const tier1 = _ICP_TIER1_KW.find(kw => full.includes(kw));
+      if (!tier1 && _ICP_TIER2_KW.filter(kw => full.includes(kw)).length < 3) return false;
+    }
+    return true;
+  });
+}
 
 const ANTI_ICP_NEGATIVES  = '-restaurant -store -boutique -cooking -dance';
 const TIKTOK_SKIP_HANDLES = new Set(['tag', 'search', 'discover', 'music', 'video', 'live', 'trending', 'foryou', 't']);
@@ -129,6 +184,7 @@ function isInsideWindow(
   const cur   = currentHour * 60 + currentMinute;
   const start = startHour  * 60 + startMinute;
   const end   = endHour    * 60 + endMinute;
+  if (start === end) return true; // no window restriction configured — always active
   if (start <= end) return cur >= start && cur < end;
   return cur >= start || cur < end;
 }
@@ -526,7 +582,7 @@ async function runTikTokBatch(
       if (!handle || seenHandles.has(handle)) { result.skippedDuplicate++; continue; }
       // Comprehensive ICP filter — mirrors the manual TikTokFacelessEngine pipeline
       const rawProfile: RawApifyProfile = { username: handle, fullName: displayName, biography: bio, followersCount: followers };
-      if (icpEvaluator.applyHardFilter([rawProfile], (m) => console.log('[ICP-TT]', m), 'faceless_clipper').length === 0) continue;
+      if (applyIcpHardFilter([rawProfile], 'faceless_clipper').length === 0) continue;
       // Also enforce campaign-specific follower range
       if (followers >= 0 && (followers < minFollowers || (maxFollowers > 0 && followers > maxFollowers))) continue;
       // Multi-stage email fallback
@@ -734,7 +790,7 @@ async function runInstagramBatch(
 
       // Comprehensive ICP filter — mirrors the manual InstagramPersonalBrandEngine pipeline
       const rawProfile: RawApifyProfile = { username: handle, fullName: displayName, biography: bio, followersCount: followers };
-      if (icpEvaluator.applyHardFilter([rawProfile], (m) => console.log('[ICP-IG]', m), 'personal_brand').length === 0) continue;
+      if (applyIcpHardFilter([rawProfile], 'personal_brand').length === 0) continue;
       // Also enforce campaign-specific follower range
       if (followers >= 0 && (followers < minFollowers || (maxFollowers > 0 && followers > maxFollowers))) continue;
 
@@ -820,10 +876,10 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
   if (!isVercelCron && !(cronSecret && bearerToken === cronSecret)) return res.status(401).json({ error: 'Unauthorized' });
 
   // Env vars
-  const serperKey    = process.env.SERPER_API_KEY ?? '';
+  const serperKey    = process.env.SERPER_API_KEY ?? process.env.SERPET_API_KEY ?? ''; // SERPET_ is a common typo — support both
   const apifyToken   = process.env.APIFY_TOKEN ?? process.env.VITE_APIFY_API_TOKEN ?? '';
   const instantlyKey = process.env.INSTANTLY_API_KEY ?? '';
-  if (!serperKey)    return res.status(500).json({ error: 'Missing SERPER_API_KEY env var' });
+  if (!serperKey)    return res.status(500).json({ error: 'Missing SERPER_API_KEY env var (also checked SERPET_API_KEY)' });
   if (!apifyToken)   return res.status(500).json({ error: 'Missing APIFY_TOKEN / VITE_APIFY_API_TOKEN env var' });
   if (!instantlyKey) return res.status(500).json({ error: 'Missing INSTANTLY_API_KEY env var' });
 

@@ -454,23 +454,30 @@ async function runTikTokBatch(
   for (let iteration = 0; iteration < 4 && result.leadsFound < targetLeads; iteration++) {
     const attemptOffset = (baseOffset + iteration) % FACELESS_CLIPPER_KEYWORD_POOLS.length;
 
-    // Step 2: Google Search via Serper
-    let googleResults: Array<{ link: string }> = [];
-    try {
-      googleResults = await serperGoogleSearch(buildSearchQuery(attemptOffset, regions), serperKey);
-    } catch (e) {
-      result.errors.push(`Google Search failed (iter ${iteration + 1}): ${e instanceof Error ? e.message : String(e)}`);
-      break; // likely an API key / quota issue — no point retrying
-    }
-
-    // Step 3: Extract handles (only new ones not yet seen)
+    // Steps 2+3: Paginate Serper until we have batchSize*3 candidate handles.
+    // A single Serper page (20 results) often returns <5 new handles after dedup;
+    // multi-page accumulation ensures enough candidates reach the Apify scraper.
+    const TARGET_CANDIDATES_TT = batchSize * 3;
     const candidateHandles: string[] = [];
-    for (const item of googleResults) {
-      const url = item.link ?? '';
-      if (!url.includes('tiktok.com')) continue;
-      const handle = extractHandleFromUrl(url);
-      if (handle && !seenHandles.has(handle) && !candidateHandles.includes(handle)) candidateHandles.push(handle);
+    let serperFailed = false;
+    for (let serperPage = 1; serperPage <= 5 && candidateHandles.length < TARGET_CANDIDATES_TT; serperPage++) {
+      let pageResults: Array<{ link: string }> = [];
+      try {
+        pageResults = await serperGoogleSearch(buildSearchQuery(attemptOffset, regions), serperKey, serperPage);
+      } catch (e) {
+        result.errors.push(`Google Search failed (iter ${iteration + 1}, page ${serperPage}): ${e instanceof Error ? e.message : String(e)}`);
+        serperFailed = true;
+        break;
+      }
+      if (pageResults.length === 0) break;
+      for (const item of pageResults) {
+        const url = item.link ?? '';
+        if (!url.includes('tiktok.com')) continue;
+        const handle = extractHandleFromUrl(url);
+        if (handle && !seenHandles.has(handle) && !candidateHandles.includes(handle)) candidateHandles.push(handle);
+      }
     }
+    if (serperFailed) break;
     if (candidateHandles.length === 0) {
       result.errors.push(`No new handles found from Google Search (iter ${iteration + 1}) — trying next pool`);
       continue; // try a different keyword pool next iteration
@@ -671,10 +678,11 @@ async function runInstagramBatch(
     const query = buildInstagramSearchQuery(attemptOffset);
     const candidateHandles: string[] = [];
     let serperFailed = false;
-
-    // Try up to 5 Serper pages before moving to the next keyword pool.
-    // This breaks the 20-result ceiling when all top results are already in the DB.
-    for (let serperPage = 1; serperPage <= 5 && candidateHandles.length === 0; serperPage++) {
+    // Accumulate at least batchSize*3 candidate handles before handing off to Apify.
+    // With a ~20-25% hit-rate inside the follower window we need ~15 candidates
+    // to reliably produce 3-5 qualified leads per run.
+    const TARGET_CANDIDATES_IG = batchSize * 3;
+    for (let serperPage = 1; serperPage <= 5 && candidateHandles.length < TARGET_CANDIDATES_IG; serperPage++) {
       let pageResults: Array<{ link: string }> = [];
       try {
         pageResults = await serperGoogleSearch(query, serperKey, serperPage);
@@ -699,7 +707,9 @@ async function runInstagramBatch(
     }
 
     const remaining = targetLeads - result.leadsFound;
-    const toFetch   = candidateHandles.slice(0, Math.min(batchSize, remaining + 5));
+    // Send up to batchSize*4 candidates to Apify — with a ~20-25% in-window hit-rate
+    // this reliably yields batchSize qualified leads even in narrow follower ranges.
+    const toFetch   = candidateHandles.slice(0, Math.min(batchSize * 4, remaining + 10));
     let profileItems: unknown[] = [];
     try {
       profileItems = await runActorSync(

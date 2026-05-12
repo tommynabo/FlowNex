@@ -1162,8 +1162,11 @@ export class TikTokFacelessEngine {
       // Even a 1-handle batch is worth scraping: real bio + video data lets the hard
       // filter work correctly. skipTtScraper is the ONLY remaining snippet fallback
       // (activated after 2 consecutive 403 ACTOR_FORBIDDEN errors from TikTok).
-      // Batch size: gymtok handles sorted first, then by ICP score — up to 50 per run.
-      const MAX_TT_BATCH = Math.min(50, Math.max(1, novelHandles.length));
+      // Batch size: gymtok handles sorted first, then by ICP score — up to 20 per run.
+      // Capped at 20 (was 50): 20 handles × ~10 video items = ~200 Apify items max,
+      // vs 500 before. Hit-rate post-filter is ~10-15%, so 20 handles yields 2-3
+      // qualified profiles — enough to fill a batch of 3 with 1-2 attempts.
+      const MAX_TT_BATCH = Math.min(20, Math.max(1, novelHandles.length));
       const ttBatch = novelHandles.slice(0, MAX_TT_BATCH);
       let normalizedProfiles: ReturnType<typeof this.groupTikTokItemsByProfile>;
       // Track whether this attempt used snippet data instead of real TikTok profile scraping.

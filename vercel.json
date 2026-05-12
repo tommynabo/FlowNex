@@ -3,6 +3,9 @@
         "api/cron/autopilot-engine.ts": {
             "maxDuration": 300
         },
+        "api/autopilot-test.ts": {
+            "maxDuration": 300
+        },
         "api/ig-email.ts": {
             "maxDuration": 30
         },

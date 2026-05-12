@@ -12,7 +12,6 @@ import {
   ToggleLeft,
   ToggleRight,
   AlertCircle,
-  ChevronRight,
   Globe,
 } from 'lucide-react';
 
@@ -20,9 +19,6 @@ interface AutopilotPanelProps {
   campaign: Campaign;
   onUpdate: (updates: Partial<Campaign>) => void;
 }
-
-const HOURS = Array.from({ length: 24 }, (_, i) => i);
-const fmt24 = (h: number) => `${String(h).padStart(2, '0')}:00`;
 
 // Curated IANA timezone list — covers Spain + main EN-speaking markets
 const TIMEZONES: { label: string; value: string }[] = [
@@ -74,29 +70,59 @@ function getCurrentHourInTz(timezone: string): number {
   }
 }
 
-// Shared dark select className — fixes white-on-white on macOS
-const SELECT_CLS =
+const fmt24 = (h: number, m = 0) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+
+const parseTime = (s: string): { hour: number; minute: number } => {
+  const [h, m] = (s || '00:00').split(':').map(Number);
+  return { hour: isNaN(h) ? 0 : h % 24, minute: isNaN(m) ? 0 : m % 60 };
+};
+
+// Quick-select preset times shown as pill buttons under each time input
+const TIME_PRESETS = [
+  '07:00', '08:00', '09:00', '10:00', '12:00',
+  '14:00', '16:00', '18:00', '20:00', '21:00',
+  '22:00', '22:30', '23:00', '00:00', '02:00', '04:00',
+];
+
+// Shared dark input className
+const INPUT_TIME_CLS =
   'w-full bg-background text-foreground border border-border rounded-lg px-3 py-2 text-sm focus:border-primary outline-none [color-scheme:dark]';
 
 function estimateNextRun(
-  startHour: number,
-  endHour: number,
+  startTime: string,
+  endTime: string,
   leadsToday: number,
   dailyLimit: number,
   timezone: string,
 ): string {
   if (leadsToday >= dailyLimit) return 'Límite diario alcanzado';
-  if (startHour === endHour) return 'Ventana inválida';
-  const localHour = getCurrentHourInTz(timezone);
-  for (let offset = 1; offset <= 24; offset++) {
-    const h = (localHour + offset) % 24;
-    const inside = startHour <= endHour
-      ? h >= startHour && h < endHour
-      : h >= startHour || h < endHour;
+  const { hour: sh, minute: sm } = parseTime(startTime);
+  const { hour: eh, minute: em } = parseTime(endTime);
+  const startMins = sh * 60 + sm;
+  const endMins   = eh * 60 + em;
+  if (startMins === endMins) return 'Ventana inválida';
+
+  // Current time in the campaign timezone (minutes from midnight)
+  let localHour = 0, localMinute = 0;
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone, hour: 'numeric', minute: 'numeric', hour12: false,
+    }).formatToParts(new Date());
+    localHour   = parseInt(parts.find(p => p.type === 'hour')?.value   ?? '0', 10) % 24;
+    localMinute = parseInt(parts.find(p => p.type === 'minute')?.value ?? '0', 10);
+  } catch { /* use 0,0 */ }
+  const localMins = localHour * 60 + localMinute;
+
+  // Cron runs every 30 min — find the next :00 or :30 slot inside the window
+  for (let offset = 1; offset <= 48; offset++) {
+    const checkMins = (localMins + offset * 30) % (24 * 60);
+    const inside = startMins <= endMins
+      ? checkMins >= startMins && checkMins < endMins
+      : checkMins >= startMins || checkMins < endMins;
     if (inside) {
-      const next = new Date();
-      next.setHours(next.getHours() + offset, 0, 0, 0);
-      return next.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' (local)';
+      const h = Math.floor(checkMins / 60) % 24;
+      const m = checkMins % 60;
+      return `~${fmt24(h, m)} (local)`;
     }
   }
   return '—';
@@ -106,8 +132,8 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
   const ap = campaign.autopilot;
 
   const [enabled,    setEnabled]    = useState(ap?.enabled    ?? false);
-  const [startHour,  setStartHour]  = useState(ap?.startHour  ?? 22);
-  const [endHour,    setEndHour]    = useState(ap?.endHour    ?? 6);
+  const [startTime,  setStartTime]  = useState(() => fmt24(ap?.startHour ?? 22, ap?.startMinute ?? 0));
+  const [endTime,    setEndTime]    = useState(() => fmt24(ap?.endHour   ?? 6,  ap?.endMinute   ?? 0));
   const [batchSize,  setBatchSize]  = useState(ap?.batchSize  ?? 5);
   const [dailyLimit, setDailyLimit] = useState(ap?.dailyLimit ?? 50);
   const [timezone,   setTimezone]   = useState(ap?.timezone   || detectTimezone());
@@ -152,13 +178,17 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
   const handleSave = async () => {
     setSaving(true);
     setSaveOk(false);
+    const start = parseTime(startTime);
+    const end   = parseTime(endTime);
     const { error } = await supabase.from('campaigns').update({
-      autopilot_enabled:     enabled,
-      autopilot_start_hour:  startHour,
-      autopilot_end_hour:    endHour,
-      autopilot_batch_size:  batchSize,
-      autopilot_daily_limit: dailyLimit,
-      autopilot_timezone:    timezone,
+      autopilot_enabled:      enabled,
+      autopilot_start_hour:   start.hour,
+      autopilot_start_minute: start.minute,
+      autopilot_end_hour:     end.hour,
+      autopilot_end_minute:   end.minute,
+      autopilot_batch_size:   batchSize,
+      autopilot_daily_limit:  dailyLimit,
+      autopilot_timezone:     timezone,
     }).eq('id', campaign.id);
 
     setSaving(false);
@@ -167,8 +197,10 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
       onUpdate({
         autopilot: {
           enabled,
-          startHour,
-          endHour,
+          startHour:   start.hour,
+          startMinute: start.minute,
+          endHour:     end.hour,
+          endMinute:   end.minute,
           batchSize,
           dailyLimit,
           timezone,
@@ -182,6 +214,8 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
   };
 
   const pct = dailyLimit > 0 ? Math.min(100, Math.round((leadsToday / dailyLimit) * 100)) : 0;
+  const startMins = parseTime(startTime).hour * 60 + parseTime(startTime).minute;
+  const endMins   = parseTime(endTime).hour   * 60 + parseTime(endTime).minute;
 
   // UTC offset label for the selected timezone
   const tzOffsetLabel = (() => {
@@ -268,40 +302,65 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
           <div className="flex items-center gap-3">
             <div className="flex-1">
               <label className="text-xs text-muted-foreground mb-1 block">Hora inicio</label>
-              <select
-                value={startHour}
-                onChange={e => setStartHour(Number(e.target.value))}
-                className={SELECT_CLS}
-              >
-                {HOURS.map(h => (
-                  <option key={h} value={h}>{fmt24(h)}</option>
+              <input
+                type="time"
+                value={startTime}
+                onChange={e => setStartTime(e.target.value)}
+                className={INPUT_TIME_CLS}
+              />
+              <div className="flex flex-wrap gap-1 mt-2">
+                {TIME_PRESETS.map(t => (
+                  <button
+                    key={`s-${t}`}
+                    type="button"
+                    onClick={() => setStartTime(t)}
+                    className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                      startTime === t
+                        ? 'border-primary text-primary bg-primary/10'
+                        : 'border-border text-muted-foreground hover:border-primary/50 hover:text-foreground'
+                    }`}
+                  >
+                    {t}
+                  </button>
                 ))}
-              </select>
-            </div>
-            <ChevronRight className="w-4 h-4 text-muted-foreground mt-5 flex-shrink-0" />
-            <div className="flex-1">
-              <label className="text-xs text-muted-foreground mb-1 block">Hora fin</label>
-              <select
-                value={endHour}
-                onChange={e => setEndHour(Number(e.target.value))}
-                className={SELECT_CLS}
-              >
-                {HOURS.map(h => (
-                  <option key={h} value={h}>{fmt24(h)}</option>
-                ))}
-              </select>
+              </div>
             </div>
           </div>
-          {startHour === endHour && (
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Hora fin</label>
+            <input
+              type="time"
+              value={endTime}
+              onChange={e => setEndTime(e.target.value)}
+              className={INPUT_TIME_CLS}
+            />
+            <div className="flex flex-wrap gap-1 mt-2">
+              {TIME_PRESETS.map(t => (
+                <button
+                  key={`e-${t}`}
+                  type="button"
+                  onClick={() => setEndTime(t)}
+                  className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                    endTime === t
+                      ? 'border-primary text-primary bg-primary/10'
+                      : 'border-border text-muted-foreground hover:border-primary/50 hover:text-foreground'
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+          {startMins === endMins && (
             <p className="text-xs text-yellow-400 flex items-center gap-1.5">
               <AlertCircle className="w-3.5 h-3.5" />
               Inicio y fin iguales: el autopilot nunca se activará.
             </p>
           )}
           <p className="text-xs text-muted-foreground">
-            {startHour > endHour
-              ? `Ventana nocturna: ${fmt24(startHour)} → ${fmt24(endHour)} (cruza medianoche)`
-              : `Ventana diurna: ${fmt24(startHour)} → ${fmt24(endHour)}`
+            {startMins > endMins
+              ? `Ventana nocturna: ${startTime} → ${endTime} (cruza medianoche)`
+              : `Ventana diurna: ${startTime} → ${endTime}`
             }
           </p>
         </div>
@@ -369,7 +428,7 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
           <p className="text-xs text-muted-foreground mb-1">Próximo run</p>
           <p className="text-sm font-medium">
             {enabled
-              ? estimateNextRun(startHour, endHour, leadsToday, dailyLimit, timezone)
+              ? estimateNextRun(startTime, endTime, leadsToday, dailyLimit, timezone)
               : 'Autopilot inactivo'}
           </p>
         </div>

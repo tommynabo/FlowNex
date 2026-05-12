@@ -69,7 +69,9 @@ export interface IcpFilters {
 export interface AutopilotSettings {
   enabled: boolean;
   startHour: number;        // 0–23 (in the campaign's timezone)
+  startMinute: number;      // 0–59
   endHour: number;          // 0–23 (can cross midnight, e.g. 22→6)
+  endMinute: number;        // 0–59
   batchSize: number;        // leads to scrape per cron run (1–20)
   dailyLimit: number;       // max leads per day (1–500)
   leadsToday: number;       // counter reset daily by the cron

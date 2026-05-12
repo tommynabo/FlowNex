@@ -71,7 +71,9 @@ interface CampaignRow {
   autopilot_daily_limit: number;
   autopilot_leads_today: number;
   autopilot_start_hour: number;
+  autopilot_start_minute: number;
   autopilot_end_hour: number;
+  autopilot_end_minute: number;
   autopilot_reset_date: string | null;
   autopilot_last_run_at: string | null;
   autopilot_timezone?: string;
@@ -109,24 +111,39 @@ function getSupabase() {
 
 // ─── TIME HELPERS ─────────────────────────────────────────────────────────────
 
-function getCurrentHourInTz(timezone: string): number {
+function getCurrentTimeInTz(timezone: string): { hour: number; minute: number } {
   try {
-    const parts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, hour: 'numeric', hour12: false })
-      .formatToParts(new Date());
-    return parseInt(parts.find(p => p.type === 'hour')?.value ?? '0', 10) % 24;
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone, hour: 'numeric', minute: 'numeric', hour12: false,
+    }).formatToParts(new Date());
+    return {
+      hour:   parseInt(parts.find(p => p.type === 'hour')?.value   ?? '0', 10) % 24,
+      minute: parseInt(parts.find(p => p.type === 'minute')?.value ?? '0', 10),
+    };
   } catch {
-    return new Date().getUTCHours();
+    const now = new Date();
+    return { hour: now.getUTCHours(), minute: now.getUTCMinutes() };
   }
 }
 
-function isInsideWindow(currentHour: number, startHour: number, endHour: number): boolean {
-  if (startHour <= endHour) return currentHour >= startHour && currentHour < endHour;
-  return currentHour >= startHour || currentHour < endHour;
+function isInsideWindow(
+  currentHour: number, currentMinute: number,
+  startHour: number, startMinute: number,
+  endHour: number, endMinute: number,
+): boolean {
+  const cur   = currentHour * 60 + currentMinute;
+  const start = startHour  * 60 + startMinute;
+  const end   = endHour    * 60 + endMinute;
+  if (start <= end) return cur >= start && cur < end;
+  return cur >= start || cur < end;
 }
 
-function calcWindowHours(startHour: number, endHour: number): number {
-  if (startHour === endHour) return 0;
-  return startHour < endHour ? endHour - startHour : (24 - startHour) + endHour;
+function calcWindowHours(startHour: number, startMinute: number, endHour: number, endMinute: number): number {
+  const start = startHour * 60 + startMinute;
+  const end   = endHour   * 60 + endMinute;
+  if (start === end) return 0;
+  const diffMins = start < end ? end - start : (24 * 60 - start) + end;
+  return diffMins / 60;
 }
 
 function getTodayInTz(timezone: string): string {
@@ -741,14 +758,17 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
   }> = [];
 
   for (const campaign of (campaigns ?? []) as CampaignRow[]) {
-    const startHour  = campaign.autopilot_start_hour ?? 22;
-    const endHour    = campaign.autopilot_end_hour   ?? 6;
-    const campaignTz = campaign.autopilot_timezone   ?? 'UTC';
-    const localHour  = getCurrentHourInTz(campaignTz);
-    const todayDate  = getTodayInTz(campaignTz);
+    const startHour   = campaign.autopilot_start_hour   ?? 22;
+    const startMinute = campaign.autopilot_start_minute ?? 0;
+    const endHour     = campaign.autopilot_end_hour     ?? 6;
+    const endMinute   = campaign.autopilot_end_minute   ?? 0;
+    const campaignTz  = campaign.autopilot_timezone     ?? 'UTC';
+    const { hour: localHour, minute: localMinute } = getCurrentTimeInTz(campaignTz);
+    const todayDate   = getTodayInTz(campaignTz);
+    const fmtT = (h: number, m: number) => `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
 
-    if (!isInsideWindow(localHour, startHour, endHour)) {
-      summary.push({ campaignId: campaign.id, campaignName: campaign.name, status: 'skipped', reason: `Outside window (${startHour}h–${endHour}h in ${campaignTz}, now ${localHour}h)` });
+    if (!isInsideWindow(localHour, localMinute, startHour, startMinute, endHour, endMinute)) {
+      summary.push({ campaignId: campaign.id, campaignName: campaign.name, status: 'skipped', reason: `Outside window (${fmtT(startHour, startMinute)}–${fmtT(endHour, endMinute)} in ${campaignTz}, now ${fmtT(localHour, localMinute)})` });
       continue;
     }
 
@@ -764,7 +784,7 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
       continue;
     }
 
-    const windowHours  = calcWindowHours(startHour, endHour);
+    const windowHours  = calcWindowHours(startHour, startMinute, endHour, endMinute);
     const targetPerRun = Math.min(
       windowHours > 0 ? Math.ceil(dailyLimit / windowHours) : dailyLimit,
       dailyLimit - leadsToday,

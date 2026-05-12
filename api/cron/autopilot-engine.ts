@@ -324,6 +324,31 @@ function buildSearchQuery(attempt: number, regions: string[] = []): string {
   return locationSuffix ? `${base} ${locationSuffix}` : base;
 }
 
+// ─── SERPER EMAIL SEARCH ─────────────────────────────────────────────────────
+// Best TikTok fallback: Google indexes creator emails across the web
+// (YouTube About, personal sites, collab directories, etc.).
+// Query: "@{handle} gmail.com" → extract email from organic result snippets.
+
+async function serperEmailSearch(handle: string, apiKey: string): Promise<string> {
+  try {
+    const res = await fetch('https://google.serper.dev/search', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-KEY': apiKey },
+      body:    JSON.stringify({ q: `"@${handle}" gmail.com`, num: 5 }),
+    });
+    if (!res.ok) return '';
+    const data = await res.json() as { organic?: Array<{ title?: string; snippet?: string }> };
+    for (const r of data.organic ?? []) {
+      for (const text of [r.snippet ?? '', r.title ?? '']) {
+        const m = text.match(EMAIL_REGEX);
+        if (m?.[0] && !m[0].includes('example.com') && !m[0].includes('sentry.io'))
+          return m[0].toLowerCase();
+      }
+    }
+  } catch { /* ignore */ }
+  return '';
+}
+
 // ─── INLINE EMAIL DISCOVERY ──────────────────────────────────────────────────
 // The cron runs server-side (Node.js) — no CORS restrictions.
 // Fetch Instagram / TikTok directly instead of calling the API routes via HTTP.
@@ -489,8 +514,11 @@ async function runTikTokBatch(
 
       if (!handle || seenHandles.has(handle)) { result.skippedDuplicate++; continue; }
       if (!passesIcpFilter(bio, followers, minFollowers, maxFollowers)) continue;
-      // Multi-stage email fallback — Stage 3: inline TikTok HTML + IG cross-ref from bio
+      // Multi-stage email fallback
       let emailFinal = email ?? '';
+      // Stage 2: Serper web search — most effective for TikTok creators
+      if (!emailFinal) emailFinal = await serperEmailSearch(handle, serperKey);
+      // Stage 3: inline TikTok HTML + IG cross-ref (last resort)
       if (!emailFinal) {
         const [ttEmail, igCrossRef] = await Promise.all([
           inlineTikTokEmail(handle),
@@ -699,11 +727,12 @@ async function runInstagramBatch(
         ((p.contactEmail as string) || '').toLowerCase().trim() ||
         extractEmailFromBio(bio)
       );
-      // Multi-stage email fallback — Stage 3: inline Instagram HTML fetch
+      // Multi-stage email fallback
       let emailFinal = emailRaw;
-      if (!emailFinal) {
-        emailFinal = await inlineIgEmail(handle);
-      }
+      // Stage 2: inline Instagram HTML fetch
+      if (!emailFinal) emailFinal = await inlineIgEmail(handle);
+      // Stage 3: Serper web search
+      if (!emailFinal) emailFinal = await serperEmailSearch(handle, serperKey);
       if (!emailFinal) continue;
 
       const { error: insertErr } = await supabase.from('leads').insert({

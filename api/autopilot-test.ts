@@ -163,6 +163,30 @@ async function inlineIgCrossRef(bio: string): Promise<string> {
   return '';
 }
 
+async function serperEmailSearch(handle: string, apiKey: string, log: Logger): Promise<string> {
+  try {
+    const query = `"@${handle}" gmail.com`;
+    log('info', `    Serper email search: ${query}`);
+    const res = await fetch('https://google.serper.dev/search', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-KEY': apiKey },
+      body:    JSON.stringify({ q: query, num: 5 }),
+    });
+    if (!res.ok) { log('warn', `    Serper email search HTTP ${res.status}`); return ''; }
+    const data = await res.json() as { organic?: Array<{ title?: string; snippet?: string }> };
+    for (const r of data.organic ?? []) {
+      for (const text of [r.snippet ?? '', r.title ?? '']) {
+        const m = text.match(EMAIL_REGEX);
+        if (m?.[0] && !m[0].includes('example.com') && !m[0].includes('sentry.io'))
+          return m[0].toLowerCase();
+      }
+    }
+  } catch (e) {
+    log('warn', `    Serper email search error: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  return '';
+}
+
 // ── Query builders ─────────────────────────────────────────────────────────────
 
 const FACELESS_POOLS: string[][] = [
@@ -327,7 +351,13 @@ async function testTikTokBatch(
       let emailSrc   = emailFromScraper ? 'scraper.email' : emailFromBio ? 'bio text' : '';
 
       if (!emailFinal) {
-        log('info', '    no email in scraper/bio → inline TikTok HTML + IG cross-ref…');
+        // Stage 2: Serper web search — most effective for TikTok
+        emailFinal = await serperEmailSearch(handle, serperKey, log);
+        emailSrc   = emailFinal ? 'Serper web search' : '';
+      }
+      // Stage 3: inline TikTok HTML + IG cross-ref (last resort)
+      if (!emailFinal) {
+        log('info', '    Serper: nothing → inline TikTok HTML + IG cross-ref…');
         const [tt, ig] = await Promise.all([inlineTikTokEmail(handle), inlineIgCrossRef(bio)]);
         emailFinal = tt || ig;
         emailSrc   = tt ? 'TikTok HTML' : ig ? 'IG cross-ref from bio' : '';
@@ -466,6 +496,11 @@ async function testInstagramBatch(
         log('info', '    no email in scraper/bio → inline IG HTML fetch…');
         emailFinal = await inlineIgEmail(handle);
         emailSrc   = emailFinal ? 'IG HTML fetch' : '';
+      }
+      // Stage 3: Serper web search
+      if (!emailFinal) {
+        emailFinal = await serperEmailSearch(handle, serperKey, log);
+        emailSrc   = emailFinal ? 'Serper web search' : '';
       }
 
       if (!emailFinal) { result.skippedNoEmail++; log('warn', '    skip: no email found'); continue; }

@@ -104,7 +104,7 @@ function estimateNextRun(
   const { hour: eh, minute: em } = parseTime(endTime);
   const startMins = sh * 60 + sm;
   const endMins   = eh * 60 + em;
-  if (startMins === endMins) return 'Ventana inválida';
+  if (startMins === endMins) return 'Siempre activo'; // no window restriction
 
   // Current time in the campaign timezone (minutes from midnight)
   let localHour = 0, localMinute = 0;
@@ -117,9 +117,9 @@ function estimateNextRun(
   } catch { /* use 0,0 */ }
   const localMins = localHour * 60 + localMinute;
 
-  // Cron runs every 30 min — find the next :00 or :30 slot inside the window
-  for (let offset = 1; offset <= 48; offset++) {
-    const checkMins = (localMins + offset * 30) % (24 * 60);
+  // Cron runs every 10 min — find the next :00 / :10 / :20 / :30 / :40 / :50 slot inside the window
+  for (let offset = 1; offset <= 144; offset++) {
+    const checkMins = (localMins + offset * 10) % (24 * 60);
     const inside = startMins <= endMins
       ? checkMins >= startMins && checkMins < endMins
       : checkMins >= startMins || checkMins < endMins;
@@ -150,7 +150,7 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
   const [testRunning,  setTestRunning]  = useState(false);
   const [testLogs,     setTestLogs]     = useState<string[]>([]);
   const [testResult,   setTestResult]   = useState<TestResult | null>(null);
-  const [testDryRun,   setTestDryRun]   = useState(true);
+  const [testDryRun,   setTestDryRun]   = useState(false); // default: live mode (writes real leads)
   const [testElapsed,  setTestElapsed]  = useState(0);
   const testLogRef = React.useRef<HTMLDivElement>(null);
 

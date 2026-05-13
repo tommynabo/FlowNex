@@ -1,11 +1,8 @@
-/**
- * Vercel Cron Job: /api/cron/autopilot-engine
- * Schedule: every 10 min (see vercel.json → "*/10 * * * *")
- *
- * Self-contained: ICP filter logic is inlined directly here.
- * Cross-directory imports (e.g. ../../services/search/ICPEvaluator) can fail
- * in Vercel's ESM bundler for cron serverless functions — inlining avoids that.
- */
+// Vercel Cron Job: /api/cron/autopilot-engine
+// Schedule: every 10 min — configured in vercel.json (cron expression: star/10 star star star star)
+// Self-contained: ICP filter logic is inlined directly here.
+// Cross-directory imports (e.g. ../../services/search/ICPEvaluator) can fail
+// in Vercel's ESM bundler for cron serverless functions — inlining avoids that.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient, SupabaseClient }       from '@supabase/supabase-js';

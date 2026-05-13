@@ -13,10 +13,7 @@ import {
   ToggleRight,
   AlertCircle,
   Globe,
-  Play,
-  Terminal,
 } from 'lucide-react';
-import type { TestResult } from '../api/autopilot-test';
 
 interface AutopilotPanelProps {
   campaign: Campaign;
@@ -136,8 +133,8 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
   const ap = campaign.autopilot;
 
   const [enabled,    setEnabled]    = useState(ap?.enabled    ?? false);
-  const [startTime,  setStartTime]  = useState(() => fmt24(ap?.startHour ?? 22, ap?.startMinute ?? 0));
-  const [endTime,    setEndTime]    = useState(() => fmt24(ap?.endHour   ?? 6,  ap?.endMinute   ?? 0));
+  const [startTime,  setStartTime]  = useState(() => fmt24(ap?.startHour ?? 9,  ap?.startMinute ?? 0));
+  const [endTime,    setEndTime]    = useState(() => fmt24(ap?.endHour   ?? 21, ap?.endMinute   ?? 0));
   const [batchSize,  setBatchSize]  = useState(ap?.batchSize  ?? 5);
   const [dailyLimit, setDailyLimit] = useState(ap?.dailyLimit ?? 50);
   const [timezone,   setTimezone]   = useState(ap?.timezone   || detectTimezone());
@@ -145,14 +142,6 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
   const [saveOk,     setSaveOk]     = useState(false);
   const [runs,       setRuns]       = useState<AutopilotRun[]>([]);
   const [loadingRuns, setLoadingRuns] = useState(true);
-
-  // Live test panel
-  const [testRunning,  setTestRunning]  = useState(false);
-  const [testLogs,     setTestLogs]     = useState<string[]>([]);
-  const [testResult,   setTestResult]   = useState<TestResult | null>(null);
-  const [testDryRun,   setTestDryRun]   = useState(false); // default: live mode (writes real leads)
-  const [testElapsed,  setTestElapsed]  = useState(0);
-  const testLogRef = React.useRef<HTMLDivElement>(null);
 
   const leadsToday = ap?.leadsToday ?? 0;
   const lastRunAt  = ap?.lastRunAt  ?? null;
@@ -186,36 +175,6 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
   }, [campaign.id]);
 
   useEffect(() => { loadRuns(); }, [loadRuns]);
-
-  const handleTest = async () => {
-    setTestRunning(true);
-    setTestLogs([]);
-    setTestResult(null);
-    setTestElapsed(0);
-    const timer = setInterval(() => setTestElapsed(e => e + 1), 1000);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { setTestLogs(['✗ No hay sesión activa']); return; }
-      const res = await fetch('/api/autopilot-test', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
-        body:    JSON.stringify({ campaignId: campaign.id, dryRun: testDryRun }),
-      });
-      const data = await res.json() as { logs?: string[]; result?: TestResult; error?: string };
-      setTestLogs(data.logs ?? [data.error ?? 'Error desconocido']);
-      setTestResult(data.result ?? null);
-    } catch (e) {
-      setTestLogs([`✗ Error de red: ${e instanceof Error ? e.message : String(e)}`]);
-    } finally {
-      clearInterval(timer);
-      setTestRunning(false);
-    }
-  };
-
-  // Auto-scroll terminal to bottom when new logs arrive
-  React.useEffect(() => {
-    if (testLogRef.current) testLogRef.current.scrollTop = testLogRef.current.scrollHeight;
-  }, [testLogs]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -491,88 +450,6 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
           }
           {saving ? 'Guardando…' : saveOk ? 'Guardado' : 'Guardar configuración'}
         </button>
-      </div>
-
-      {/* Live test panel */}
-      <div className="bg-card border border-border rounded-xl p-5 space-y-4">
-        <div className="flex items-center gap-2">
-          <Terminal className="w-4 h-4 text-primary" />
-          <h3 className="font-semibold text-sm">Probar autopilot en directo</h3>
-        </div>
-
-        <div className="flex items-center justify-between">
-          {/* Dry run toggle */}
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <button
-              type="button"
-              onClick={() => setTestDryRun(v => !v)}
-              className="transition-colors"
-              title={testDryRun ? 'Modo prueba — no escribe leads' : 'Modo live — escribe leads reales'}
-            >
-              {testDryRun
-                ? <ToggleRight className="w-7 h-7 text-primary" />
-                : <ToggleLeft  className="w-7 h-7 text-muted-foreground" />
-              }
-            </button>
-            <span className="text-xs text-muted-foreground">
-              {testDryRun ? 'Modo prueba (no escribe leads)' : 'Modo live (escribe leads reales)'}
-            </span>
-          </label>
-
-          {/* Run button */}
-          <button
-            onClick={handleTest}
-            disabled={testRunning}
-            className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-lg text-sm font-medium hover:bg-primary/90 transition-all disabled:opacity-60"
-          >
-            {testRunning
-              ? <><Loader2 className="w-4 h-4 animate-spin" />{testElapsed}s…</>
-              : <><Play className="w-4 h-4" />Probar ahora</>
-            }
-          </button>
-        </div>
-
-        {/* Terminal log output */}
-        {(testLogs.length > 0 || testRunning) && (
-          <div
-            ref={testLogRef}
-            className="bg-[#0d0d0d] border border-border rounded-lg p-3 h-72 overflow-y-auto font-mono text-xs space-y-0.5"
-          >
-            {testLogs.map((line, i) => {
-              const color =
-                line.startsWith('✓') ? 'text-green-400' :
-                line.startsWith('✗') ? 'text-red-400' :
-                line.startsWith('⚠') ? 'text-yellow-400' :
-                'text-muted-foreground';
-              return (
-                <div key={i} className={`leading-relaxed whitespace-pre-wrap break-all ${color}`}>
-                  {line}
-                </div>
-              );
-            })}
-            {testRunning && (
-              <div className="text-muted-foreground animate-pulse">▌</div>
-            )}
-          </div>
-        )}
-
-        {/* Result summary */}
-        {testResult && !testRunning && (
-          <div className="grid grid-cols-3 gap-2 text-xs">
-            <div className="bg-secondary/50 rounded-lg p-2 text-center">
-              <p className="text-muted-foreground">Leads</p>
-              <p className="text-lg font-bold text-green-400">{testResult.leadsFound}</p>
-            </div>
-            <div className="bg-secondary/50 rounded-lg p-2 text-center">
-              <p className="text-muted-foreground">Sin email</p>
-              <p className="text-lg font-bold text-yellow-400">{testResult.skippedNoEmail}</p>
-            </div>
-            <div className="bg-secondary/50 rounded-lg p-2 text-center">
-              <p className="text-muted-foreground">Errores</p>
-              <p className="text-lg font-bold text-red-400">{testResult.errors.length}</p>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Run history */}

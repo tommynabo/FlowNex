@@ -12,7 +12,8 @@ import { createClient, SupabaseClient }       from '@supabase/supabase-js';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 
-const TIKTOK_PROFILE_SCRAPER = 'apidojo~tiktok-scraper';
+// clockworks actor — input: { profiles: ["@handle"] }  ⚠️ apidojo~tiktok-scraper is HTTP 402 (x402 payment) since May 2025
+const TIKTOK_PROFILE_SCRAPER = 'clockworks~tiktok-profile-scraper';
 const APIFY_BASE             = 'https://api.apify.com/v2';
 
 const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
@@ -539,17 +540,16 @@ async function runTikTokBatch(
       continue; // try a different keyword pool next iteration
     }
 
-    // Step 4: TikTok profiles — correct apidojo input: plain string URLs + maxItems per handle
+    // Step 4: TikTok profiles — clockworks actor input: { profiles: ["@handle1", ...] }
+    // ⚠️  Do NOT use { startUrls: [...] } — that was apidojo format (HTTP 402 x402)
+    // ⚠️  Do NOT use { usernames: [...] } on clockworks — causes HTTP 400
     const remaining = targetLeads - result.leadsFound;
     const toFetch   = candidateHandles.slice(0, Math.min(batchSize * 3, remaining + 10));
     let profileItems: unknown[] = [];
     try {
       profileItems = await runActorSync(
         TIKTOK_PROFILE_SCRAPER,
-        {
-          startUrls: toFetch.map(h => `https://www.tiktok.com/@${h}`),
-          maxItems: toFetch.length * 15,
-        },
+        { profiles: toFetch.map(h => `@${h}`) },
         apifyToken, 90, 1024,
       );
     } catch (e) {
@@ -557,29 +557,25 @@ async function runTikTokBatch(
       break;
     }
 
-    // Group raw video items by profile (apidojo returns N video items per creator)
-    const profileMap = new Map<string, { ch: NonNullable<TikTokProfileItem['channel']>; am: TikTokProfileItem['authorMeta'] }>();
-    for (const item of profileItems) {
-      const p = item as TikTokProfileItem;
-      const ch = p.channel ?? null;
-      const am = p.authorMeta ?? null;
-      const h  = (ch?.username ?? ch?.name ?? am?.name ?? '').toLowerCase().replace(/^@/, '');
-      if (!h || profileMap.has(h)) continue;
-      if (ch) profileMap.set(h, { ch, am });
-    }
-    const uniqueProfiles = Array.from(profileMap.entries());
+    // clockworks returns ONE item per profile (no grouping needed)
+    // Output fields: uniqueId/username → handle, fans → followers, signature → bio, nickName → name
+    const uniqueProfiles = profileItems.map(item => {
+      const p         = item as Record<string, unknown>;
+      const handle    = ((p.uniqueId as string) || (p.username as string) || '').toLowerCase().replace(/^@/, '');
+      const bio       = (p.signature as string) || '';
+      const followers = (p.fans as number) ?? 0;
+      const name      = (p.nickName as string) || (p.nickname as string) || handle;
+      const email     = ((p.email as string) || '').toLowerCase().trim();
+      return { handle, bio, followers, displayName: name, email };
+    }).filter(p => !!p.handle);
 
-    // Step 5: Process one entry per unique profile (deduped by grouping above)
-    for (const [handle, { ch, am }] of uniqueProfiles) {
+    // Step 5: Process one entry per unique profile
+    for (const { handle, bio, followers, displayName, email } of uniqueProfiles) {
       if (result.leadsFound >= targetLeads) break;
-      const bio         = ch?.bio ?? ch?.signature ?? am?.signature ?? '';
-      const followers   = ch?.followers ?? ch?.fans ?? am?.fans ?? 0;
-      const displayName = ch?.name ?? am?.nickName ?? handle;
-      // Email: scraper may return it directly (channel.email) or it lives in bio text
-      const email = ((ch as Record<string, unknown>)?.email as string | undefined)?.toLowerCase().trim()
-        || extractEmailFromBio(bio);
+      const ch = null; // unused variable kept for structural parity
 
       if (!handle || seenHandles.has(handle)) { result.skippedDuplicate++; continue; }
+      void ch; // clockworks path: no channel wrapper
       // Comprehensive ICP filter — mirrors the manual TikTokFacelessEngine pipeline
       const rawProfile: RawApifyProfile = { username: handle, fullName: displayName, biography: bio, followersCount: followers };
       if (applyIcpHardFilter([rawProfile], 'faceless_clipper').length === 0) continue;
@@ -901,9 +897,9 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
   }> = [];
 
   for (const campaign of (campaigns ?? []) as CampaignRow[]) {
-    const startHour   = campaign.autopilot_start_hour   ?? 22;
+    const startHour   = campaign.autopilot_start_hour   ?? 9;
     const startMinute = campaign.autopilot_start_minute ?? 0;
-    const endHour     = campaign.autopilot_end_hour     ?? 6;
+    const endHour     = campaign.autopilot_end_hour     ?? 21;
     const endMinute   = campaign.autopilot_end_minute   ?? 0;
     const campaignTz  = campaign.autopilot_timezone     ?? 'UTC';
     const { hour: localHour, minute: localMinute } = getCurrentTimeInTz(campaignTz);

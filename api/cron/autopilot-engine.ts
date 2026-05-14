@@ -508,11 +508,14 @@ async function runTikTokBatch(
   // duplicating the ICP-filter → email-discovery → DB-insert → Instantly flow.
   async function processProfile(
     handle: string, bio: string, followers: number, displayName: string, rawEmail: string,
+    options?: { skipIcp?: boolean },
   ): Promise<'added' | 'failed_icp' | 'no_email' | 'duplicate'> {
     if (!handle || seenHandles.has(handle)) return 'duplicate';
-    const rawProfile: RawApifyProfile = { username: handle, fullName: displayName, biography: bio, followersCount: followers };
-    if (applyIcpHardFilter([rawProfile], 'faceless_clipper').length === 0) return 'failed_icp';
-    if (followers >= 0 && (followers < minFollowers || (maxFollowers > 0 && followers > maxFollowers))) return 'failed_icp';
+    if (!options?.skipIcp) {
+      const rawProfile: RawApifyProfile = { username: handle, fullName: displayName, biography: bio, followersCount: followers };
+      if (applyIcpHardFilter([rawProfile], 'faceless_clipper').length === 0) return 'failed_icp';
+      if (followers >= 0 && (followers < minFollowers || (maxFollowers > 0 && followers > maxFollowers))) return 'failed_icp';
+    }
 
     let emailFinal = rawEmail ?? '';
     if (!emailFinal) emailFinal = await serperEmailSearch(handle, serperKey);
@@ -605,12 +608,17 @@ async function runTikTokBatch(
             apifyToken, 90, 1024,
           );
         } catch (e) {
-          // Reset only the Apify-needed rows; ready rows were already processed above
-          await supabase.from('tiktok_handle_queue').update({ status: 'pending' })
-            .in('id', needsApify.map(r => r.id));
-          result.errors.push(`Queue profile scraper failed: ${e instanceof Error ? e.message : String(e)}`);
-          // Return immediately — the "actor didn't return" block below would otherwise
-          // overwrite status back to 'failed_icp' (empty returnedHandles = all rows match).
+          // Apify unavailable (e.g. monthly billing limit). These handles were
+          // manually curated by the user → skip ICP and process via email search only.
+          result.errors.push(`Queue Apify unavailable — email-only fallback for ${needsApify.length} handles (ICP bypassed): ${e instanceof Error ? e.message : String(e)}`);
+          for (const row of needsApify) {
+            if (result.leadsFound >= targetLeads) break;
+            const outcome = await processProfile(row.handle, '', 0, row.handle, '', { skipIcp: true });
+            const newStatus =
+              outcome === 'added'    ? 'added'    :
+              outcome === 'no_email' ? 'no_email' : 'failed_icp';
+            await supabase.from('tiktok_handle_queue').update({ status: newStatus }).eq('id', row.id);
+          }
           return result;
         }
 

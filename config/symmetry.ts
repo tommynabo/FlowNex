@@ -37,8 +37,9 @@ export const SYMMETRY_CONTEXT: SymmetryContext = {
     'Creators who hit targets earn between $4,000 and $20,000 USD/month — no cap. ' +
     'This is not a typical content job: we do x100 the volume of the competition, ' +
     'we iterate aggressively, and we double down on what works. ' +
-    'The next step for interested candidates is to fill out a short application form, ' +
-    'after which our Head of Content personally reaches out to schedule a call.',
+    'The next step for interested candidates is to visit the role page, check all the details, ' +
+    'and fill out the short form at the bottom (under 5 minutes) — ' +
+    'our Head of Content reviews every application personally and reaches out fast.',
 
   jobDescription:
     'Position: Content Creator — Vertical Format (Remote)\n' +
@@ -63,8 +64,8 @@ export const SYMMETRY_CONTEXT: SymmetryContext = {
     'Reglas de Direct Response Marketing:\n' +
     '1. El objetivo del mensaje NO es cerrar la venta. Es conseguir el SIGUIENTE PASO (que rellenen el formulario o que respondan)\n' +
     '2. Responde PRIMERO a lo que preguntó el lead antes de ofrecer más información\n' +
-    '3. Termina SIEMPRE con una pregunta o CTA claro (ej: "Here\'s the form to apply — takes 2 minutes: [link]")\n' +
-    '4. Si el lead muestra interés, comparte 1-2 datos clave del rol (salario, escala de la empresa) y dirige al formulario\n' +
+    '3. Termina SIEMPRE con una pregunta o CTA claro (ej: "Here\'s the full role breakdown, short form at the bottom — takes under 5 min: [link]")\'\n' +
+    '4. Si el lead muestra interés, comparte 1-2 datos clave del rol (salario, escala de la empresa) y dirige a la página del rol (el formulario está al final)\n' +
     '5. Si el lead pone una objeción, valídala brevemente y redirige hacia la solución\n' +
     '6. Nunca escribas mensajes de más de 5 líneas. Si necesitas más, algo está mal\n' +
     '7. No menciones condiciones exactas de contrato por email; eso lo gestiona el Head of Content en la llamada',
@@ -76,8 +77,8 @@ export const SYMMETRY_CONTEXT: SymmetryContext = {
         'La compensación es 100% basada en resultados: entre $4,000 y $20,000 USD al mes, sin tope. ' +
         'Cuanto mejor rinda el contenido, más se gana. ' +
         'Es de las compensaciones más altas del sector para creadores de contenido remoto. ' +
-        'Si suena interesante, el siguiente paso es rellenar el formulario de solicitud (2 minutos) ' +
-        'y nuestro Head of Content contacta directamente para una llamada.',
+        'Si suena interesante, el siguiente paso es visitar la página del rol y rellenar el formulario al final (menos de 5 minutos) — ' +
+        'nuestro Head of Content revisa cada solicitud personalmente y contacta rápido.',
     },
     {
       question: '¿Cuántas horas hay que trabajar? / How many hours? / Is it full-time?',
@@ -110,9 +111,8 @@ export const SYMMETRY_CONTEXT: SymmetryContext = {
     {
       question: '¿Cuándo empieza? / How soon can I start? / What\'s the process?',
       answer:
-        'Incorporación inmediata. El proceso es simple: rellenas el formulario de solicitud, ' +
-        'nuestro Head of Content lo revisa y te contacta esa misma semana para una llamada rápida. ' +
-        'Si hay fit, arrancamos de inmediato.',
+        'Incorporación inmediata. El proceso es simple: visitas la página del rol, rellenas el formulario al final (5 minutos), ' +
+        'y nuestro Head of Content te contacta esa misma semana. Si hay fit, arrancamos de inmediato.',
     },
     {
       question: '¿De qué empresa es? / What company is this? / What is Symmetry?',

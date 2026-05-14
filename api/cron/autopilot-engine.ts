@@ -503,6 +503,131 @@ async function runTikTokBatch(
     (existingLeads ?? []).map((r: { ig_handle: string }) => r.ig_handle?.toLowerCase()).filter(Boolean),
   );
 
+  // ── Shared profile processor ─────────────────────────────────────────────
+  // Used by both STEP 0 (queue drain) and STEP 4+ (Serper loop) to avoid
+  // duplicating the ICP-filter → email-discovery → DB-insert → Instantly flow.
+  async function processProfile(
+    handle: string, bio: string, followers: number, displayName: string, rawEmail: string,
+  ): Promise<'added' | 'failed_icp' | 'no_email' | 'duplicate'> {
+    if (!handle || seenHandles.has(handle)) return 'duplicate';
+    const rawProfile: RawApifyProfile = { username: handle, fullName: displayName, biography: bio, followersCount: followers };
+    if (applyIcpHardFilter([rawProfile], 'faceless_clipper').length === 0) return 'failed_icp';
+    if (followers >= 0 && (followers < minFollowers || (maxFollowers > 0 && followers > maxFollowers))) return 'failed_icp';
+
+    let emailFinal = rawEmail ?? '';
+    if (!emailFinal) emailFinal = await serperEmailSearch(handle, serperKey);
+    if (!emailFinal) {
+      const [ttEmail, igCrossRef] = await Promise.all([inlineTikTokEmail(handle), inlineIgCrossRef(bio)]);
+      emailFinal = ttEmail || igCrossRef;
+    }
+    if (!emailFinal) return 'no_email';
+
+    const { error: insertErr } = await supabase.from('leads').insert({
+      user_id: campaign.user_id, campaign_id: campaign.id, name: displayName,
+      ig_handle: handle, follower_count: followers, niche: campaign.icp_content_types?.[0] ?? '',
+      audience_tier: followers >= 200_000 ? 'mid' : followers >= 50_000 ? 'micro' : 'nano',
+      job_title: 'Content Creator', email: emailFinal, bio,
+      ai_summary: `Autopilot scraped from TikTok. Bio: ${bio.substring(0, 200)}`,
+      vsl_sent_status: 'pending', email_status: 'pending', status: 'scraped', source: 'tiktok',
+    });
+    if (insertErr) { result.errors.push(`DB insert failed for @${handle}: ${insertErr.message}`); return 'no_email'; }
+
+    seenHandles.add(handle);
+    result.leadsFound++;
+
+    if (instantlyId && instantlyKey) {
+      const ok = await addLeadToInstantly(instantlyKey, instantlyId, {
+        email: emailFinal, name: displayName, igHandle: handle,
+        niche: campaign.icp_content_types?.[0] ?? '', followerCount: followers, aiSummary: bio.substring(0, 300),
+      }, result.errors);
+      if (ok) result.addedToInstantly++;
+    }
+    return 'added';
+  }
+
+  // ── STEP 0: Drain manual handle queue (ORDER BY position ASC = original JSON order) ──
+  // Pre-paid Apify scraper exports land here. Queue is always drained BEFORE
+  // Serper keyword searches so those credits are never wasted.
+  {
+    const toFetchFromQueue = Math.min(batchSize * 3, targetLeads - result.leadsFound + 10);
+    const { data: queueRows } = await supabase
+      .from('tiktok_handle_queue')
+      .select('id, handle')
+      .eq('campaign_id', campaign.id)
+      .eq('status', 'pending')
+      .order('position', { ascending: true })
+      .limit(toFetchFromQueue);
+
+    if (queueRows && queueRows.length > 0) {
+      const processingIds = queueRows.map((r: { id: string }) => r.id);
+
+      // Mark atomically as 'processing' so parallel runs don't double-process
+      await supabase.from('tiktok_handle_queue').update({ status: 'processing' }).in('id', processingIds);
+
+      const freshHandles = queueRows
+        .map((r: { handle: string }) => r.handle)
+        .filter((h: string) => !seenHandles.has(h));
+
+      let queueProfileItems: unknown[] = [];
+      try {
+        queueProfileItems = await runActorSync(
+          TIKTOK_PROFILE_SCRAPER,
+          { profiles: freshHandles.map((h: string) => `@${h}`) },
+          apifyToken, 90, 1024,
+        );
+      } catch (e) {
+        // Reset to pending so the next cron run retries this batch
+        await supabase.from('tiktok_handle_queue').update({ status: 'pending' }).in('id', processingIds);
+        result.errors.push(`Queue profile scraper failed: ${e instanceof Error ? e.message : String(e)}`);
+        // Fall through to Serper keyword search below
+      }
+
+      if (queueProfileItems.length > 0) {
+        // Build a map of handle → queue row id for status updates
+        const handleToQueueId = new Map<string, string>(
+          queueRows.map((r: { id: string; handle: string }) => [r.handle, r.id]),
+        );
+
+        for (const item of queueProfileItems) {
+          if (result.leadsFound >= targetLeads) break;
+          const p           = item as Record<string, unknown>;
+          const handle      = ((p.uniqueId as string) || (p.username as string) || '').toLowerCase().replace(/^@/, '');
+          const bio         = (p.signature as string) || '';
+          const followers   = (p.fans as number) ?? 0;
+          const displayName = (p.nickName as string) || (p.nickname as string) || handle;
+          const rawEmail    = ((p.email as string) || '').toLowerCase().trim();
+
+          const outcome = await processProfile(handle, bio, followers, displayName, rawEmail);
+
+          const qid = handleToQueueId.get(handle);
+          if (qid) {
+            const newStatus =
+              outcome === 'added'      ? 'added'      :
+              outcome === 'failed_icp' ? 'failed_icp' :
+              outcome === 'no_email'   ? 'no_email'   : 'failed_icp'; // duplicate → mark failed_icp (already in leads)
+            await supabase.from('tiktok_handle_queue').update({ status: newStatus }).eq('id', qid);
+          }
+        }
+
+        // Any queue row that the actor didn't return (private/deleted account) → mark failed_icp
+        const returnedHandles = new Set(
+          queueProfileItems.map(item => {
+            const p = item as Record<string, unknown>;
+            return ((p.uniqueId as string) || (p.username as string) || '').toLowerCase().replace(/^@/, '');
+          }),
+        );
+        for (const row of queueRows as Array<{ id: string; handle: string }>) {
+          if (!returnedHandles.has(row.handle)) {
+            await supabase.from('tiktok_handle_queue').update({ status: 'failed_icp' }).eq('id', row.id);
+          }
+        }
+      }
+
+      // If the queue satisfied the target, skip Serper entirely this run
+      if (result.leadsFound >= targetLeads) return result;
+    }
+  }
+
   // Loop up to 4 search iterations until we reach targetLeads
   const baseOffset = Math.floor(Math.random() * FACELESS_CLIPPER_KEYWORD_POOLS.length);
   for (let iteration = 0; iteration < 4 && result.leadsFound < targetLeads; iteration++) {
@@ -566,52 +691,11 @@ async function runTikTokBatch(
       return { handle, bio, followers, displayName: name, email };
     }).filter(p => !!p.handle);
 
-    // Step 5: Process one entry per unique profile
+    // Step 5: Process one entry per unique profile (uses shared processProfile helper above)
     for (const { handle, bio, followers, displayName, email } of uniqueProfiles) {
       if (result.leadsFound >= targetLeads) break;
-      const ch = null; // unused variable kept for structural parity
-
-      if (!handle || seenHandles.has(handle)) { result.skippedDuplicate++; continue; }
-      void ch; // clockworks path: no channel wrapper
-      // Comprehensive ICP filter — mirrors the manual TikTokFacelessEngine pipeline
-      const rawProfile: RawApifyProfile = { username: handle, fullName: displayName, biography: bio, followersCount: followers };
-      if (applyIcpHardFilter([rawProfile], 'faceless_clipper').length === 0) continue;
-      // Also enforce campaign-specific follower range
-      if (followers >= 0 && (followers < minFollowers || (maxFollowers > 0 && followers > maxFollowers))) continue;
-      // Multi-stage email fallback
-      let emailFinal = email ?? '';
-      // Stage 2: Serper web search — most effective for TikTok creators
-      if (!emailFinal) emailFinal = await serperEmailSearch(handle, serperKey);
-      // Stage 3: inline TikTok HTML + IG cross-ref (last resort)
-      if (!emailFinal) {
-        const [ttEmail, igCrossRef] = await Promise.all([
-          inlineTikTokEmail(handle),
-          inlineIgCrossRef(bio),
-        ]);
-        emailFinal = ttEmail || igCrossRef;
-      }
-      if (!emailFinal) continue;
-
-      const { error: insertErr } = await supabase.from('leads').insert({
-        user_id: campaign.user_id, campaign_id: campaign.id, name: displayName,
-        ig_handle: handle, follower_count: followers, niche: campaign.icp_content_types?.[0] ?? '',
-        audience_tier: followers >= 200_000 ? 'mid' : followers >= 50_000 ? 'micro' : 'nano',
-        job_title: 'Content Creator', email: emailFinal, bio,
-        ai_summary: `Autopilot scraped from TikTok. Bio: ${bio.substring(0, 200)}`,
-        vsl_sent_status: 'pending', email_status: 'pending', status: 'scraped', source: 'tiktok',
-      });
-      if (insertErr) { result.errors.push(`DB insert failed for @${handle}: ${insertErr.message}`); continue; }
-
-      seenHandles.add(handle);
-      result.leadsFound++;
-
-      if (instantlyId && instantlyKey) {
-        const ok = await addLeadToInstantly(instantlyKey, instantlyId, {
-          email: emailFinal, name: displayName, igHandle: handle,
-          niche: campaign.icp_content_types?.[0] ?? '', followerCount: followers, aiSummary: bio.substring(0, 300),
-        }, result.errors);
-        if (ok) result.addedToInstantly++;
-      }
+      const outcome = await processProfile(handle, bio, followers, displayName, email);
+      if (outcome === 'duplicate') result.skippedDuplicate++;
     }
   }
 
@@ -942,7 +1026,7 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
 
     let batchStatus: 'success' | 'error' = 'success';
     let errorMessage: string | null       = null;
-    let batchResult: BatchResult          = { leadsFound: 0, addedToInstantly: 0, skippedDuplicate: 0, errors: [] };
+    let batchResult: BatchResult          = { leadsFound: 0, addedToInstantly: 0, skippedDuplicate: 0, errors: [], warnings: [] };
 
     try {
       batchResult = await runAutopilotBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetPerRun);

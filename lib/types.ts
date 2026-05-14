@@ -1,5 +1,18 @@
 export type PlatformSource = 'gmail' | 'instagram' | 'tiktok';
 export type SearchMode = 'fast' | 'deep';
+
+// ── TikTok Handle Queue ───────────────────────────────────────────────────────
+/** Aggregated stats for the manual handle queue of a campaign */
+export interface TikTokQueueStats {
+  pending:    number;
+  processing: number;
+  passed_icp: number;  // passed ICP but awaiting email (intermediate, should be 0 at rest)
+  failed_icp: number;
+  no_email:   number;
+  added:      number;
+  total:      number;  // sum of all above
+}
+// ─────────────────────────────────────────────────────────────────────────────
 export type PageView = 'login' | 'dashboard' | 'campaigns' | 'setter'; // 'generator' and 'history' are removed, 'campaigns' will handle details internally if needed, or we can use another state in App.
 export type VslSentStatus = 'pending' | 'sent' | 'opened' | 'clicked' | 'converted';
 export type AudienceTier = 'nano' | 'micro' | 'mid' | 'macro';

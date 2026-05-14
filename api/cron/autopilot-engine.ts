@@ -546,13 +546,17 @@ async function runTikTokBatch(
   }
 
   // ── STEP 0: Drain manual handle queue (ORDER BY position ASC = original JSON order) ──
-  // Pre-paid Apify scraper exports land here. Queue is always drained BEFORE
+  // Pre-paid Apify profile-scraper exports land here. Queue is always drained BEFORE
   // Serper keyword searches so those credits are never wasted.
+  //
+  // Two sub-paths depending on whether profile data was captured at import time:
+  //   profile_data_ready = true  → use stored follower_count/bio directly (NO Apify call)
+  //   profile_data_ready = false → batch to Apify profile scraper as before
   {
     const toFetchFromQueue = Math.min(batchSize * 3, targetLeads - result.leadsFound + 10);
     const { data: queueRows } = await supabase
       .from('tiktok_handle_queue')
-      .select('id, handle')
+      .select('id, handle, follower_count, bio, nick_name, profile_data_ready')
       .eq('campaign_id', campaign.id)
       .eq('status', 'pending')
       .order('position', { ascending: true })
@@ -561,32 +565,51 @@ async function runTikTokBatch(
     if (queueRows && queueRows.length > 0) {
       const processingIds = queueRows.map((r: { id: string }) => r.id);
 
-      // Mark atomically as 'processing' so parallel runs don't double-process
+      // Mark atomically as 'processing' so parallel cron runs don't double-process
       await supabase.from('tiktok_handle_queue').update({ status: 'processing' }).in('id', processingIds);
 
-      const freshHandles = queueRows
-        .map((r: { handle: string }) => r.handle)
-        .filter((h: string) => !seenHandles.has(h));
+      type QueueRow = { id: string; handle: string; follower_count: number | null; bio: string | null; nick_name: string | null; profile_data_ready: boolean };
+      const rows = queueRows as QueueRow[];
 
-      let queueProfileItems: unknown[] = [];
-      try {
-        queueProfileItems = await runActorSync(
-          TIKTOK_PROFILE_SCRAPER,
-          { profiles: freshHandles.map((h: string) => `@${h}`) },
-          apifyToken, 90, 1024,
-        );
-      } catch (e) {
-        // Reset to pending so the next cron run retries this batch
-        await supabase.from('tiktok_handle_queue').update({ status: 'pending' }).in('id', processingIds);
-        result.errors.push(`Queue profile scraper failed: ${e instanceof Error ? e.message : String(e)}`);
-        // Fall through to Serper keyword search below
+      // Split: rows that already have profile data vs those that need Apify
+      const readyRows    = rows.filter(r => r.profile_data_ready && !seenHandles.has(r.handle));
+      const needsApify   = rows.filter(r => !r.profile_data_ready && !seenHandles.has(r.handle));
+
+      // ── Sub-path A: profile data already captured at import ─────────────────
+      // Skip Apify entirely — use stored follower_count / bio from the import.
+      for (const row of readyRows) {
+        if (result.leadsFound >= targetLeads) break;
+        const handle      = row.handle;
+        const bio         = row.bio         ?? '';
+        const followers   = row.follower_count ?? 0;
+        const displayName = row.nick_name    ?? handle;
+
+        const outcome = await processProfile(handle, bio, followers, displayName, '');
+        const newStatus =
+          outcome === 'added'      ? 'added'      :
+          outcome === 'failed_icp' ? 'failed_icp' :
+          outcome === 'no_email'   ? 'no_email'   : 'failed_icp';
+        await supabase.from('tiktok_handle_queue').update({ status: newStatus }).eq('id', row.id);
       }
 
-      if (queueProfileItems.length > 0) {
-        // Build a map of handle → queue row id for status updates
-        const handleToQueueId = new Map<string, string>(
-          queueRows.map((r: { id: string; handle: string }) => [r.handle, r.id]),
-        );
+      // ── Sub-path B: profile data not stored — fetch from Apify ──────────────
+      if (needsApify.length > 0 && result.leadsFound < targetLeads) {
+        const freshHandles = needsApify.map(r => r.handle);
+        const handleToRow  = new Map<string, QueueRow>(needsApify.map(r => [r.handle, r]));
+
+        let queueProfileItems: unknown[] = [];
+        try {
+          queueProfileItems = await runActorSync(
+            TIKTOK_PROFILE_SCRAPER,
+            { profiles: freshHandles.map((h: string) => `@${h}`) },
+            apifyToken, 90, 1024,
+          );
+        } catch (e) {
+          // Reset only the Apify-needed rows; ready rows were already processed above
+          await supabase.from('tiktok_handle_queue').update({ status: 'pending' })
+            .in('id', needsApify.map(r => r.id));
+          result.errors.push(`Queue profile scraper failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
 
         for (const item of queueProfileItems) {
           if (result.leadsFound >= targetLeads) break;
@@ -597,26 +620,25 @@ async function runTikTokBatch(
           const displayName = (p.nickName as string) || (p.nickname as string) || handle;
           const rawEmail    = ((p.email as string) || '').toLowerCase().trim();
 
-          const outcome = await processProfile(handle, bio, followers, displayName, rawEmail);
-
-          const qid = handleToQueueId.get(handle);
-          if (qid) {
+          const outcome  = await processProfile(handle, bio, followers, displayName, rawEmail);
+          const row      = handleToRow.get(handle);
+          if (row) {
             const newStatus =
               outcome === 'added'      ? 'added'      :
               outcome === 'failed_icp' ? 'failed_icp' :
-              outcome === 'no_email'   ? 'no_email'   : 'failed_icp'; // duplicate → mark failed_icp (already in leads)
-            await supabase.from('tiktok_handle_queue').update({ status: newStatus }).eq('id', qid);
+              outcome === 'no_email'   ? 'no_email'   : 'failed_icp';
+            await supabase.from('tiktok_handle_queue').update({ status: newStatus }).eq('id', row.id);
           }
         }
 
-        // Any queue row that the actor didn't return (private/deleted account) → mark failed_icp
+        // Handles the actor didn't return (private / deleted) → mark failed_icp
         const returnedHandles = new Set(
           queueProfileItems.map(item => {
             const p = item as Record<string, unknown>;
             return ((p.uniqueId as string) || (p.username as string) || '').toLowerCase().replace(/^@/, '');
           }),
         );
-        for (const row of queueRows as Array<{ id: string; handle: string }>) {
+        for (const row of needsApify) {
           if (!returnedHandles.has(row.handle)) {
             await supabase.from('tiktok_handle_queue').update({ status: 'failed_icp' }).eq('id', row.id);
           }

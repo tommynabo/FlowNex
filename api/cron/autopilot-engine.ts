@@ -609,6 +609,9 @@ async function runTikTokBatch(
           await supabase.from('tiktok_handle_queue').update({ status: 'pending' })
             .in('id', needsApify.map(r => r.id));
           result.errors.push(`Queue profile scraper failed: ${e instanceof Error ? e.message : String(e)}`);
+          // Return immediately — the "actor didn't return" block below would otherwise
+          // overwrite status back to 'failed_icp' (empty returnedHandles = all rows match).
+          return result;
         }
 
         for (const item of queueProfileItems) {

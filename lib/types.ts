@@ -38,7 +38,7 @@ export interface ContentVerificationResult {
 
 // ── AI Setter Module ────────────────────────────────────────────────────────
 export type SetterStatus = 'pending_review' | 'approved' | 'rejected' | 'corrected' | 'sent';
-export type IntentType = 'interested' | 'objection' | 'question' | 'not_interested' | 'unsubscribe' | 'unknown';
+export type IntentType = 'interested' | 'objection' | 'question' | 'not_interested' | 'unsubscribe' | 'form_submitted' | 'unknown';
 
 export interface LeadConversation {
   id: string;

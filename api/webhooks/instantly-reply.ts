@@ -98,6 +98,14 @@ interface FeedbackRow {
   reason: string;
 }
 
+interface PriorConversationRow {
+  reply_text: string;
+  ai_draft: string | null;
+  intent_classification: string | null;
+  status: string;
+  created_at: string;
+}
+
 // ── Handler ──────────────────────────────────────────────────────────────────
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -174,6 +182,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.warn('[SETTER][WEBHOOK] Could not load feedback (non-fatal):', err);
   }
 
+  // ── 5b. Fetch prior conversations for this lead (multi-turn awareness) ───
+  let priorConversations: PriorConversationRow[] = [];
+  try {
+    const { data: priorData } = await supabase
+      .from('lead_conversations')
+      .select('reply_text, ai_draft, intent_classification, status, created_at')
+      .eq('lead_email', lead_email)
+      .order('created_at', { ascending: true })
+      .limit(5);
+
+    if (priorData) priorConversations = priorData as PriorConversationRow[];
+  } catch (err) {
+    console.warn('[SETTER][WEBHOOK] Could not load prior conversations (non-fatal):', err);
+  }
+
+  const isFollowUp = priorConversations.length > 0;
+  const formWasSent = priorConversations.some(
+    c => c.ai_draft !== null && c.ai_draft.includes('symmetry.club/roles/')
+  );
+  const historyText = isFollowUp
+    ? priorConversations
+        .map((c, i) => {
+          const turn = `[Turn ${i + 1}]\nLead: "${c.reply_text}"`;
+          return c.ai_draft
+            ? `${turn}\nOur reply (sent): "${c.ai_draft}"\n(status: ${c.status})`
+            : `${turn}\n(no reply sent yet — status: ${c.status})`;
+        })
+        .join('\n\n')
+    : null;
+
+  console.log(`[SETTER][WEBHOOK] lead=${lead_email} | isFollowUp=${isFollowUp} | turns=${priorConversations.length} | formWasSent=${formWasSent}`);
+
   // ── 6. Build 5-layer system prompt ───────────────────────────────────────
   const faqText = SYMMETRY_CONTEXT.faq
     .map((f, i) => `FAQ ${i + 1}:\nPregunta: ${f.question}\nRespuesta: ${f.answer}`)
@@ -213,6 +253,22 @@ Keep the draft to 3-4 sentences max. Warm, direct, peer-to-peer. Never sound lik
 Example: "Quick context: Symmetry is the #1 Health & Fitness app in the Spanish-speaking world — millions of downloads, all driven by organic content. Comp is $4k–$20k/month based on results. Here's the full role breakdown (there's a short form at the bottom, takes under 5 min) — our Head of Content reviews every application personally: https://symmetry.club/roles/ugc-creator-en"
 When this rule applies, set "intent" to "interested" in your JSON output.
 
+CRITICAL RULE — FORM ALREADY SUBMITTED:
+Read the CONVERSATION HISTORY in the user message BEFORE generating your draft.
+If the conversation history shows the role page link was already sent to this lead AND their current message indicates they have already filled out the form (e.g. "I filled it out", "Done", "I submitted", "I applied", "I already completed the form", "I sent it", "Already did it", "I already filled that in"), respond ONLY with a warm, brief confirmation — 2 sentences MAX:
+  1. Acknowledge that it's great they completed it
+  2. Confirm our Head of Content reviews every application personally and will be in touch shortly
+No link. No CTA. No repeating the form URL.
+Example: "That's great — you're all set! Our Head of Content reviews every application personally and will be in touch with you shortly."
+When this rule applies, set "intent" to "form_submitted" in your JSON output.
+
+CRITICAL RULE — CONVERSATION HISTORY AWARENESS:
+ALWAYS read the full CONVERSATION HISTORY in the user message before writing your draft.
+- If this is a follow-up (history is not empty), do NOT treat it as a first-contact response.
+- Never repeat information or links already sent in a previous turn.
+- Adjust your tone and content to the current stage of the conversation.
+- If the lead asks a follow-up question about something already mentioned, answer it directly without re-introducing the company or role from scratch.
+
 ══ CAPA 1: CONTEXTO DE ${SYMMETRY_CONTEXT.companyName.toUpperCase()} ══
 ${SYMMETRY_CONTEXT.companyMission}
 
@@ -237,7 +293,7 @@ ${feedbackText}
 ══ INSTRUCCIONES DE OUTPUT ══
 Responde ÚNICAMENTE con un objeto JSON válido (sin markdown, sin texto extra) con esta estructura exacta:
 {
-  "intent": "interested" | "objection" | "question" | "not_interested" | "unsubscribe" | "unknown",
+  "intent": "interested" | "objection" | "question" | "not_interested" | "unsubscribe" | "form_submitted" | "unknown",
   "confidence_score": <número entre 0 y 100>,
   "draft": "<respuesta completa en texto plano que se enviará al lead>"
 }
@@ -274,7 +330,9 @@ El campo "draft" debe estar listo para enviarse tal cual. Sin placeholders, sin 
           { role: 'system', content: systemPrompt },
           {
             role: 'user',
-            content: `El lead ${lead_email} ha respondido a la campaña "${campaign_name || campaign_id}":\n\nAsunto: ${reply_subject || '(sin asunto)'}\n\nMensaje:\n${reply_text}`,
+            content: historyText
+              ? `PRIOR CONVERSATION HISTORY WITH THIS LEAD:\n${historyText}\n\n──────────────────────────────\n\nCURRENT MESSAGE (turn ${priorConversations.length + 1}):\nLead: ${lead_email} | Campaign: "${campaign_name || campaign_id}"\nSubject: ${reply_subject || '(no subject)'}\n\nMessage:\n${reply_text}`
+              : `El lead ${lead_email} ha respondido a la campaña "${campaign_name || campaign_id}":\n\nAsunto: ${reply_subject || '(sin asunto)'}\n\nMensaje:\n${reply_text}`,
           },
         ],
       }),

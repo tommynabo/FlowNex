@@ -25,24 +25,31 @@ export const SYMMETRY_CONTEXT: SymmetryContext = {
   companyName: 'Symmetry',
 
   companyMission:
-    'Symmetry es una empresa de prospección y ventas B2B que ayuda a emprendedores digitales, ' +
-    'coaches y consultores a escalar su captación de clientes mediante sistemas de outreach automatizado. ' +
-    'No vendemos software; ofrecemos un servicio hands-off donde nosotros operamos el sistema por el cliente.',
+    'Symmetry is the #1 Health & Fitness app in the Spanish-speaking world, with millions of downloads ' +
+    'and exponential growth driven by organic content at scale. ' +
+    'We create high-volume vertical content (TikTok format) that turns views into real app downloads. ' +
+    'We don\'t want pretty content with no impact — we want content that performs and scales. ' +
+    'This is a high-performance environment where speed, iteration, and results are everything.',
 
   offerDescription:
-    'Ofrecemos posiciones de Setter para trabajar con nuestros clientes. ' +
-    'Un Setter es la persona que responde las respuestas entrantes de leads, califica el interés, ' +
-    'y agenda llamadas de cierre con el Closer o el fundador. Es un rol 100% remoto, flexible, ' +
-    'con comisiones por reunión agendada.',
+    'We are hiring Content Creators (UGC / Vertical Format) to work directly with our Head of Content. ' +
+    'The role is 100% remote and fully results-driven. ' +
+    'Creators who hit targets earn between $4,000 and $20,000 USD/month — no cap. ' +
+    'This is not a typical content job: we do x100 the volume of the competition, ' +
+    'we iterate aggressively, and we double down on what works. ' +
+    'The next step for interested candidates is to fill out a short application form, ' +
+    'after which our Head of Content personally reaches out to schedule a call.',
 
   jobDescription:
-    'Puesto: Setter de Ventas (Remoto)\n' +
-    '- Función: Responder leads entrantes, cualificar interés y agendar llamadas de 30 min\n' +
-    '- Modalidad: 100% remoto, horario flexible (mínimo 4h/día)\n' +
-    '- Compensación: Base fija + comisión por reunión agendada (sin tope)\n' +
-    '- Requisitos: Comunicación escrita fluida, proactividad, acceso a ordenador/móvil\n' +
-    '- No se requiere experiencia previa en ventas; formamos desde cero\n' +
-    '- Incorporación: Inmediata',
+    'Position: Content Creator — Vertical Format (Remote)\n' +
+    '- Function: Create daily high-volume vertical videos that drive app downloads; manage multiple TikTok accounts\n' +
+    '- Location: Must be based in the United States or United Kingdom (firm requirement)\n' +
+    '- Schedule: Minimum 4h/day, 6 days/week — highly available with immediate response times\n' +
+    '- Compensation: $4,000–$20,000 USD/month, 100% results-based, no cap\n' +
+    '- Key responsibilities: Find winning formats, scale what works, drop what doesn\'t convert, analyze metrics weekly\n' +
+    '- Desired: Track record of viral vertical content, passion for fitness/health, startup experience\n' +
+    '- Start: Immediate — once the application is reviewed, our Head of Content schedules an intro call that same week\n' +
+    '- Performance target: 1M+ monthly views, actively scaling to 10M+',
 
   toneGuidelines:
     'Tono de voz: Casual-Profesional. Joven, cercano y directo.\n' +
@@ -54,54 +61,65 @@ export const SYMMETRY_CONTEXT: SymmetryContext = {
 
   copywritingRules:
     'Reglas de Direct Response Marketing:\n' +
-    '1. El objetivo del mensaje NO es cerrar la venta. Es conseguir el SIGUIENTE PASO (una respuesta, una llamada, una confirmación)\n' +
+    '1. El objetivo del mensaje NO es cerrar la venta. Es conseguir el SIGUIENTE PASO (que rellenen el formulario o que respondan)\n' +
     '2. Responde PRIMERO a lo que preguntó el lead antes de ofrecer más información\n' +
-    '3. Termina SIEMPRE con una pregunta o CTA claro (ej: "¿Te viene bien una llamada rápida el jueves?")\n' +
-    '4. Si el lead muestra interés, agenda directamente. No des demasiada info por escrito\n' +
+    '3. Termina SIEMPRE con una pregunta o CTA claro (ej: "Here\'s the form to apply — takes 2 minutes: [link]")\n' +
+    '4. Si el lead muestra interés, comparte 1-2 datos clave del rol (salario, escala de la empresa) y dirige al formulario\n' +
     '5. Si el lead pone una objeción, valídala brevemente y redirige hacia la solución\n' +
     '6. Nunca escribas mensajes de más de 5 líneas. Si necesitas más, algo está mal\n' +
-    '7. No menciones precio ni condiciones exactas por email; eso se discute en llamada',
+    '7. No menciones condiciones exactas de contrato por email; eso lo gestiona el Head of Content en la llamada',
 
   faq: [
     {
-      question: '¿Cuánto se paga? / ¿Cuál es el salario?',
+      question: '¿Cuánto se paga? / What\'s the pay? / What\'s the salary?',
       answer:
-        'La comp tiene una base fija más comisiones por reunión agendada, sin tope. ' +
-        'Los detalles exactos los cerramos en una llamada de 20 minutos para ver si hay fit. ' +
-        '¿Tienes disponibilidad esta semana?',
+        'La compensación es 100% basada en resultados: entre $4,000 y $20,000 USD al mes, sin tope. ' +
+        'Cuanto mejor rinda el contenido, más se gana. ' +
+        'Es de las compensaciones más altas del sector para creadores de contenido remoto. ' +
+        'Si suena interesante, el siguiente paso es rellenar el formulario de solicitud (2 minutos) ' +
+        'y nuestro Head of Content contacta directamente para una llamada.',
     },
     {
-      question: '¿Cuántas horas hay que trabajar? / ¿Es tiempo completo?',
+      question: '¿Cuántas horas hay que trabajar? / How many hours? / Is it full-time?',
       answer:
-        'Es flexible: mínimo 4 horas al día, tú decides el bloque horario. ' +
-        'Muchos de nuestros setters lo combinan con otras actividades. ' +
-        'Lo hablamos en la llamada, ¿te cuadra esta semana?',
+        'Mínimo 4 horas al día, 6 días a la semana. ' +
+        'El horario es flexible — tú eliges el bloque — pero la disponibilidad y la velocidad de respuesta son clave en este rol. ' +
+        'Muchos creadores lo compaginan con otras actividades según su situación.',
     },
     {
-      question: '¿Necesito experiencia? / No tengo experiencia en ventas',
+      question: '¿Necesito experiencia? / Do I need experience in content creation?',
       answer:
-        'No hace falta experiencia previa. Formamos desde cero con un onboarding de 3 días. ' +
-        'Lo que más valoramos es la actitud y la comunicación escrita. ' +
-        '¿Seguimos hablando? Puedo hacer una llamada corta para contarte todo.',
+        'Tener historial de contenido viral es un plus pero no es obligatorio. ' +
+        'Lo que más valoramos es la obsesión por los resultados y la capacidad de iterar rápido. ' +
+        'Lo que no buscamos es alguien que haga contenido bonito sin impacto — buscamos a alguien que entienda qué convierte y por qué.',
     },
     {
-      question: '¿Es presencial o remoto?',
+      question: '¿Es presencial o remoto? / Is it remote?',
       answer:
-        '100% remoto. Solo necesitas internet y un dispositivo. ' +
-        'Puedes trabajar desde donde quieras.',
+        '100% remoto y flexible. El único requisito de ubicación es estar basado en Estados Unidos o Reino Unido — es un requisito firme para este rol.',
     },
     {
-      question: '¿De qué trata exactamente el trabajo? / ¿Qué hace un setter?',
+      question: '¿De qué trata exactamente el trabajo? / What does the job involve?',
       answer:
-        'El setter responde leads que ya han mostrado interés (no hay que buscarlos tú), ' +
-        'los cualifica y agenda llamadas con nuestro equipo de cierre. ' +
-        'Es la parte más interesante del embudo: pura conversación estratégica, sin presentaciones frías.',
+        'Crearás videos verticales de alto volumen diariamente (formato TikTok) para impulsar descargas de la app. ' +
+        'Trabajarás directamente con el Head of Content, gestionarás múltiples cuentas activas, ' +
+        'analizarás métricas y iterarás sobre lo que funciona. ' +
+        'El objetivo es alcanzar 1M+ de vistas mensuales escalando hasta 10M+. ' +
+        'Symmetry es la app #1 de Health & Fitness en el mundo hispanohablante — es un rol con impacto real.',
     },
     {
-      question: '¿Cuándo empieza? / ¿Cuándo hay que incorporarse?',
+      question: '¿Cuándo empieza? / How soon can I start? / What\'s the process?',
       answer:
-        'Incorporación inmediata. Si hay fit en la llamada, arrancamos esa misma semana. ' +
-        '¿Te viene bien hablar mañana o pasado?',
+        'Incorporación inmediata. El proceso es simple: rellenas el formulario de solicitud, ' +
+        'nuestro Head of Content lo revisa y te contacta esa misma semana para una llamada rápida. ' +
+        'Si hay fit, arrancamos de inmediato.',
+    },
+    {
+      question: '¿De qué empresa es? / What company is this? / What is Symmetry?',
+      answer:
+        'Symmetry es la app #1 de Health & Fitness en el mundo hispanohablante, con millones de descargas ' +
+        'y en pleno periodo de crecimiento exponencial. ' +
+        'El crecimiento está impulsado completamente por contenido orgánico a escala — por eso este rol existe y por eso la compensación es tan alta.',
     },
   ],
 };

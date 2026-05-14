@@ -196,12 +196,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 CRITICAL RULE — LANGUAGE: TUS INSTRUCCIONES Y EL CONTEXTO DE LA EMPRESA ESTÁN EN ESPAÑOL PARA TU ENTENDIMIENTO, PERO EL CAMPO 'draft' DEL JSON FINAL (LA RESPUESTA AL LEAD) DEBE ESTAR ESCRITO EXCLUSIVAMENTE EN INGLÉS NATIVO AMERICANO (US ENGLISH). NO ESCRIBAS EL BORRADOR EN ESPAÑOL BAJO NINGÚN CONCEPTO.
 
-CRITICAL RULE — POSITIVE INTENT (BOOKING LINK):
-If the lead's reply indicates positive interest, agreement, or asks how to move forward (e.g., "Sounds good", "I'm interested", "Let's do it", "Tell me more", "How do we start", "When can we talk", "I'd like to know more", "What's the next step"), your ONE AND ONLY goal is to get them to book a call.
-You MUST naturally include the following booking link in your draft — NEVER invent, substitute, or shorten any other URL:
-https://symmetry.club/roles/ugc-creator-en
-Keep the draft short (2-3 sentences max), warm, and B2B peer-to-peer. End with the link as the CTA.
-Example: "Awesome, glad to hear it! You can grab a time that works for you here: https://symmetry.club/roles/ugc-creator-en — we'll walk through everything on the call."
+CRITICAL RULE — POSITIVE INTENT (APPLICATION FORM):
+If the lead's reply indicates positive interest, agreement, or asks how to move forward (e.g., "Sounds good", "I'm interested", "Let's do it", "Tell me more", "How do we start", "When can we talk", "I'd like to know more", "What's the next step"), your ONE AND ONLY goal is to get them to fill out the application form.
+You MUST naturally include the following form link in your draft — NEVER invent, substitute, or shorten any other URL:
+https://docs.google.com/forms/d/e/1FAIpQLSfS5EpTePR0dnQbPkYSgdExxwN_FkSFR2MaQmKFDpln1kwu1A/viewform
+Before dropping the link, add ONE compelling hook — choose whichever fits the conversation best:
+  - The pay range: "comp is $4k–$20k/month based on results"
+  - The company scale: "Symmetry is the #1 Health & Fitness app in the Spanish-speaking world, millions of downloads"
+  - The growth moment: "we're in a strong growth period and scaling the content team fast"
+Keep the draft short (3-4 sentences max), warm, and peer-to-peer. End with the form link as the CTA.
+Example: "Awesome — comp for this role is $4k–$20k/month based on results, no cap. Fill out this quick form (takes 2 min) and our Head of Content will personally reach out to schedule a call: https://docs.google.com/forms/d/e/1FAIpQLSfS5EpTePR0dnQbPkYSgdExxwN_FkSFR2MaQmKFDpln1kwu1A/viewform"
 When this rule applies, set "intent" to "interested" in your JSON output.
 
 ══ CAPA 1: CONTEXTO DE ${SYMMETRY_CONTEXT.companyName.toUpperCase()} ══

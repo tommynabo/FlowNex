@@ -645,28 +645,31 @@ async function runTikTokBatch(
         }
       }
 
-      // If the queue satisfied the target, skip Serper entirely this run
-      if (result.leadsFound >= targetLeads) return result;
+      // Queue had pending items → this run is queue-only.
+      // Never fall through to Serper even if no leads were added (ICP may be strict;
+      // queue will drain progressively over subsequent runs).
+      return result;
     }
   }
 
-  // Loop up to 4 search iterations until we reach targetLeads
+  // ── STEP 1-3: Collect TikTok handles via Google Search ─────────────────────
+  // Rotate up to 4 keyword pools to gather enough unique candidate handles.
+  // Cap Serper at 2 pages per pool (was 5): 2 pages × 20 results = 40 URLs is
+  // sufficient to extract batchSize*3 unique TikTok handles. Extra pages add
+  // cost without meaningful yield at this search volume.
+  const TARGET_CANDIDATES_TT = Math.min(batchSize * 3, targetLeads - result.leadsFound + 10);
+  const candidateHandles: string[] = [];
   const baseOffset = Math.floor(Math.random() * FACELESS_CLIPPER_KEYWORD_POOLS.length);
-  for (let iteration = 0; iteration < 4 && result.leadsFound < targetLeads; iteration++) {
-    const attemptOffset = (baseOffset + iteration) % FACELESS_CLIPPER_KEYWORD_POOLS.length;
+  let serperFailed = false;
 
-    // Steps 2+3: Paginate Serper until we have batchSize*3 candidate handles.
-    // A single Serper page (20 results) often returns <5 new handles after dedup;
-    // multi-page accumulation ensures enough candidates reach the Apify scraper.
-    const TARGET_CANDIDATES_TT = batchSize * 3;
-    const candidateHandles: string[] = [];
-    let serperFailed = false;
-    for (let serperPage = 1; serperPage <= 5 && candidateHandles.length < TARGET_CANDIDATES_TT; serperPage++) {
+  for (let iteration = 0; iteration < 4 && candidateHandles.length < TARGET_CANDIDATES_TT && result.leadsFound < targetLeads; iteration++) {
+    const attemptOffset = (baseOffset + iteration) % FACELESS_CLIPPER_KEYWORD_POOLS.length;
+    for (let serperPage = 1; serperPage <= 2 && candidateHandles.length < TARGET_CANDIDATES_TT; serperPage++) {
       let pageResults: Array<{ link: string }> = [];
       try {
         pageResults = await serperGoogleSearch(buildSearchQuery(attemptOffset, regions), serperKey, serperPage);
       } catch (e) {
-        result.errors.push(`Google Search failed (iter ${iteration + 1}, page ${serperPage}): ${e instanceof Error ? e.message : String(e)}`);
+        result.errors.push(`Google Search failed (pool ${iteration + 1}, page ${serperPage}): ${e instanceof Error ? e.message : String(e)}`);
         serperFailed = true;
         break;
       }
@@ -679,29 +682,28 @@ async function runTikTokBatch(
       }
     }
     if (serperFailed) break;
-    if (candidateHandles.length === 0) {
-      result.errors.push(`No new handles found from Google Search (iter ${iteration + 1}) — trying next pool`);
-      continue; // try a different keyword pool next iteration
-    }
+  }
 
-    // Step 4: TikTok profiles — clockworks actor input: { profiles: ["@handle1", ...] }
-    // ⚠️  Do NOT use { startUrls: [...] } — that was apidojo format (HTTP 402 x402)
-    // ⚠️  Do NOT use { usernames: [...] } on clockworks — causes HTTP 400
-    const remaining = targetLeads - result.leadsFound;
-    const toFetch   = candidateHandles.slice(0, Math.min(batchSize * 3, remaining + 10));
+  if (!serperFailed && candidateHandles.length > 0) {
+    // ── STEP 4: ONE Apify call for all collected candidates ───────────────────
+    // Previously: 1 Apify actor call per iteration = up to 4 calls per cron run.
+    // Now: gather handles from all Serper pools first, then ONE single actor call.
+    // This matches the Instagram pattern and cuts Apify startup costs by ~75%.
+    // ⚠️ Do NOT use { startUrls: [...] } — apidojo format (HTTP 402 x402)
+    // ⚠️ Do NOT use { usernames: [...] } on clockworks — causes HTTP 400
     let profileItems: unknown[] = [];
     try {
       profileItems = await runActorSync(
         TIKTOK_PROFILE_SCRAPER,
-        { profiles: toFetch.map(h => `@${h}`) },
+        { profiles: candidateHandles.map(h => `@${h}`) },
         apifyToken, 90, 1024,
       );
     } catch (e) {
-      result.errors.push(`TikTok profile scraper failed (iter ${iteration + 1}): ${e instanceof Error ? e.message : String(e)}`);
-      break;
+      result.errors.push(`TikTok profile scraper failed: ${e instanceof Error ? e.message : String(e)}`);
     }
 
-    // clockworks returns ONE item per profile (no grouping needed)
+    // ── STEP 5: Process profiles ──────────────────────────────────────────────
+    // clockworks returns ONE item per profile.
     // Output fields: uniqueId/username → handle, fans → followers, signature → bio, nickName → name
     const uniqueProfiles = profileItems.map(item => {
       const p         = item as Record<string, unknown>;
@@ -713,12 +715,13 @@ async function runTikTokBatch(
       return { handle, bio, followers, displayName: name, email };
     }).filter(p => !!p.handle);
 
-    // Step 5: Process one entry per unique profile (uses shared processProfile helper above)
     for (const { handle, bio, followers, displayName, email } of uniqueProfiles) {
       if (result.leadsFound >= targetLeads) break;
       const outcome = await processProfile(handle, bio, followers, displayName, email);
       if (outcome === 'duplicate') result.skippedDuplicate++;
     }
+  } else if (!serperFailed) {
+    result.warnings.push('No TikTok handles found in Google Search results — all pools exhausted or filtered');
   }
 
   return result;

@@ -134,16 +134,11 @@ const REGION_MAP: Record<string, string[]> = {
   FR: ['france', 'paris', 'lyon', 'marseille', 'toulouse', 'fr'],
 };
 
-// Google Search Scraper
-const GOOGLE_SEARCH_SCRAPER = 'scraperlink~google-search-results-serp-scraper';
-
-// apidojo/tiktok-scraper — $0.30/1K results (6.7x cheaper than clockworks $2/1K).
-// Input: { startUrls: ["https://tiktok.com/@handle"] } for profiles;
-//        { startUrls: ["https://tiktok.com/tag/hashtag"] } for hashtag discovery.
-// Output: video items with creator data nested in item.channel → handled by MODE C in groupTikTokItemsByProfile.
-// Minimum 10 items per startUrl required by this actor.
+// clockworks~tiktok-profile-scraper — returns 1 item per profile (uniqueId, fans, signature, bioLink).
+// Input: { profiles: ["@handle1", "@handle2"] }
+// Output: profile items handled by MODE A in groupTikTokItemsByProfile (item.uniqueId / item.fans / item.signature).
 // ⚠️ Apify actor IDs use ~ as username/name separator (NOT /). Using / generates a 404.
-const TIKTOK_PROFILE_SCRAPER = 'apidojo~tiktok-scraper';
+const TIKTOK_PROFILE_SCRAPER = 'clockworks~tiktok-profile-scraper';
 
 // Anti-ICP negative keywords — only the 5 most critical terms.
 // Shorter queries avoid Google truncation that caused empty results.
@@ -943,7 +938,7 @@ export class TikTokFacelessEngine {
     const targetRegions = icpFilters?.regions ?? [];
     const targetCount = Math.max(1, config.maxResults);
 
-    const MAX_RETRIES = Math.max(30, Math.ceil(targetCount * 1.5));
+    const MAX_RETRIES = Math.max(15, Math.ceil(targetCount * 2));
 
     onLog('[TT-FC] ICP Type: faceless_clipper (TikTok only)');
     onLog('[TT-FC] Keyword pool: ' + FACELESS_CLIPPER_KEYWORD_POOLS.length + ' variantes | site:tiktok.com | 🏋️ #gymtok priority: slots 1-3 of 5');
@@ -995,32 +990,29 @@ export class TikTokFacelessEngine {
       // Per-run result arrays — kept separate before flat() to track which run
       // each handle came from (gymtok vs normal pool).
       let perRunResults: unknown[][];
-      let quotaExceeded = false;
       try {
+        // ── Direct Serper API via /api/serper-proxy (no Apify actor start cost) ──
+        // Each query calls the server-side proxy which hits google.serper.dev directly.
+        // Response format mirrors scraperlink~google-search-results-serp-scraper so the
+        // parser below (item.results[].url / item.results[].description) is unchanged.
         perRunResults = await Promise.all(
           queryBatch.map(q =>
-            this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
-              keyword: q.query,
-              limit: '40',
-            }, onLog, undefined, 90_000, 80, 1024).catch((e: unknown) => {
-              const msg = e instanceof Error ? e.message : String(e);
-              if (msg.startsWith('APIFY_QUOTA_EXCEEDED')) { quotaExceeded = true; }
-              else { onLog('[APIFY] ❌ Error Google Search: ' + msg); }
-              return [] as unknown[];
+            fetch('/api/serper-proxy', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ keyword: q.query, num: 40 }),
             })
+              .then(r => r.ok ? (r.json() as Promise<unknown[]>) : Promise.resolve([] as unknown[]))
+              .catch((e: unknown) => {
+                const msg = e instanceof Error ? e.message : String(e);
+                onLog('[SERPER] ❌ Error Google Search: ' + msg);
+                return [] as unknown[];
+              })
           )
         );
-        if (quotaExceeded) {
-          onLog('[ENGINE] ⛔ Apify quota agotada — Abortando inmediatamente.');
-          break;
-        }
         searchResults = perRunResults.flat();
       } catch (e: unknown) {
         const errMsg = e instanceof Error ? e.message : String(e);
-        if (errMsg.startsWith('APIFY_QUOTA_EXCEEDED')) {
-          onLog('[ENGINE] ⛔ Apify quota agotada — ' + errMsg.replace('APIFY_QUOTA_EXCEEDED: ', '') + ' Abortando inmediatamente.');
-          break;
-        }
         onLog('[STEP 1] Google Search error: ' + errMsg);
         consecutiveZeros++;
         if (consecutiveZeros >= MAX_CONSEC_ZEROS) { onLog('[ENGINE] ' + consecutiveZeros + ' consecutive failures — aborting.'); break; }
@@ -1183,17 +1175,14 @@ export class TikTokFacelessEngine {
         onLog('👤 STEP 2/4 — Fetching ' + ttBatch.length + ' TikTok profiles (batch capped at ' + MAX_TT_BATCH + ')...');
         let rawTikTokProfiles: unknown[];
         try {
-          // apidojo/tiktok-scraper: startUrls accepts profile page URLs; maxItems caps results.
+          // clockworks~tiktok-profile-scraper: profiles input accepts @handle strings; returns 1 item per profile.
           rawTikTokProfiles = await this.callApifyActor(
             TIKTOK_PROFILE_SCRAPER,
-            {
-              startUrls: ttBatch.map((h: string) => `https://www.tiktok.com/@${h}`),
-              maxItems: ttBatch.length * 10,
-            },
+            { profiles: ttBatch.map((h: string) => `@${h}`) },
             onLog,
-            ttBatch.length * 10,
+            ttBatch.length, // 1 item per profile (not 10 video items)
             65_000, // client-side: 65s backup timeout
-            55,     // server-side: Apify kills the actor at 55s no matter what TikTok does
+            90,     // clockworks runs longer than apidojo — give it 90s
             1024,   // memory cap: 1024 MB
           );
           ttScraperConsecFails = 0;

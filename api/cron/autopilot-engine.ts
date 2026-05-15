@@ -997,7 +997,7 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
   if (!instantlyKey) return res.status(500).json({ error: 'Missing INSTANTLY_API_KEY env var' });
 
   // Supabase
-  let supabase: ReturnType<typeof createClient>;
+  let supabase: SupabaseClient;
   try { supabase = getSupabase(); } catch (e) { return res.status(500).json({ error: (e as Error).message }); }
 
   // Load campaigns

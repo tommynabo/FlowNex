@@ -140,6 +140,7 @@ const REGION_MAP: Record<string, string[]> = {
 };
 
 // Google Search Scraper — queries `site:instagram.com [keywords]`, extracts handles from URLs
+// TODO: replace with new cheaper actor ID once provided (format: author~actor-name)
 const GOOGLE_SEARCH_SCRAPER = 'scraperlink~google-search-results-serp-scraper';
 const INSTAGRAM_PROFILE_SCRAPER = 'apify~instagram-profile-scraper';
 // scraptik~tiktok-api — profile lookup: input { profile_username: "handle" }
@@ -1013,7 +1014,9 @@ export class InstagramSearchEngine {
       try {
         searchResults = await this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
           keyword: searchQuery,
-          limit: '100',
+          limit: 100,
+          renderJs: false,
+          superProxy: false,
         }, onLog, 1024);
       } catch (e: unknown) {
         onLog('[STEP 1] Google Search error: ' + (e instanceof Error ? e.message : String(e)));
@@ -1035,11 +1038,15 @@ export class InstagramSearchEngine {
         continue;
       }
 
-      // Extract IG handles — actor wraps results inside results[]
+      // Each item is a flat result (new actor) OR nested under results[] (scraperlink).
       const allOrganicResults: Record<string, unknown>[] = [];
       for (const item of searchResults as Record<string, unknown>[]) {
-        const subResults = (item.results as Record<string, unknown>[] | undefined) ?? [];
-        allOrganicResults.push(...subResults);
+        const subResults = item.results as Record<string, unknown>[] | undefined;
+        if (subResults) {
+          allOrganicResults.push(...subResults);
+        } else {
+          allOrganicResults.push(item as Record<string, unknown>);
+        }
       }
       // Build snippet map and extract handles with platform tag (Instagram + TikTok)
       const handleToSnippet = new Map<string, string>();

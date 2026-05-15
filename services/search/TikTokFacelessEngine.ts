@@ -134,10 +134,6 @@ const REGION_MAP: Record<string, string[]> = {
   FR: ['france', 'paris', 'lyon', 'marseille', 'toulouse', 'fr'],
 };
 
-// Google Search Scraper via Apify — supports the complex boolean queries (site:, OR groups, exclusions)
-// that Serper's free plan blocks with "Query pattern not allowed for free accounts."
-const GOOGLE_SEARCH_SCRAPER = 'scraperlink~google-search-results-serp-scraper';
-
 // scraptik~tiktok-api — unified TikTok API actor ($0.001/request, ~50× cheaper).
 // Hashtag search: input { searchPosts_keyword: "hashtag", searchPosts_count: 30 }
 //   → dataset item: { search_item_list: [{ aweme_info: { author: { unique_id, follower_count }, desc } }] }

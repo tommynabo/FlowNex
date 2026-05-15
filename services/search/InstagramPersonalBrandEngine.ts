@@ -127,6 +127,7 @@ const REGION_MAP: Record<string, string[]> = {
 };
 
 // Google Search Scraper — queries site:instagram.com [keywords], extracts handles from URLs
+// TODO: replace with new cheaper actor ID once provided (format: author~actor-name)
 const GOOGLE_SEARCH_SCRAPER = 'scraperlink~google-search-results-serp-scraper';
 const INSTAGRAM_PROFILE_SCRAPER = 'apify~instagram-profile-scraper';
 
@@ -792,7 +793,7 @@ export class InstagramPersonalBrandEngine {
 
     onLog('[IG-PB] Keywords base: ' + baseKeywords.join(', '));
     onLog('[IG-PB] ICP Type: personal_brand (Instagram only)');
-    onLog('[IG-PB] Keyword pool: ' + KEYWORD_POOLS.length + ' variantes | site:instagram.com | 🏃 ' + GOOGLE_QUERY_BATCH + ' queries en paralelo por attempt');
+    onLog('[IG-PB] Keyword pool: ' + KEYWORD_POOLS.length + ' variantes | site:instagram.com | 📦 ' + GOOGLE_QUERY_BATCH + ' queries en batch por attempt');
     onLog('[IG-PB] 🎯 Objetivo: ' + targetCount + ' creadores | Máx intentos: ' + MAX_RETRIES);
     onLog('[IG-PB] Followers: ' + (minFollowers > 0 ? this.formatFollowers(minFollowers) : '0') + ' – ' + (maxFollowers < 99_000_000 ? this.formatFollowers(maxFollowers) : '∞'));
     if (targetRegions.length > 0) onLog('[ICP] Regiones: ' + targetRegions.join(', '));
@@ -834,22 +835,17 @@ export class InstagramPersonalBrandEngine {
       onLog('🔎 STEP 1/4 — Google Search x' + GOOGLE_QUERY_BATCH + ' (Instagram):');
       querySlots.forEach((q, i) => onLog('             Slot ' + (i + 1) + ': ' + q));
 
-      // ── STEP 1: Google Search site:instagram.com — parallel runs ─────────────
-      let perSlotResults: unknown[][];
-      let quotaExceeded = false;
+      // ── STEP 1: Google Search site:instagram.com — single batched run ────────
+      // All GOOGLE_QUERY_BATCH queries are joined with newlines into ONE actor run,
+      // reducing Apify run count from GOOGLE_QUERY_BATCH → 1 per attempt.
+      let batchResults: unknown[];
       try {
-        perSlotResults = await Promise.all(querySlots.map(q =>
-          this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
-            keyword: q,
-            limit: '40',
-          }, onLog, 90_000, 80, 1024).catch((e: unknown) => {
-            const msg = e instanceof Error ? e.message : String(e);
-            if (msg.startsWith('APIFY_QUOTA_EXCEEDED')) { quotaExceeded = true; }
-            else { onLog('[APIFY] ❌ Error Google Search: ' + msg); }
-            return [] as unknown[];
-          })
-        ));
-        if (quotaExceeded) { onLog('[ENGINE] ⛔ Apify quota agotada — abortando.'); break; }
+        batchResults = await this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
+          keyword: querySlots.join('\n'),
+          limit: 40,
+          renderJs: false,
+          superProxy: false,
+        }, onLog, 90_000, 80, 1024);
       } catch (e: unknown) {
         const errMsg = e instanceof Error ? e.message : String(e);
         if (errMsg.startsWith('APIFY_QUOTA_EXCEEDED')) { onLog('[ENGINE] ⛔ Apify quota agotada — abortando.'); break; }
@@ -859,13 +855,14 @@ export class InstagramPersonalBrandEngine {
         continue;
       }
 
-      // Flatten 3 slots into one result list
+      // Each item is a flat result (new actor) OR nested under results[] (scraperlink).
       const allOrganicResults: Record<string, unknown>[] = [];
-      for (const slotResults of perSlotResults) {
-        if (!Array.isArray(slotResults)) continue;
-        for (const item of slotResults as Record<string, unknown>[]) {
-          const subResults = (item.results as Record<string, unknown>[] | undefined) ?? [];
+      for (const item of batchResults as Record<string, unknown>[]) {
+        const subResults = item.results as Record<string, unknown>[] | undefined;
+        if (subResults) {
           allOrganicResults.push(...subResults);
+        } else {
+          allOrganicResults.push(item as Record<string, unknown>);
         }
       }
 

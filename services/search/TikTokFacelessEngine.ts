@@ -1002,7 +1002,12 @@ export class TikTokFacelessEngine {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ keyword: q.query, num: 40 }),
             })
-              .then(r => r.ok ? (r.json() as Promise<unknown[]>) : Promise.resolve([] as unknown[]))
+              .then(async r => {
+                if (r.ok) return r.json() as Promise<unknown[]>;
+                const errText = await r.text().catch(() => '');
+                onLog('[SERPER] ❌ HTTP ' + r.status + ' en Google Search: ' + errText.slice(0, 200));
+                return [] as unknown[];
+              })
               .catch((e: unknown) => {
                 const msg = e instanceof Error ? e.message : String(e);
                 onLog('[SERPER] ❌ Error Google Search: ' + msg);

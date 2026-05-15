@@ -134,6 +134,10 @@ const REGION_MAP: Record<string, string[]> = {
   FR: ['france', 'paris', 'lyon', 'marseille', 'toulouse', 'fr'],
 };
 
+// Google Search Scraper via Apify — supports the complex boolean queries (site:, OR groups, exclusions)
+// that Serper's free plan blocks with "Query pattern not allowed for free accounts."
+const GOOGLE_SEARCH_SCRAPER = 'scraperlink~google-search-results-serp-scraper';
+
 // clockworks~tiktok-profile-scraper — returns 1 item per profile (uniqueId, fans, signature, bioLink).
 // Input: { profiles: ["@handle1", "@handle2"] }
 // Output: profile items handled by MODE A in groupTikTokItemsByProfile (item.uniqueId / item.fans / item.signature).
@@ -990,34 +994,34 @@ export class TikTokFacelessEngine {
       // Per-run result arrays — kept separate before flat() to track which run
       // each handle came from (gymtok vs normal pool).
       let perRunResults: unknown[][];
+      let quotaExceeded = false;
       try {
-        // ── Direct Serper API via /api/serper-proxy (no Apify actor start cost) ──
-        // Each query calls the server-side proxy which hits google.serper.dev directly.
-        // Response format mirrors scraperlink~google-search-results-serp-scraper so the
-        // parser below (item.results[].url / item.results[].description) is unchanged.
+        // ── Apify Google Search scraper — supports complex boolean queries (site:, OR groups, -exclusions)
+        // Serper free plan blocks these patterns; the Apify actor handles them reliably.
         perRunResults = await Promise.all(
           queryBatch.map(q =>
-            fetch('/api/serper-proxy', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ keyword: q.query, num: 40 }),
+            this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
+              keyword: q.query,
+              limit: '40',
+            }, onLog, undefined, 90_000, 80, 1024).catch((e: unknown) => {
+              const msg = e instanceof Error ? e.message : String(e);
+              if (msg.startsWith('APIFY_QUOTA_EXCEEDED')) { quotaExceeded = true; }
+              else { onLog('[APIFY] ❌ Error Google Search: ' + msg); }
+              return [] as unknown[];
             })
-              .then(async r => {
-                if (r.ok) return r.json() as Promise<unknown[]>;
-                const errText = await r.text().catch(() => '');
-                onLog('[SERPER] ❌ HTTP ' + r.status + ' en Google Search: ' + errText.slice(0, 200));
-                return [] as unknown[];
-              })
-              .catch((e: unknown) => {
-                const msg = e instanceof Error ? e.message : String(e);
-                onLog('[SERPER] ❌ Error Google Search: ' + msg);
-                return [] as unknown[];
-              })
           )
         );
+        if (quotaExceeded) {
+          onLog('[ENGINE] ⛔ Apify quota agotada — Abortando inmediatamente.');
+          break;
+        }
         searchResults = perRunResults.flat();
       } catch (e: unknown) {
         const errMsg = e instanceof Error ? e.message : String(e);
+        if (errMsg.startsWith('APIFY_QUOTA_EXCEEDED')) {
+          onLog('[ENGINE] ⛔ Apify quota agotada — ' + errMsg.replace('APIFY_QUOTA_EXCEEDED: ', '') + ' Abortando inmediatamente.');
+          break;
+        }
         onLog('[STEP 1] Google Search error: ' + errMsg);
         consecutiveZeros++;
         if (consecutiveZeros >= MAX_CONSEC_ZEROS) { onLog('[ENGINE] ' + consecutiveZeros + ' consecutive failures — aborting.'); break; }

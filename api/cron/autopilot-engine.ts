@@ -9,8 +9,8 @@ import { createClient, SupabaseClient }       from '@supabase/supabase-js';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 
-// clockworks actor — input: { profiles: ["@handle"] }  ⚠️ apidojo~tiktok-scraper is HTTP 402 (x402 payment) since May 2025
-const TIKTOK_PROFILE_SCRAPER = 'clockworks~tiktok-profile-scraper';
+// scraptik~tiktok-api — input: { profile_username: "handle" } → { user: { unique_id, nickname, signature, bio_url, follower_count } }
+const SCRAPTIK_ACTOR = 'scraptik~tiktok-api';
 const APIFY_BASE             = 'https://api.apify.com/v2';
 
 const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
@@ -602,11 +602,12 @@ async function runTikTokBatch(
 
         let queueProfileItems: unknown[] = [];
         try {
-          queueProfileItems = await runActorSync(
-            TIKTOK_PROFILE_SCRAPER,
-            { profiles: freshHandles.map((h: string) => `@${h}`) },
-            apifyToken, 90, 1024,
+          const queuePerHandleResults = await Promise.allSettled(
+            freshHandles.map((h: string) => runActorSync(SCRAPTIK_ACTOR, { profile_username: h }, apifyToken, 30, 256))
           );
+          queueProfileItems = queuePerHandleResults
+            .filter(r => r.status === 'fulfilled')
+            .flatMap(r => (r as PromiseFulfilledResult<unknown[]>).value);
         } catch (e) {
           // Apify unavailable (e.g. monthly billing limit). These handles were
           // manually curated by the user → skip ICP and process via email search only.
@@ -625,11 +626,12 @@ async function runTikTokBatch(
         for (const item of queueProfileItems) {
           if (result.leadsFound >= targetLeads) break;
           const p           = item as Record<string, unknown>;
-          const handle      = ((p.uniqueId as string) || (p.username as string) || '').toLowerCase().replace(/^@/, '');
-          const bio         = (p.signature as string) || '';
-          const followers   = (p.fans as number) ?? 0;
-          const displayName = (p.nickName as string) || (p.nickname as string) || handle;
-          const rawEmail    = ((p.email as string) || '').toLowerCase().trim();
+          const user        = (p.user as Record<string, unknown>) || p;
+          const handle      = ((user.unique_id as string) || (user.uniqueId as string) || (user.username as string) || '').toLowerCase().replace(/^@/, '');
+          const bio         = (user.signature as string) || '';
+          const followers   = (user.follower_count as number) || (user.fans as number) || 0;
+          const displayName = (user.nickname as string) || (user.nickName as string) || handle;
+          const rawEmail    = ((user.email as string) || '').toLowerCase().trim();
 
           const outcome  = await processProfile(handle, bio, followers, displayName, rawEmail);
           const row      = handleToRow.get(handle);
@@ -645,8 +647,9 @@ async function runTikTokBatch(
         // Handles the actor didn't return (private / deleted) → mark failed_icp
         const returnedHandles = new Set(
           queueProfileItems.map(item => {
-            const p = item as Record<string, unknown>;
-            return ((p.uniqueId as string) || (p.username as string) || '').toLowerCase().replace(/^@/, '');
+            const p    = item as Record<string, unknown>;
+            const user = (p.user as Record<string, unknown>) || p;
+            return ((user.unique_id as string) || (user.uniqueId as string) || (user.username as string) || '').toLowerCase().replace(/^@/, '');
           }),
         );
         for (const row of needsApify) {
@@ -696,33 +699,30 @@ async function runTikTokBatch(
   }
 
   if (!serperFailed && candidateHandles.length > 0) {
-    // ── STEP 4: ONE Apify call for all collected candidates ───────────────────
-    // Previously: 1 Apify actor call per iteration = up to 4 calls per cron run.
-    // Now: gather handles from all Serper pools first, then ONE single actor call.
-    // This matches the Instagram pattern and cuts Apify startup costs by ~75%.
-    // ⚠️ Do NOT use { startUrls: [...] } — apidojo format (HTTP 402 x402)
-    // ⚠️ Do NOT use { usernames: [...] } on clockworks — causes HTTP 400
+    // ── STEP 4: Per-handle scraptik profile lookups (parallel) ─────────────────
+    // scraptik~tiktok-api: one call per handle with { profile_username: "handle" }
     let profileItems: unknown[] = [];
     try {
-      profileItems = await runActorSync(
-        TIKTOK_PROFILE_SCRAPER,
-        { profiles: candidateHandles.map(h => `@${h}`) },
-        apifyToken, 90, 1024,
+      const perHandleResults = await Promise.allSettled(
+        candidateHandles.map(h => runActorSync(SCRAPTIK_ACTOR, { profile_username: h }, apifyToken, 30, 256))
       );
+      profileItems = perHandleResults
+        .filter(r => r.status === 'fulfilled')
+        .flatMap(r => (r as PromiseFulfilledResult<unknown[]>).value);
     } catch (e) {
       result.errors.push(`TikTok profile scraper failed: ${e instanceof Error ? e.message : String(e)}`);
     }
 
     // ── STEP 5: Process profiles ──────────────────────────────────────────────
-    // clockworks returns ONE item per profile.
-    // Output fields: uniqueId/username → handle, fans → followers, signature → bio, nickName → name
+    // scraptik /get-user returns { user: { unique_id, nickname, signature, bio_url, follower_count } }
     const uniqueProfiles = profileItems.map(item => {
-      const p         = item as Record<string, unknown>;
-      const handle    = ((p.uniqueId as string) || (p.username as string) || '').toLowerCase().replace(/^@/, '');
-      const bio       = (p.signature as string) || '';
-      const followers = (p.fans as number) ?? 0;
-      const name      = (p.nickName as string) || (p.nickname as string) || handle;
-      const email     = ((p.email as string) || '').toLowerCase().trim();
+      const p    = item as Record<string, unknown>;
+      const user = (p.user as Record<string, unknown>) || p;
+      const handle    = ((user.unique_id as string) || (user.uniqueId as string) || (user.username as string) || '').toLowerCase().replace(/^@/, '');
+      const bio       = (user.signature as string) || '';
+      const followers = (user.follower_count as number) || (user.fans as number) || 0;
+      const name      = (user.nickname as string) || (user.nickName as string) || handle;
+      const email     = ((user.email as string) || '').toLowerCase().trim();
       return { handle, bio, followers, displayName: name, email };
     }).filter(p => !!p.handle);
 

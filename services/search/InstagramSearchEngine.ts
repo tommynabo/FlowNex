@@ -142,9 +142,9 @@ const REGION_MAP: Record<string, string[]> = {
 // Google Search Scraper — queries `site:instagram.com [keywords]`, extracts handles from URLs
 const GOOGLE_SEARCH_SCRAPER = 'scraperlink~google-search-results-serp-scraper';
 const INSTAGRAM_PROFILE_SCRAPER = 'apify~instagram-profile-scraper';
-// apify~tiktok-profile-scraper returns one profile object per username (not a video feed).
-// clockworks~tiktok-profile-scraper is the active actor (apify~ slug returns 404).
-const TIKTOK_PROFILE_SCRAPER = 'clockworks~tiktok-profile-scraper';
+// scraptik~tiktok-api — profile lookup: input { profile_username: "handle" }
+//   → dataset item: { user: { unique_id, nickname, signature, bio_url, follower_count } }
+const SCRAPTIK_ACTOR = 'scraptik~tiktok-api';
 const INSTAGRAM_POSTS_SCRAPER = 'apify~instagram-scraper';
 
 // TikTok URL path segments that are not profile pages
@@ -851,6 +851,7 @@ export class InstagramSearchEngine {
       (meta.bioLink as string) || '';
     const regionCode = ((p.region as string) || (p.countryCode as string) || (meta.region as string) || '').toUpperCase();
     const username = (
+      (p.unique_id as string) ||
       (p.uniqueId as string) ||
       (p.username as string) ||
       (meta.uniqueId as string) ||
@@ -1147,17 +1148,19 @@ export class InstagramSearchEngine {
       if (ttHandles.length > 0 && icpType === 'faceless_clipper') {
         scrapeJobs.push({
           label: 'TikTok',
-          promise: this.callApifyActor(
-            TIKTOK_PROFILE_SCRAPER,
-            // maxItems:1 — fetch only the profile object, not the video feed
-            { usernames: ttHandles, maxItems: 1 },
-            onLog,
-            1024,
-          ).then(ttProfiles => {
+          promise: Promise.allSettled(
+            ttHandles.map(h => this.callApifyActor(SCRAPTIK_ACTOR, { profile_username: h }, onLog, 256))
+          ).then(results => {
+            const ttProfiles = results
+              .filter(r => r.status === 'fulfilled')
+              .flatMap(r => (r as PromiseFulfilledResult<unknown[]>).value);
+            // scraptik /get-user wraps user data: extract item.user before normalizing
             const normalized = (ttProfiles as Record<string, unknown>[])
-              .map(p => this.normalizeTikTokProfile(p))
-              .filter(p => p.username !== ''); // discard video-feed items with no username
-            // Deduplicate by username (video-feed items can repeat the same profile)
+              .map(item => {
+                const user = (item.user as Record<string, unknown>) || item;
+                return this.normalizeTikTokProfile(user);
+              })
+              .filter(p => p.username !== '');
             const seen = new Set<string>();
             const deduped = normalized.filter(p => {
               if (seen.has(p.username)) return false;

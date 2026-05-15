@@ -138,16 +138,12 @@ const REGION_MAP: Record<string, string[]> = {
 // that Serper's free plan blocks with "Query pattern not allowed for free accounts."
 const GOOGLE_SEARCH_SCRAPER = 'scraperlink~google-search-results-serp-scraper';
 
-// clockworks~tiktok-profile-scraper — returns 1 item per profile (uniqueId, fans, signature, bioLink).
-// Input: { profiles: ["@handle1", "@handle2"] }
-// Output: profile items handled by MODE A in groupTikTokItemsByProfile (item.uniqueId / item.fans / item.signature).
-// ⚠️ Apify actor IDs use ~ as username/name separator (NOT /). Using / generates a 404.
-const TIKTOK_PROFILE_SCRAPER = 'clockworks~tiktok-profile-scraper';
-// clockworks~tiktok-scraper — scrapes TikTok by hashtag (primary discovery mode).
-// Input: { hashtags: ["gymtok"], resultsPerPage: N, maxProfilesPerQuery: M }
-// Output: video items with full authorMeta (fans, signature, bioLink, nickName).
-// Processed by MODE B in groupTikTokItemsByProfile — same pipeline as profile scraper.
-const TIKTOK_SCRAPER = 'clockworks~tiktok-scraper';
+// scraptik~tiktok-api — unified TikTok API actor ($0.001/request, ~50× cheaper).
+// Hashtag search: input { searchPosts_keyword: "hashtag", searchPosts_count: 30 }
+//   → dataset item: { search_item_list: [{ aweme_info: { author: { unique_id, follower_count }, desc } }] }
+// Profile lookup: input { profile_username: "handle" }
+//   → dataset item: { user: { unique_id, nickname, signature, bio_url, follower_count, aweme_count, total_favorited } }
+const SCRAPTIK_ACTOR = 'scraptik~tiktok-api';
 
 // Anti-ICP negative keywords — only the 5 most critical terms.
 // Shorter queries avoid Google truncation that caused empty results.
@@ -966,10 +962,9 @@ export class TikTokFacelessEngine {
     while (accepted.length < targetCount && this.isRunning && attempt < MAX_RETRIES) {
       attempt++;
       const needed = targetCount - accepted.length;
-      // ── STEP 1: TikTok Hashtag Discovery ──────────────────────────────────────
-      // Replaces Google Search — Google no longer reliably indexes TikTok bio text.
-      // clockworks~tiktok-scraper scrapes TikTok directly: real creator data, no Google dependency.
-      // 3 hashtags from FITNESS_HASHTAG_POOL per attempt (rotating by attempt number).
+      // ── STEP 1: TikTok Hashtag Discovery via scraptik~tiktok-api ─────────────
+      // 3 searchPosts_keyword calls (one per hashtag) replace the old single
+      // clockworks batch call. Response: { search_item_list: [{ aweme_info: { author, desc } }] }
       const hashtagOffset = (attempt - 1) % FITNESS_HASHTAG_POOL.length;
       const selectedHashtags = [
         FITNESS_HASHTAG_POOL[hashtagOffset % FITNESS_HASHTAG_POOL.length],
@@ -980,52 +975,48 @@ export class TikTokFacelessEngine {
       onLog('━━━ ATTEMPT ' + attempt + '/' + MAX_RETRIES + ' ━━━  ' + needed + ' lead(s) still needed');
       onLog('🔎 STEP 1/4 — TikTok Hashtag Discovery (#' + selectedHashtags.join(' #') + ')...');
 
-      let hashtagItems: unknown[] = [];
-      try {
-        hashtagItems = await this.callApifyActor(
-          TIKTOK_SCRAPER,
-          {
-            hashtags: selectedHashtags,
-            resultsPerPage: 30,
-            maxProfilesPerQuery: 10,
-            shouldDownloadVideos: false,
-            shouldDownloadCovers: false,
-            shouldDownloadSubtitles: false,
-            shouldDownloadSlideshowImages: false,
-            shouldDownloadAvatars: false,
-            shouldDownloadMusicCovers: false,
-          },
-          onLog,
-          undefined,
-          120_000, // 2-min client-side timeout
-          180,     // 3-min server-side timeout (multiple hashtags, ~30 results each)
-          2048,    // 2 GB RAM
-        );
-      } catch (e: unknown) {
-        const errMsg = e instanceof Error ? e.message : String(e);
-        if (errMsg.startsWith('APIFY_QUOTA_EXCEEDED')) {
-          onLog('[ENGINE] ⛔ Apify quota agotada — Abortando inmediatamente.');
-          break;
-        }
-        onLog('[TT-HASHTAG] ❌ Error: ' + errMsg);
-        consecutiveZeros++;
-        if (consecutiveZeros >= MAX_CONSEC_ZEROS) { onLog('[ENGINE] ' + MAX_CONSEC_ZEROS + ' consecutive failures — aborting.'); break; }
-        continue;
-      }
-
-      // Extract unique, novel handles + build fans map for follower-range pre-filter
+      const videoDataByHandle = new Map<string, { thumbnailUrl: string; desc: string }[]>();
       const fansByHandle = new Map<string, number>();
       const seenRaw = new Set<string>();
       const rawHandles: string[] = [];
-      for (const item of hashtagItems as Record<string, unknown>[]) {
-        const meta = item.authorMeta as Record<string, unknown> | undefined;
-        if (!meta) continue;
-        const handle = ((meta.name as string) || '').toLowerCase().replace(/^@/, '').trim();
-        if (!handle || TIKTOK_SKIP_HANDLES.has(handle) || seenHandles.has(handle) || seenRaw.has(handle)) continue;
-        seenRaw.add(handle);
-        rawHandles.push(handle);
-        if (!fansByHandle.has(handle)) fansByHandle.set(handle, (meta.fans as number) || 0);
+      let quotaExceeded = false;
+      for (const hashtag of selectedHashtags) {
+        if (!this.isRunning || quotaExceeded) break;
+        try {
+          const pages = await this.callApifyActor(
+            SCRAPTIK_ACTOR,
+            { searchPosts_keyword: hashtag, searchPosts_count: 30 },
+            onLog,
+            undefined, 60_000, 60, 256,
+          );
+          for (const page of pages as Record<string, unknown>[]) {
+            const searchList = Array.isArray(page.search_item_list)
+              ? page.search_item_list as Record<string, unknown>[]
+              : [];
+            for (const si of searchList) {
+              const aweme  = (si.aweme_info as Record<string, unknown>) || {};
+              const author = (aweme.author  as Record<string, unknown>) || {};
+              const handle = ((author.unique_id as string) || '').toLowerCase().replace(/^@/, '').trim();
+              if (!handle || TIKTOK_SKIP_HANDLES.has(handle) || seenHandles.has(handle) || seenRaw.has(handle)) continue;
+              seenRaw.add(handle);
+              rawHandles.push(handle);
+              fansByHandle.set(handle, (author.follower_count as number) || 0);
+              if (!videoDataByHandle.has(handle)) videoDataByHandle.set(handle, []);
+              const vids = videoDataByHandle.get(handle)!;
+              if (vids.length < 3) vids.push({ thumbnailUrl: '', desc: (aweme.desc as string) || '' });
+            }
+          }
+        } catch (e: unknown) {
+          const errMsg = e instanceof Error ? e.message : String(e);
+          if (errMsg.startsWith('APIFY_QUOTA_EXCEEDED')) {
+            onLog('[ENGINE] ⛔ Apify quota agotada — Abortando inmediatamente.');
+            quotaExceeded = true;
+          } else {
+            onLog('[TT-HASHTAG] ❌ Error en #' + hashtag + ': ' + errMsg);
+          }
+        }
       }
+      if (quotaExceeded) break;
 
       // Follower-range pre-filter using authorMeta.fans (real data — no Google snippet guessing)
       let snippetFiltered = 0;
@@ -1039,7 +1030,7 @@ export class TikTokFacelessEngine {
         onLog(`[PRE-FILTER] ${snippetFiltered} profiles fuera del rango de seguidores (authorMeta.fans)`);
       }
 
-      onLog('🔎 STEP 1/4 ✓ — ' + hashtagItems.length + ' videos → ' + novelHandles.length + ' handles TikTok nuevos');
+      onLog('🔎 STEP 1/4 ✓ — ' + rawHandles.length + ' handles TikTok nuevos (de ' + selectedHashtags.length + ' hashtags)');
 
       if (!novelHandles.length) {
         onLog('⚠ Sin handles TikTok nuevos — rotando hashtags...');
@@ -1051,23 +1042,41 @@ export class TikTokFacelessEngine {
       for (const h of novelHandles) seenHandles.add(h);
       consecutiveZeros = 0;
 
-      // ── STEP 2: Build normalized profiles from hashtag scraper data ───────────
-      // clockworks~tiktok-scraper returns full authorMeta (fans, signature, bioLink, nickName).
-      // groupTikTokItemsByProfile handles these via MODE B — no separate profile scrape needed.
-      // Each video item contains what STEP 3+ needs; _latestVideos is populated from videoMeta.
+      // ── STEP 2: Fetch full profiles via scraptik profile_username ─────────────
+      // scraptik /get-user returns: { user: { unique_id, nickname, signature, bio_url,
+      //   follower_count, aweme_count, total_favorited } }
+      // Parallel calls per handle — Promise.allSettled so one failure doesn't drop the rest.
       const MAX_TT_BATCH = Math.min(20, novelHandles.length);
       const ttBatch = novelHandles.slice(0, MAX_TT_BATCH);
-      const ttBatchSet = new Set(ttBatch);
-      const ttBatchItems = (hashtagItems as Record<string, unknown>[]).filter(item => {
-        const meta = item.authorMeta as Record<string, unknown> | undefined;
-        if (!meta) return false;
-        const h = ((meta.name as string) || '').toLowerCase().replace(/^@/, '').trim();
-        return ttBatchSet.has(h);
+      onLog('👤 STEP 2/4 — Fetching ' + ttBatch.length + ' profiles via scraptik...');
+      const noLog: LogCallback = () => {};
+      const profileResults = await Promise.allSettled(
+        ttBatch.map(h => this.callApifyActor(SCRAPTIK_ACTOR, { profile_username: h }, noLog, undefined, 30_000, 30, 256))
+      );
+      const normalizedProfiles = profileResults.flatMap((r, i) => {
+        if (r.status !== 'fulfilled') return [];
+        const items = r.value as Record<string, unknown>[];
+        if (!items[0]) return [];
+        const user = (items[0].user as Record<string, unknown>) || {};
+        if (!user.unique_id) return [];
+        const bio = (user.signature as string) || '';
+        return [{
+          username:       ((user.unique_id as string) || '').toLowerCase().replace(/^@/, '').trim(),
+          followersCount: (user.follower_count as number) || fansByHandle.get(ttBatch[i]) || 0,
+          heartCount:     (user.total_favorited as number) || 0,
+          videoCount:     (user.aweme_count as number) || 0,
+          biography:      bio,
+          rawBio:         bio,
+          fullName:       (user.nickname as string) || '',
+          externalUrl:    (user.bio_url as string) || '',
+          publicEmail:    '',
+          countryCode:    '',
+          country:        '',
+          __platform:     'tiktok' as const,
+          _latestVideos:  videoDataByHandle.get(ttBatch[i]) || [],
+        }];
       });
-      const usedSnippetFallback = false;
-      onLog('👤 STEP 2/4 — Building profiles from hashtag data (' + ttBatch.length + ' handles, ' + ttBatchItems.length + ' items)...');
-      let normalizedProfiles = this.groupTikTokItemsByProfile(ttBatchItems);
-      onLog('👤 STEP 2/4 ✓ — ' + ttBatchItems.length + ' raw items → ' + normalizedProfiles.length + ' unique profiles');
+      onLog('👤 STEP 2/4 ✓ — ' + profileResults.filter(r => r.status === 'fulfilled').length + ' fetched → ' + normalizedProfiles.length + ' profiles con bio');
 
       // ── STEP 3: Hard ICP filter ──────────────────────────────────────────────
       onLog('🔍 STEP 3/4 — Applying hard ICP filters (' + normalizedProfiles.length + ' profiles)...');
@@ -1212,7 +1221,7 @@ export class TikTokFacelessEngine {
 
       onLog('🤖 STEP 4a — Filtro IA para ' + needsAIVerification.length + ' candidatos (verificando ICP faceless)...');
       const softFiltered = needsAIVerification.length > 0
-        ? await icpEvaluator.applySoftFilter(needsAIVerification, onLog, 'faceless_clipper', usedSnippetFallback ? 85 : 75)
+        ? await icpEvaluator.applySoftFilter(needsAIVerification, onLog, 'faceless_clipper', 75)
         : [];
       const aiVerified = softFiltered.filter(l => l.icp_verified === true);
       const icpVerified = [...tier1PreVerified, ...a6AutoVerified, ...aiVerified];

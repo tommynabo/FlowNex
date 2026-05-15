@@ -26,12 +26,13 @@ interface SetterDashboardProps {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const INTENT_LABELS: Record<IntentType, { label: string; color: string }> = {
-  interested:     { label: 'Interesado',      color: 'text-green-400 bg-green-400/10 border-green-400/20' },
-  objection:      { label: 'Objeción',         color: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/20' },
-  question:       { label: 'Pregunta',         color: 'text-blue-400 bg-blue-400/10 border-blue-400/20' },
-  not_interested: { label: 'No interesado',    color: 'text-red-400 bg-red-400/10 border-red-400/20' },
-  unsubscribe:    { label: 'Baja',             color: 'text-zinc-400 bg-zinc-400/10 border-zinc-400/20' },
-  unknown:        { label: 'Desconocido',      color: 'text-zinc-500 bg-zinc-500/10 border-zinc-500/20' },
+  interested:      { label: 'Interesado',       color: 'text-green-400 bg-green-400/10 border-green-400/20' },
+  objection:       { label: 'Objeción',          color: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/20' },
+  question:        { label: 'Pregunta',          color: 'text-blue-400 bg-blue-400/10 border-blue-400/20' },
+  not_interested:  { label: 'No interesado',     color: 'text-red-400 bg-red-400/10 border-red-400/20' },
+  unsubscribe:     { label: 'Baja',              color: 'text-zinc-400 bg-zinc-400/10 border-zinc-400/20' },
+  form_submitted:  { label: 'Form enviado',      color: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20' },
+  unknown:         { label: 'Desconocido',       color: 'text-zinc-500 bg-zinc-500/10 border-zinc-500/20' },
 };
 
 const STATUS_LABELS: Record<SetterStatus, { label: string; color: string }> = {

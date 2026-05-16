@@ -660,34 +660,73 @@ async function runTikTokBatch(
     }
   }
 
-  // ── STEP 1-3: Collect TikTok handles via scraptik hashtag search ─────────────
-  // Direct TikTok hashtag discovery via scraptik~tiktok-api searchPosts_keyword.
-  // Uses FITNESS_HASHTAG_POOL (mirrors TikTokFacelessEngine) — ordered by ICP yield.
-  // Sequential rotation: offset advances every 10 min (cron interval), matching the
-  // manual engine's (attempt-1) % pool.length strategy. Never random — avoids
-  // repeatedly hitting the same low-yield hashtags across consecutive runs.
-  const TARGET_CANDIDATES_TT = Math.min(batchSize * 3, targetLeads - result.leadsFound + 10);
-  const candidateHandles: string[] = [];
-  // Deterministic rotation aligned to the 10-min cron schedule.
-  // Math.floor(Date.now() / 600_000) increments by 1 every 10 minutes → cycles through
-  // all 16 hashtags in ~160 min, then repeats. Three consecutive hashtags per run.
+  // ── STEP 1-3: Collect TikTok candidate profiles via scraptik hashtag search ──
+  // scraptik~tiktok-api searchPosts_keyword returns individual video posts.
+  // Each Apify dataset item is a flat post object — the author's profile data
+  // (handle, followers, bio) is embedded directly, so NO separate profile-lookup
+  // call is needed. Three formats are handled for robustness:
+  //   A) authorMeta.name / .fans / .signature   — most actors (incl. scraptik search)
+  //   B) author.uniqueId / .stats.followerCount  — scraptik raw TikTok API mode
+  //   C) search_item_list[].aweme_info.author    — legacy raw TikTok API page
+  type CandidateProfile = { handle: string; bio: string; followers: number; displayName: string };
+  const candidateProfiles: CandidateProfile[] = [];
+  // Deterministic time-based rotation: advances 1 slot every 10 min → cycles all
+  // 16 hashtags in ~160 min. Three consecutive hashtags per run.
   const hashtagOffset = Math.floor(Date.now() / 600_000) % FITNESS_HASHTAG_POOL.length;
 
-  for (let iteration = 0; iteration < 3 && candidateHandles.length < TARGET_CANDIDATES_TT && result.leadsFound < targetLeads; iteration++) {
+  for (let iteration = 0; iteration < 3 && candidateProfiles.length < 90 && result.leadsFound < targetLeads; iteration++) {
     const hashtag = FITNESS_HASHTAG_POOL[(hashtagOffset + iteration) % FITNESS_HASHTAG_POOL.length];
     try {
       const items = await runActorSync(SCRAPTIK_ACTOR, { searchPosts_keyword: hashtag, searchPosts_count: 30 }, apifyToken, 60, 256);
       for (const item of items) {
         const p = item as Record<string, unknown>;
-        const searchList = Array.isArray(p.search_item_list) ? p.search_item_list as Record<string, unknown>[] : [];
-        for (const si of searchList) {
-          const aweme  = (si.aweme_info as Record<string, unknown>) || {};
-          const author = (aweme.author  as Record<string, unknown>) || {};
-          const handle = ((author.unique_id as string) || '').toLowerCase().replace(/^@/, '').trim();
-          if (handle && !TIKTOK_SKIP_HANDLES.has(handle) && !seenHandles.has(handle) && !candidateHandles.includes(handle)) {
-            candidateHandles.push(handle);
+
+        let handle = '', bio = '', displayName = '';
+        let followers = 0;
+
+        // Format A: flat post with authorMeta (Apify-processed, most common)
+        const authorMeta = (p.authorMeta as Record<string, unknown>) || {};
+        if (authorMeta.name) {
+          handle      = ((authorMeta.name      as string) || '').toLowerCase().replace(/^@/, '').trim();
+          bio         = (authorMeta.signature  as string) || '';
+          followers   = (authorMeta.fans       as number) || 0;
+          displayName = (authorMeta.nickName   as string) || handle;
+        }
+
+        // Format B: scraptik raw TikTok API (author.uniqueId)
+        if (!handle) {
+          const author = (p.author as Record<string, unknown>) || {};
+          const rawId  = ((author.uniqueId as string) || (author.unique_id as string) || '').trim();
+          if (rawId) {
+            handle      = rawId.toLowerCase().replace(/^@/, '');
+            bio         = (author.signature as string) || '';
+            const stats = (author.stats as Record<string, unknown>) || {};
+            followers   = (stats.followerCount  as number) || (author.follower_count as number) || 0;
+            displayName = (author.nickname      as string) || (author.nickName as string) || handle;
           }
         }
+
+        // Format C: raw TikTok API search page (search_item_list) — legacy scraptik
+        if (!handle && Array.isArray(p.search_item_list)) {
+          for (const si of (p.search_item_list as Record<string, unknown>[])) {
+            const aweme = (si.aweme_info as Record<string, unknown>) || {};
+            const auth  = (aweme.author   as Record<string, unknown>) || {};
+            const h     = ((auth.unique_id as string) || '').toLowerCase().replace(/^@/, '').trim();
+            if (h && !TIKTOK_SKIP_HANDLES.has(h) && !seenHandles.has(h) && !candidateProfiles.some(c => c.handle === h)) {
+              const stats = (aweme.statistics as Record<string, unknown>) || {};
+              candidateProfiles.push({
+                handle: h,
+                bio: (auth.signature as string) || '',
+                followers: (auth.follower_count as number) || (stats.followerCount as number) || 0,
+                displayName: (auth.nickname as string) || h,
+              });
+            }
+          }
+          continue;
+        }
+
+        if (!handle || TIKTOK_SKIP_HANDLES.has(handle) || seenHandles.has(handle) || candidateProfiles.some(c => c.handle === handle)) continue;
+        candidateProfiles.push({ handle, bio, followers, displayName });
       }
     } catch (e) {
       result.errors.push(`TikTok hashtag discovery failed (iter ${iteration + 1}, #${hashtag}): ${e instanceof Error ? e.message : String(e)}`);
@@ -695,41 +734,19 @@ async function runTikTokBatch(
     }
   }
 
-  if (candidateHandles.length === 0 && result.errors.length === 0) {
-    result.warnings.push(`No TikTok handles found — hashtags #${FITNESS_HASHTAG_POOL[hashtagOffset % FITNESS_HASHTAG_POOL.length]} / #${FITNESS_HASHTAG_POOL[(hashtagOffset + 1) % FITNESS_HASHTAG_POOL.length]} / #${FITNESS_HASHTAG_POOL[(hashtagOffset + 2) % FITNESS_HASHTAG_POOL.length]} returned no new results`);
+  if (candidateProfiles.length === 0 && result.errors.length === 0) {
+    result.warnings.push(`No TikTok handles found — hashtags #${FITNESS_HASHTAG_POOL[hashtagOffset % FITNESS_HASHTAG_POOL.length]} / #${FITNESS_HASHTAG_POOL[(hashtagOffset + 1) % FITNESS_HASHTAG_POOL.length]} / #${FITNESS_HASHTAG_POOL[(hashtagOffset + 2) % FITNESS_HASHTAG_POOL.length]} returned no results`);
   }
 
-  if (candidateHandles.length > 0) {
-    // ── STEP 4: Per-handle scraptik profile lookups (parallel) ─────────────────
-    // scraptik~tiktok-api: one call per handle with { profile_username: "handle" }
-    let profileItems: unknown[] = [];
-    try {
-      const perHandleResults = await Promise.allSettled(
-        candidateHandles.map(h => runActorSync(SCRAPTIK_ACTOR, { profile_username: h }, apifyToken, 30, 256))
-      );
-      profileItems = perHandleResults
-        .filter(r => r.status === 'fulfilled')
-        .flatMap(r => (r as PromiseFulfilledResult<unknown[]>).value);
-    } catch (e) {
-      result.errors.push(`TikTok profile scraper failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-
-    // ── STEP 5: Process profiles ──────────────────────────────────────────────
-    // scraptik /get-user returns { user: { unique_id, nickname, signature, bio_url, follower_count } }
-    const uniqueProfiles = profileItems.map(item => {
-      const p    = item as Record<string, unknown>;
-      const user = (p.user as Record<string, unknown>) || p;
-      const handle    = ((user.unique_id as string) || (user.uniqueId as string) || (user.username as string) || '').toLowerCase().replace(/^@/, '');
-      const bio       = (user.signature as string) || '';
-      const followers = (user.follower_count as number) || (user.fans as number) || 0;
-      const name      = (user.nickname as string) || (user.nickName as string) || handle;
-      const email     = ((user.email as string) || '').toLowerCase().trim();
-      return { handle, bio, followers, displayName: name, email };
-    }).filter(p => !!p.handle);
-
-    for (const { handle, bio, followers, displayName, email } of uniqueProfiles) {
+  // ── STEP 4+5: ICP filter + email discovery ────────────────────────────────
+  // Profile data (followers, bio) is already embedded in the search results above.
+  // No separate per-handle Apify profile call needed — saves credits + ~30s latency
+  // per candidate. processProfile applies ICP hard filter, email discovery, DB insert
+  // and Instantly enqueue all in one step.
+  if (candidateProfiles.length > 0) {
+    for (const { handle, bio, followers, displayName } of candidateProfiles) {
       if (result.leadsFound >= targetLeads) break;
-      const outcome = await processProfile(handle, bio, followers, displayName, email);
+      const outcome = await processProfile(handle, bio, followers, displayName, '');
       if (outcome === 'duplicate') result.skippedDuplicate++;
     }
   } else if (result.errors.length === 0) {

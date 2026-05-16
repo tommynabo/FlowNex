@@ -311,7 +311,9 @@ Reglas para confidence_score:
 - 50-69: Intención ambigua o situación no cubierta por el FAQ
 - < 50: Mensaje muy difícil de interpretar o potencialmente hostil
 
-El campo "draft" debe estar listo para enviarse tal cual. Sin placeholders, sin corchetes.`;
+El campo "draft" debe estar listo para enviarse tal cual. Sin placeholders, sin corchetes.
+
+FORMATO OBLIGATORIO DEL DRAFT: Escribe cada frase o idea como su propio párrafo, separado por \n\n. NUNCA agrupes 2 o más frases en el mismo bloque de texto. Una frase = un párrafo. Este formato es obligatorio — mejora la legibilidad y la tasa de respuesta.`;
 
   // ── 7. Call OpenAI ────────────────────────────────────────────────────────
   const openaiKey = process.env.OPENAI_API_KEY;

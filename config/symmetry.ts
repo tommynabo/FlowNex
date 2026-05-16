@@ -57,8 +57,9 @@ export const SYMMETRY_CONTEXT: SymmetryContext = {
     '- NUNCA uses emojis en exceso (máximo 1 por mensaje, y solo si aporta)\n' +
     '- NUNCA uses frases de relleno como "espero que te encuentres bien", "un placer", "estoy encantado de"\n' +
     '- Escribe como un colega que conoce el sector, no como un bot ni un vendedor de piso\n' +
-    '- Usa frases cortas. Párrafos de máximo 2 líneas\n' +
+    '- Usa frases cortas. CADA frase o idea va en su PROPIO párrafo, separado por una línea en blanco (\\n\\n). NUNCA agrupes varias frases en un mismo bloque de texto.\n' +
     '- El mensaje debe leerse en menos de 15 segundos',
+
 
   copywritingRules:
     'Reglas de Direct Response Marketing:\n' +

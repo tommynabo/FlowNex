@@ -10,8 +10,22 @@ import { createClient, SupabaseClient }       from '@supabase/supabase-js';
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 
 // scraptik~tiktok-api — input: { profile_username: "handle" } → { user: { unique_id, nickname, signature, bio_url, follower_count } }
+// scraptik~tiktok-api (hashtag mode) — input: { searchPosts_keyword: "hashtag", searchPosts_count: 30 } → [{ search_item_list: [{ aweme_info: { author: { unique_id, follower_count } } }] }]
 const SCRAPTIK_ACTOR = 'scraptik~tiktok-api';
+// scraperlink~google-search-results-serp-scraper — input: { keyword, limit } → [{ results: [{ url, title, description }] }]
+const GOOGLE_SEARCH_SCRAPER  = 'scraperlink~google-search-results-serp-scraper';
 const APIFY_BASE             = 'https://api.apify.com/v2';
+
+// TikTok hashtag pool for faceless-clipper autopilot discovery.
+// Used by scraptik searchPosts_keyword instead of Serper/Google (free Serper blocks site: operator).
+const FACELESS_CLIPPER_HASHTAG_POOL: string[] = [
+  'gymclips', 'motivation', 'discipline', 'noface', 'clipping',
+  'gymtok', 'hustle', 'goggins', 'hormozi', 'mindset',
+  'selfimprovement', 'gains', 'physique', 'transformation', 'fitnessmotivation',
+  'gymmotivation', 'hardwork', 'noexcuses', 'bestversion', 'sidehustle',
+  'makemoney', 'onlinebusiness', 'financialfreedom', 'dailymotivation', 'grind',
+  'skool', 'slideshow', 'dmforpromo', 'editor', 'clips',
+];
 
 const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
   ['"gmail.com"', '"clipper"', '"editor"', '"edits"', '"daily clips"', '"dm for promo"'],
@@ -241,6 +255,24 @@ async function serperGoogleSearch(query: string, apiKey: string, page = 1): Prom
   }
   const data = await res.json() as { organic?: Array<{ link?: string }> };
   return (data.organic ?? []).filter(r => r.link).map(r => ({ link: r.link! }));
+}
+
+// ─── APIFY GOOGLE SEARCH ────────────────────────────────────────────────────
+// Uses scraperlink~google-search-results-serp-scraper instead of Serper.
+// Supports site: operator queries — no free-tier restrictions.
+async function apifyGoogleSearch(query: string, apifyToken: string, limit = 20): Promise<Array<{ link: string }>> {
+  const items = await runActorSync(GOOGLE_SEARCH_SCRAPER, { keyword: query, limit }, apifyToken, 45, 1024);
+  const links: Array<{ link: string }> = [];
+  for (const item of items) {
+    const p = item as Record<string, unknown>;
+    const subResults = p.results as Array<Record<string, unknown>> | undefined;
+    const resultsList = subResults ?? [p];
+    for (const r of resultsList) {
+      const url = (r.url as string) || (r.link as string) || '';
+      if (url) links.push({ link: url });
+    }
+  }
+  return links;
 }
 
 // ─── APIFY HELPERS ────────────────────────────────────────────────────────────
@@ -666,39 +698,38 @@ async function runTikTokBatch(
     }
   }
 
-  // ── STEP 1-3: Collect TikTok handles via Google Search ─────────────────────
-  // Rotate up to 4 keyword pools to gather enough unique candidate handles.
-  // Cap Serper at 2 pages per pool (was 5): 2 pages × 20 results = 40 URLs is
-  // sufficient to extract batchSize*3 unique TikTok handles. Extra pages add
-  // cost without meaningful yield at this search volume.
+  // ── STEP 1-3: Collect TikTok handles via scraptik hashtag search ─────────────
+  // Direct TikTok hashtag discovery via scraptik~tiktok-api searchPosts_keyword.
+  // Replaces the previous Serper/Google approach: free Serper blocks site:tiktok.com
+  // operator queries. Scraptik is already in active use and has no such restriction.
+  // Rotate 3 hashtags per batch from the pool to maximize unique handle coverage.
   const TARGET_CANDIDATES_TT = Math.min(batchSize * 3, targetLeads - result.leadsFound + 10);
   const candidateHandles: string[] = [];
-  const baseOffset = Math.floor(Math.random() * FACELESS_CLIPPER_KEYWORD_POOLS.length);
-  let serperFailed = false;
+  const hashtagOffset = Math.floor(Math.random() * FACELESS_CLIPPER_HASHTAG_POOL.length);
 
-  for (let iteration = 0; iteration < 4 && candidateHandles.length < TARGET_CANDIDATES_TT && result.leadsFound < targetLeads; iteration++) {
-    const attemptOffset = (baseOffset + iteration) % FACELESS_CLIPPER_KEYWORD_POOLS.length;
-    for (let serperPage = 1; serperPage <= 2 && candidateHandles.length < TARGET_CANDIDATES_TT; serperPage++) {
-      let pageResults: Array<{ link: string }> = [];
-      try {
-        pageResults = await serperGoogleSearch(buildSearchQuery(attemptOffset, regions), serperKey, serperPage);
-      } catch (e) {
-        result.errors.push(`Google Search failed (pool ${iteration + 1}, page ${serperPage}): ${e instanceof Error ? e.message : String(e)}`);
-        serperFailed = true;
-        break;
+  for (let iteration = 0; iteration < 3 && candidateHandles.length < TARGET_CANDIDATES_TT && result.leadsFound < targetLeads; iteration++) {
+    const hashtag = FACELESS_CLIPPER_HASHTAG_POOL[(hashtagOffset + iteration) % FACELESS_CLIPPER_HASHTAG_POOL.length];
+    try {
+      const items = await runActorSync(SCRAPTIK_ACTOR, { searchPosts_keyword: hashtag, searchPosts_count: 30 }, apifyToken, 60, 256);
+      for (const item of items) {
+        const p = item as Record<string, unknown>;
+        const searchList = Array.isArray(p.search_item_list) ? p.search_item_list as Record<string, unknown>[] : [];
+        for (const si of searchList) {
+          const aweme  = (si.aweme_info as Record<string, unknown>) || {};
+          const author = (aweme.author  as Record<string, unknown>) || {};
+          const handle = ((author.unique_id as string) || '').toLowerCase().replace(/^@/, '').trim();
+          if (handle && !TIKTOK_SKIP_HANDLES.has(handle) && !seenHandles.has(handle) && !candidateHandles.includes(handle)) {
+            candidateHandles.push(handle);
+          }
+        }
       }
-      if (pageResults.length === 0) break;
-      for (const item of pageResults) {
-        const url = item.link ?? '';
-        if (!url.includes('tiktok.com')) continue;
-        const handle = extractHandleFromUrl(url);
-        if (handle && !seenHandles.has(handle) && !candidateHandles.includes(handle)) candidateHandles.push(handle);
-      }
+    } catch (e) {
+      result.errors.push(`TikTok hashtag discovery failed (iter ${iteration + 1}, #${hashtag}): ${e instanceof Error ? e.message : String(e)}`);
+      break;
     }
-    if (serperFailed) break;
   }
 
-  if (!serperFailed && candidateHandles.length > 0) {
+  if (candidateHandles.length > 0) {
     // ── STEP 4: Per-handle scraptik profile lookups (parallel) ─────────────────
     // scraptik~tiktok-api: one call per handle with { profile_username: "handle" }
     let profileItems: unknown[] = [];
@@ -731,8 +762,8 @@ async function runTikTokBatch(
       const outcome = await processProfile(handle, bio, followers, displayName, email);
       if (outcome === 'duplicate') result.skippedDuplicate++;
     }
-  } else if (!serperFailed) {
-    result.warnings.push('No TikTok handles found in Google Search results — all pools exhausted or filtered');
+  } else if (result.errors.length === 0) {
+    result.warnings.push('No TikTok handles found via hashtag discovery — all pools exhausted or filtered');
   }
 
   return result;
@@ -846,30 +877,23 @@ async function runInstagramBatch(
 
     const query = buildInstagramSearchQuery(attemptOffset);
     const candidateHandles: string[] = [];
-    let serperFailed = false;
-    // Accumulate at least batchSize*3 candidate handles before handing off to Apify.
-    // With a ~20-25% hit-rate inside the follower window we need ~15 candidates
-    // to reliably produce 3-5 qualified leads per run.
-    const TARGET_CANDIDATES_IG = batchSize * 3;
-    for (let serperPage = 1; serperPage <= 5 && candidateHandles.length < TARGET_CANDIDATES_IG; serperPage++) {
-      let pageResults: Array<{ link: string }> = [];
-      try {
-        pageResults = await serperGoogleSearch(query, serperKey, serperPage);
-      } catch (e) {
-        result.errors.push(`Google Search failed (iter ${iteration + 1}, page ${serperPage}): ${e instanceof Error ? e.message : String(e)}`);
-        serperFailed = true;
-        break;
-      }
-      if (pageResults.length === 0) break; // no more results from Serper
-      for (const item of pageResults) {
+    // Fetch Instagram handles via Apify Google Search scraper.
+    // scraperlink~google-search-results-serp-scraper supports site: operator — unlike free Serper.
+    let searchFailed = false;
+    try {
+      const searchResults = await apifyGoogleSearch(query, apifyToken, 40);
+      for (const item of searchResults) {
         const url = item.link ?? '';
         if (!url.includes('instagram.com')) continue;
         const h = extractHandleFromInstagramUrl(url);
         if (h && !seenHandles.has(h) && !candidateHandles.includes(h)) candidateHandles.push(h);
       }
+    } catch (e) {
+      result.errors.push(`Google Search failed (iter ${iteration + 1}): ${e instanceof Error ? e.message : String(e)}`);
+      searchFailed = true;
     }
 
-    if (serperFailed) break;
+    if (searchFailed) break;
     if (candidateHandles.length === 0) {
       result.errors.push(`No new Instagram handles found (iter ${iteration + 1}) — all pages exhausted`);
       continue; // try a different keyword pool next iteration
@@ -999,6 +1023,14 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
   // Supabase
   let supabase: SupabaseClient;
   try { supabase = getSupabase(); } catch (e) { return res.status(500).json({ error: (e as Error).message }); }
+
+  // ── Cleanup: mark stale 'running' runs as error ────────────────────────────
+  // Orphaned runs (cron crash / Vercel cold-start timeout) stuck in 'running'
+  // for >30 min are auto-closed so the UI never shows ghost in-progress entries.
+  await supabase.from('autopilot_runs')
+    .update({ status: 'error', finished_at: new Date().toISOString(), error_message: 'Run timed out — auto-closed by cleanup' })
+    .eq('status', 'running')
+    .lt('started_at', new Date(Date.now() - 30 * 60_000).toISOString());
 
   // Load campaigns
   const { data: campaigns, error: dbErr } = await supabase

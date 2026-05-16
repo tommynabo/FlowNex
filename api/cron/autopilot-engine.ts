@@ -17,35 +17,14 @@ const GOOGLE_SEARCH_SCRAPER  = 'scraperlink~google-search-results-serp-scraper';
 const APIFY_BASE             = 'https://api.apify.com/v2';
 
 // TikTok hashtag pool for faceless-clipper autopilot discovery.
-// Used by scraptik searchPosts_keyword instead of Serper/Google (free Serper blocks site: operator).
-const FACELESS_CLIPPER_HASHTAG_POOL: string[] = [
-  'gymclips', 'motivation', 'discipline', 'noface', 'clipping',
-  'gymtok', 'hustle', 'goggins', 'hormozi', 'mindset',
-  'selfimprovement', 'gains', 'physique', 'transformation', 'fitnessmotivation',
-  'gymmotivation', 'hardwork', 'noexcuses', 'bestversion', 'sidehustle',
-  'makemoney', 'onlinebusiness', 'financialfreedom', 'dailymotivation', 'grind',
-  'skool', 'slideshow', 'dmforpromo', 'editor', 'clips',
-];
-
-const FACELESS_CLIPPER_KEYWORD_POOLS: string[][] = [
-  ['"gmail.com"', '"clipper"', '"editor"', '"edits"', '"daily clips"', '"dm for promo"'],
-  ['"gmail.com"', '"no excuses"', '"best version"', '"discipline"', '"slideshow"', '"no face"'],
-  ['"gmail.com"', '"hormozi"', '"iman gadzhi"', '"david goggins"', '"tate"', '"goggins"'],
-  ['"gmail.com"', '"smma"', '"skool"', '"wop"', '"online business"', '"make money online"'],
-  ['"business inquiries"', '"for business"', '"for collabs"', '"clips"', '"motivation"', '"mindset"'],
-  ['"dm for promo"', '"dm for promos"', '"dm for rates"', '"hustle"', '"grind"', '"discipline"'],
-  ['"payhip.com"', '"gumroad.com"', '"forms.gle"', '"clips"', '"motivation"', '"slideshow"'],
-  ['"gmail.com"', '"hormozi clips"', '"goggins edits"', '"tate clips"', '"gadzhi clips"', '"alex hormozi"'],
-  ['"skool"', '"wop"', '"clipping"', '"dm for collab"', '"gmail.com"', '"daily clips"'],
-  ['"#gymmotivation"', '"#motivation"', '"#discipline"', '"#hardwork"', '"slideshow"'],
-  ['"#gymtok"', '"#fitness"', '"#hustle"', '"slideshow"', '"#bestversion"'],
-  ['"#physique"', '"#gains"', '"#gym"', '"slideshow"', '"#motivation"'],
-  ['"@clipper"', '"@editor"', '"@motivation"', '"gmail.com"', '"dm for promo"'],
-  ['"@hormozi"', '"@gadzhi"', '"@goggins"', '"@tate"', '"gmail.com"', '"edits"'],
-  ['"bodybuilding fan page"', '"gym motivation"', '"gmail.com"', '"dm for collab"', '"physique page"', '"fan page"'],
-  ['"fitness clips"', '"gym clips"', '"bodybuilder"', '"gmail.com"', '"dm for paid"', '"paid collab"'],
-  ['"DM LEAN"', '"DM SHRED"', '"DM BULK"', '"DM PROGRAM"', '"skinny-fat"', '"skinny fat"'],
-];
+// Mirrors FITNESS_HASHTAG_POOL from TikTokFacelessEngine — ordered by ICP yield (highest first).
+// Used by scraptik searchPosts_keyword. Rotation is sequential (time-based) not random,
+// matching the manual engine's (attempt-1) % pool.length strategy.
+const FITNESS_HASHTAG_POOL = [
+  'gymmotivation', 'gymotivation', 'gymtok', 'physique', 'gains', 'gymrat',
+  'fitspo', 'hardwork', 'discipline', 'motivation', 'lightweightbaby',
+  'mindset', 'neversettle', 'nodaysoff', 'hustle', 'grindset',
+] as const;
 
 // ─── INLINE ICP HARD FILTER ──────────────────────────────────────────────────
 // Full replica of ICPEvaluator.applyHardFilter() — inlined to keep this file
@@ -397,23 +376,6 @@ async function addLeadToInstantly(
   }
 }
 
-// ─── QUERY BUILDER ────────────────────────────────────────────────────────────
-
-function buildSearchQuery(attempt: number, regions: string[] = []): string {
-  const poolIdx = attempt % FACELESS_CLIPPER_KEYWORD_POOLS.length;
-  const terms   = FACELESS_CLIPPER_KEYWORD_POOLS[poolIdx];
-  const orGroup = '(' + terms.join(' OR ') + ')';
-
-  let locationSuffix = '';
-  if (regions.length > 0 && regions.length <= 3) {
-    const allTerms = regions.flatMap(r => REGION_QUERY_TERMS[r] ?? []);
-    if (allTerms.length) locationSuffix = '(' + allTerms.join(' OR ') + ')';
-  }
-
-  const base = `site:tiktok.com ${orGroup} ${ANTI_ICP_NEGATIVES} -site:tiktok.com/tag/`;
-  return locationSuffix ? `${base} ${locationSuffix}` : base;
-}
-
 // ─── SERPER EMAIL SEARCH ─────────────────────────────────────────────────────
 // Best TikTok fallback: Google indexes creator emails across the web
 // (YouTube About, personal sites, collab directories, etc.).
@@ -700,15 +662,19 @@ async function runTikTokBatch(
 
   // ── STEP 1-3: Collect TikTok handles via scraptik hashtag search ─────────────
   // Direct TikTok hashtag discovery via scraptik~tiktok-api searchPosts_keyword.
-  // Replaces the previous Serper/Google approach: free Serper blocks site:tiktok.com
-  // operator queries. Scraptik is already in active use and has no such restriction.
-  // Rotate 3 hashtags per batch from the pool to maximize unique handle coverage.
+  // Uses FITNESS_HASHTAG_POOL (mirrors TikTokFacelessEngine) — ordered by ICP yield.
+  // Sequential rotation: offset advances every 10 min (cron interval), matching the
+  // manual engine's (attempt-1) % pool.length strategy. Never random — avoids
+  // repeatedly hitting the same low-yield hashtags across consecutive runs.
   const TARGET_CANDIDATES_TT = Math.min(batchSize * 3, targetLeads - result.leadsFound + 10);
   const candidateHandles: string[] = [];
-  const hashtagOffset = Math.floor(Math.random() * FACELESS_CLIPPER_HASHTAG_POOL.length);
+  // Deterministic rotation aligned to the 10-min cron schedule.
+  // Math.floor(Date.now() / 600_000) increments by 1 every 10 minutes → cycles through
+  // all 16 hashtags in ~160 min, then repeats. Three consecutive hashtags per run.
+  const hashtagOffset = Math.floor(Date.now() / 600_000) % FITNESS_HASHTAG_POOL.length;
 
   for (let iteration = 0; iteration < 3 && candidateHandles.length < TARGET_CANDIDATES_TT && result.leadsFound < targetLeads; iteration++) {
-    const hashtag = FACELESS_CLIPPER_HASHTAG_POOL[(hashtagOffset + iteration) % FACELESS_CLIPPER_HASHTAG_POOL.length];
+    const hashtag = FITNESS_HASHTAG_POOL[(hashtagOffset + iteration) % FITNESS_HASHTAG_POOL.length];
     try {
       const items = await runActorSync(SCRAPTIK_ACTOR, { searchPosts_keyword: hashtag, searchPosts_count: 30 }, apifyToken, 60, 256);
       for (const item of items) {
@@ -727,6 +693,10 @@ async function runTikTokBatch(
       result.errors.push(`TikTok hashtag discovery failed (iter ${iteration + 1}, #${hashtag}): ${e instanceof Error ? e.message : String(e)}`);
       break;
     }
+  }
+
+  if (candidateHandles.length === 0 && result.errors.length === 0) {
+    result.warnings.push(`No TikTok handles found — hashtags #${FITNESS_HASHTAG_POOL[hashtagOffset % FITNESS_HASHTAG_POOL.length]} / #${FITNESS_HASHTAG_POOL[(hashtagOffset + 1) % FITNESS_HASHTAG_POOL.length]} / #${FITNESS_HASHTAG_POOL[(hashtagOffset + 2) % FITNESS_HASHTAG_POOL.length]} returned no new results`);
   }
 
   if (candidateHandles.length > 0) {
@@ -871,18 +841,27 @@ async function runInstagramBatch(
     (existingLeads ?? []).map((r: { ig_handle: string }) => r.ig_handle?.toLowerCase()).filter(Boolean),
   );
 
-  const baseOffset = Math.floor(Math.random() * INSTAGRAM_KEYWORD_POOLS.length);
-  for (let iteration = 0; iteration < 4 && result.leadsFound < targetLeads; iteration++) {
-    const attemptOffset = (baseOffset + iteration) % INSTAGRAM_KEYWORD_POOLS.length;
+  // Two queries run in PARALLEL per iteration — mirrors InstagramPersonalBrandEngine's
+  // GOOGLE_QUERY_BATCH approach. Each query fetches 20 results (2×20=40 total).
+  // Two iterations max (was 4 serial) → wall-time: 2×(~45s parallel) ≈ 90s instead of
+  // 4×(~45s serial) ≈ 180s. This eliminates the Vercel function-timeout that was causing
+  // the scraperlink actor to be aborted mid-run.
+  const baseOffset = Math.floor(Date.now() / 600_000) % INSTAGRAM_KEYWORD_POOLS.length;
+  for (let iteration = 0; iteration < 2 && result.leadsFound < targetLeads; iteration++) {
+    const offsetA = (baseOffset + iteration * 2)     % INSTAGRAM_KEYWORD_POOLS.length;
+    const offsetB = (baseOffset + iteration * 2 + 1) % INSTAGRAM_KEYWORD_POOLS.length;
+    const queryA  = buildInstagramSearchQuery(offsetA);
+    const queryB  = buildInstagramSearchQuery(offsetB);
 
-    const query = buildInstagramSearchQuery(attemptOffset);
     const candidateHandles: string[] = [];
-    // Fetch Instagram handles via Apify Google Search scraper.
-    // scraperlink~google-search-results-serp-scraper supports site: operator — unlike free Serper.
+    // Run both queries in parallel — wall-time ≈ single query instead of two serial queries.
     let searchFailed = false;
     try {
-      const searchResults = await apifyGoogleSearch(query, apifyToken, 40);
-      for (const item of searchResults) {
+      const [resultsA, resultsB] = await Promise.all([
+        apifyGoogleSearch(queryA, apifyToken, 20),
+        apifyGoogleSearch(queryB, apifyToken, 20),
+      ]);
+      for (const item of [...resultsA, ...resultsB]) {
         const url = item.link ?? '';
         if (!url.includes('instagram.com')) continue;
         const h = extractHandleFromInstagramUrl(url);

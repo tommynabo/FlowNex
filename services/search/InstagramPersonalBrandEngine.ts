@@ -842,9 +842,7 @@ export class InstagramPersonalBrandEngine {
       try {
         batchResults = await this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
           keyword: querySlots.join('\n'),
-          limit: 40,
-          renderJs: false,
-          superProxy: false,
+          limit: '40',
         }, onLog, 90_000, 80, 1024);
       } catch (e: unknown) {
         const errMsg = e instanceof Error ? e.message : String(e);

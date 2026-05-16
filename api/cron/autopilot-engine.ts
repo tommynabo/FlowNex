@@ -261,7 +261,7 @@ async function serperGoogleSearch(query: string, apiKey: string, page = 1): Prom
 // Uses scraperlink~google-search-results-serp-scraper instead of Serper.
 // Supports site: operator queries — no free-tier restrictions.
 async function apifyGoogleSearch(query: string, apifyToken: string, limit = 20): Promise<Array<{ link: string }>> {
-  const items = await runActorSync(GOOGLE_SEARCH_SCRAPER, { keyword: query, limit }, apifyToken, 45, 1024);
+  const items = await runActorSync(GOOGLE_SEARCH_SCRAPER, { keyword: query, limit: String(limit) }, apifyToken, 45, 1024);
   const links: Array<{ link: string }> = [];
   for (const item of items) {
     const p = item as Record<string, unknown>;

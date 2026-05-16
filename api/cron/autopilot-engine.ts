@@ -512,6 +512,7 @@ async function runTikTokBatch(
     }
 
     let emailFinal = rawEmail ?? '';
+    if (!emailFinal) emailFinal = extractEmailFromBio(bio) ?? '';  // fast path: email in bio
     if (!emailFinal) emailFinal = await serperEmailSearch(handle, serperKey);
     if (!emailFinal) {
       const [ttEmail, igCrossRef] = await Promise.all([inlineTikTokEmail(handle), inlineIgCrossRef(bio)]);
@@ -660,97 +661,88 @@ async function runTikTokBatch(
     }
   }
 
-  // ── STEP 1-3: Collect TikTok candidate profiles via scraptik hashtag search ──
-  // scraptik~tiktok-api searchPosts_keyword returns individual video posts.
-  // Each Apify dataset item is a flat post object — the author's profile data
-  // (handle, followers, bio) is embedded directly, so NO separate profile-lookup
-  // call is needed. Three formats are handled for robustness:
-  //   A) authorMeta.name / .fans / .signature   — most actors (incl. scraptik search)
-  //   B) author.uniqueId / .stats.followerCount  — scraptik raw TikTok API mode
-  //   C) search_item_list[].aweme_info.author    — legacy raw TikTok API page
-  type CandidateProfile = { handle: string; bio: string; followers: number; displayName: string };
-  const candidateProfiles: CandidateProfile[] = [];
-  // Deterministic time-based rotation: advances 1 slot every 10 min → cycles all
-  // 16 hashtags in ~160 min. Three consecutive hashtags per run.
-  const hashtagOffset = Math.floor(Date.now() / 600_000) % FITNESS_HASHTAG_POOL.length;
+  // ── STEP 1-3: Google site:tiktok.com discovery (mirrors TikTokFacelessEngine) ──
+  // The manual engine works because Google pre-filters: only creators whose bio
+  // already contains Gmail + ICP keywords appear in results. Hashtag search returns
+  // random creators — most fail ICP (sparse bios) and email discovery.
+  // apifyGoogleSearch uses scraperlink~google-search-results-serp-scraper (no
+  // free-tier Serper restrictions). Three queries per run, rotating every 10 min.
 
-  for (let iteration = 0; iteration < 3 && candidateProfiles.length < 90 && result.leadsFound < targetLeads; iteration++) {
-    const hashtag = FITNESS_HASHTAG_POOL[(hashtagOffset + iteration) % FITNESS_HASHTAG_POOL.length];
+  // 8 targeted queries for faceless-clipper/gym-motivation ICP, ordered by yield:
+  const TT_DISCOVERY_QUERIES = [
+    // 0. Clipper/editor identity + Gmail — highest precision
+    `site:tiktok.com ("gmail.com" OR "dm for promo") ("clipper" OR "editor" OR "edits" OR "daily clips") -site:tiktok.com/tag/ -restaurant -fashion -dance`,
+    // 1. Gym motivation + Gmail
+    `site:tiktok.com "gym motivation" ("gmail.com" OR "dm for promo" OR "dm for collab") ("physique" OR "discipline" OR "clips") -site:tiktok.com/tag/`,
+    // 2. #gymtok + Gmail + ICP signals
+    `site:tiktok.com "#gymtok" ("gmail.com" OR "dm for promo") ("physique" OR "discipline" OR "no excuses" OR "best version") -site:tiktok.com/tag/ -restaurant -dance`,
+    // 3. #gymmotivation + faceless format + contact signal
+    `site:tiktok.com "#gymmotivation" ("slideshow" OR "no face" OR "clips") ("gmail.com" OR "dm for promo" OR "for business") -site:tiktok.com/tag/`,
+    // 4. Figure-clip editors (Hormozi/Goggins/Tate) + Gmail
+    `site:tiktok.com ("hormozi" OR "goggins" OR "gadzhi" OR "tate") ("gmail.com" OR "dm for promo") ("clips" OR "edits" OR "editor") -site:tiktok.com/tag/`,
+    // 5. DM for promo/rates + hustle/discipline
+    `site:tiktok.com ("dm for promo" OR "dm for rates" OR "paid collab") ("hustle" OR "grind" OR "discipline" OR "gains") -site:tiktok.com/tag/ -restaurant`,
+    // 6. Physique/gym clips page + Gmail
+    `site:tiktok.com ("physique page" OR "gym clips" OR "fitness clips" OR "bodybuilding fan page") ("gmail.com" OR "dm for collab") -site:tiktok.com/tag/`,
+    // 7. Community (WOP/Skool/SMMA) + Gmail
+    `site:tiktok.com ("skool" OR "wop" OR "smma") ("gmail.com" OR "dm for promo") ("clips" OR "motivation" OR "mindset") -site:tiktok.com/tag/`,
+  ] as const;
+
+  const queryOffset      = Math.floor(Date.now() / 600_000) % TT_DISCOVERY_QUERIES.length;
+  const candidateHandles: string[] = [];
+
+  for (let iter = 0; iter < 3 && candidateHandles.length < 30 && result.leadsFound < targetLeads; iter++) {
+    const query = TT_DISCOVERY_QUERIES[(queryOffset + iter) % TT_DISCOVERY_QUERIES.length];
     try {
-      const items = await runActorSync(SCRAPTIK_ACTOR, { searchPosts_keyword: hashtag, searchPosts_count: 30 }, apifyToken, 60, 256);
-      for (const item of items) {
-        const p = item as Record<string, unknown>;
-
-        let handle = '', bio = '', displayName = '';
-        let followers = 0;
-
-        // Format A: flat post with authorMeta (Apify-processed, most common)
-        const authorMeta = (p.authorMeta as Record<string, unknown>) || {};
-        if (authorMeta.name) {
-          handle      = ((authorMeta.name      as string) || '').toLowerCase().replace(/^@/, '').trim();
-          bio         = (authorMeta.signature  as string) || '';
-          followers   = (authorMeta.fans       as number) || 0;
-          displayName = (authorMeta.nickName   as string) || handle;
+      const links = await apifyGoogleSearch(query, apifyToken, 20);
+      for (const { link } of links) {
+        if (!link.includes('tiktok.com') || link.includes('/tag/') || link.includes('/video/')) continue;
+        const handle = extractHandleFromUrl(link);
+        if (handle && !seenHandles.has(handle) && !candidateHandles.includes(handle)) {
+          candidateHandles.push(handle);
         }
-
-        // Format B: scraptik raw TikTok API (author.uniqueId)
-        if (!handle) {
-          const author = (p.author as Record<string, unknown>) || {};
-          const rawId  = ((author.uniqueId as string) || (author.unique_id as string) || '').trim();
-          if (rawId) {
-            handle      = rawId.toLowerCase().replace(/^@/, '');
-            bio         = (author.signature as string) || '';
-            const stats = (author.stats as Record<string, unknown>) || {};
-            followers   = (stats.followerCount  as number) || (author.follower_count as number) || 0;
-            displayName = (author.nickname      as string) || (author.nickName as string) || handle;
-          }
-        }
-
-        // Format C: raw TikTok API search page (search_item_list) — legacy scraptik
-        if (!handle && Array.isArray(p.search_item_list)) {
-          for (const si of (p.search_item_list as Record<string, unknown>[])) {
-            const aweme = (si.aweme_info as Record<string, unknown>) || {};
-            const auth  = (aweme.author   as Record<string, unknown>) || {};
-            const h     = ((auth.unique_id as string) || '').toLowerCase().replace(/^@/, '').trim();
-            if (h && !TIKTOK_SKIP_HANDLES.has(h) && !seenHandles.has(h) && !candidateProfiles.some(c => c.handle === h)) {
-              const stats = (aweme.statistics as Record<string, unknown>) || {};
-              candidateProfiles.push({
-                handle: h,
-                bio: (auth.signature as string) || '',
-                followers: (auth.follower_count as number) || (stats.followerCount as number) || 0,
-                displayName: (auth.nickname as string) || h,
-              });
-            }
-          }
-          continue;
-        }
-
-        if (!handle || TIKTOK_SKIP_HANDLES.has(handle) || seenHandles.has(handle) || candidateProfiles.some(c => c.handle === handle)) continue;
-        candidateProfiles.push({ handle, bio, followers, displayName });
       }
     } catch (e) {
-      result.errors.push(`TikTok hashtag discovery failed (iter ${iteration + 1}, #${hashtag}): ${e instanceof Error ? e.message : String(e)}`);
+      result.errors.push(`TikTok Google discovery failed (iter ${iter + 1}): ${e instanceof Error ? e.message : String(e)}`);
       break;
     }
   }
 
-  if (candidateProfiles.length === 0 && result.errors.length === 0) {
-    result.warnings.push(`No TikTok handles found — hashtags #${FITNESS_HASHTAG_POOL[hashtagOffset % FITNESS_HASHTAG_POOL.length]} / #${FITNESS_HASHTAG_POOL[(hashtagOffset + 1) % FITNESS_HASHTAG_POOL.length]} / #${FITNESS_HASHTAG_POOL[(hashtagOffset + 2) % FITNESS_HASHTAG_POOL.length]} returned no results`);
+  if (candidateHandles.length === 0 && result.errors.length === 0) {
+    result.warnings.push(`TikTok Google discovery returned no handles (queries ${queryOffset}–${(queryOffset + 2) % TT_DISCOVERY_QUERIES.length})`);
   }
 
-  // ── STEP 4+5: ICP filter + email discovery ────────────────────────────────
-  // Profile data (followers, bio) is already embedded in the search results above.
-  // No separate per-handle Apify profile call needed — saves credits + ~30s latency
-  // per candidate. processProfile applies ICP hard filter, email discovery, DB insert
-  // and Instantly enqueue all in one step.
-  if (candidateProfiles.length > 0) {
-    for (const { handle, bio, followers, displayName } of candidateProfiles) {
+  // ── STEP 4+5: Parallel profile lookups → ICP filter → email → DB insert ──
+  // Fetch full profile (bio + followers) via scraptik profile_username in parallel.
+  // processProfile applies ICP hard filter, email discovery, DB insert, Instantly enqueue.
+  if (candidateHandles.length > 0) {
+    // Cap at 20 to stay within Vercel 300s maxDuration
+    const profileResults = await Promise.allSettled(
+      candidateHandles.slice(0, 20).map(h =>
+        runActorSync(SCRAPTIK_ACTOR, { profile_username: h }, apifyToken, 30, 256)
+      )
+    );
+    const profileItems = profileResults
+      .filter(r => r.status === 'fulfilled')
+      .flatMap(r => (r as PromiseFulfilledResult<unknown[]>).value);
+
+    for (const item of profileItems) {
       if (result.leadsFound >= targetLeads) break;
-      const outcome = await processProfile(handle, bio, followers, displayName, '');
+      const p           = item as Record<string, unknown>;
+      // scraptik profile_username: { user: { unique_id, signature, follower_count, email } }
+      // clockworks / scraptik alt:   { authorMeta: { name, fans, signature, nickName } }
+      const user        = (p.user       as Record<string, unknown>) || {};
+      const meta        = (p.authorMeta as Record<string, unknown>) || {};
+      const handle      = ((user.unique_id as string) || (user.uniqueId as string) || (meta.name as string) || '').toLowerCase().replace(/^@/, '');
+      const bio         = (user.signature as string) || (meta.signature as string) || '';
+      const followers   = (user.follower_count as number) || (user.fans as number) || (meta.fans as number) || 0;
+      const displayName = (user.nickname as string) || (user.nickName as string) || (meta.nickName as string) || handle;
+      const rawEmail    = ((user.email as string) || '').toLowerCase().trim();
+      const outcome     = await processProfile(handle, bio, followers, displayName, rawEmail);
       if (outcome === 'duplicate') result.skippedDuplicate++;
     }
   } else if (result.errors.length === 0) {
-    result.warnings.push('No TikTok handles found via hashtag discovery — all pools exhausted or filtered');
+    result.warnings.push('TikTok discovery found no new handles — all seen or filtered');
   }
 
   return result;

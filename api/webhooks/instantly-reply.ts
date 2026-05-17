@@ -381,6 +381,18 @@ FORMATO OBLIGATORIO DEL DRAFT: Escribe cada frase o idea como su propio párrafo
     console.warn('[SETTER][WEBHOOK] Warning: Could not auto-heal profile (may cause FK error):', upsertError.message);
   }
 
+  // ── 8b. Dedup guard — skip if this email_id was already processed ─────────
+  const { data: existingConv } = await supabase
+    .from('lead_conversations')
+    .select('id')
+    .eq('email_id', email_id)
+    .maybeSingle();
+
+  if (existingConv) {
+    console.log(`[SETTER][WEBHOOK] Skipping duplicate — email_id ${email_id} already processed (id=${existingConv.id})`);
+    return res.status(200).json({ skipped: true, reason: 'duplicate_email_id', existingId: existingConv.id });
+  }
+
   // ── 9. Insert conversation into Supabase ──────────────────────────────────
   const { data: inserted, error: insertError } = await supabase
     .from('lead_conversations')

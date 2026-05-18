@@ -65,8 +65,9 @@ function applyIcpHardFilter(profiles: RawApifyProfile[], icpType: 'personal_bran
     const bioLow  = (p.biography || '').toLowerCase();
     const full    = `${bioLow} ${nameLow} ${handle}`;
     const followers = p.followersCount ?? 0;
-    if (followers >= 0 && followers < 1_000)        return false;
-    if (followers >= 0 && followers > maxFollowers) return false;
+    // followers=0 means the scraper could not retrieve the count — treat as unknown, not a failure
+    if (followers > 0 && followers < 1_000)        return false;
+    if (followers > 0 && followers > maxFollowers) return false;
     if (_ICP_BRAND_KW.find(kw => nameLow.includes(kw) || handle.includes(kw))) return false;
     if (_ICP_ANTI_BIO_KW.find(kw => full.includes(kw)))    return false;
     if (_ICP_ANTI_HANDLE_KW.find(kw => handle.includes(kw))) return false;
@@ -239,16 +240,22 @@ async function serperGoogleSearch(query: string, apiKey: string, page = 1): Prom
 // ─── APIFY GOOGLE SEARCH ────────────────────────────────────────────────────
 // Uses scraperlink~google-search-results-serp-scraper instead of Serper.
 // Supports site: operator queries — no free-tier restrictions.
-async function apifyGoogleSearch(query: string, apifyToken: string, limit = 20): Promise<Array<{ link: string }>> {
+// Returns link + snippet/title so callers can extract emails from Google's
+// indexed content (fast path — avoids a scraptik roundtrip when email is visible).
+async function apifyGoogleSearch(query: string, apifyToken: string, limit = 20): Promise<Array<{ link: string; snippet: string; title: string }>> {
   const items = await runActorSync(GOOGLE_SEARCH_SCRAPER, { keyword: query, limit: String(limit) }, apifyToken, 45, 1024);
-  const links: Array<{ link: string }> = [];
+  const links: Array<{ link: string; snippet: string; title: string }> = [];
   for (const item of items) {
     const p = item as Record<string, unknown>;
     const subResults = p.results as Array<Record<string, unknown>> | undefined;
     const resultsList = subResults ?? [p];
     for (const r of resultsList) {
       const url = (r.url as string) || (r.link as string) || '';
-      if (url) links.push({ link: url });
+      if (url) links.push({
+        link: url,
+        snippet: (r.description as string) || (r.snippet as string) || '',
+        title:   (r.title as string) || '',
+      });
     }
   }
   return links;
@@ -508,7 +515,8 @@ async function runTikTokBatch(
     if (!options?.skipIcp) {
       const rawProfile: RawApifyProfile = { username: handle, fullName: displayName, biography: bio, followersCount: followers };
       if (applyIcpHardFilter([rawProfile], 'faceless_clipper').length === 0) return 'failed_icp';
-      if (followers >= 0 && (followers < minFollowers || (maxFollowers > 0 && followers > maxFollowers))) return 'failed_icp';
+      // followers=0 means the scraper could not retrieve the count — treat as unknown, not a failure
+      if (followers > 0 && (followers < minFollowers || (maxFollowers > 0 && followers > maxFollowers))) return 'failed_icp';
     }
 
     let emailFinal = rawEmail ?? '';
@@ -570,18 +578,22 @@ async function runTikTokBatch(
     `site:tiktok.com ("skool" OR "wop" OR "smma") ("gmail.com" OR "dm for promo") ("clips" OR "motivation" OR "mindset") -site:tiktok.com/tag/`,
   ] as const;
 
-  const queryOffset      = Math.floor(Date.now() / 600_000) % TT_DISCOVERY_QUERIES.length;
-  const candidateHandles: string[] = [];
+  const queryOffset = Math.floor(Date.now() / 600_000) % TT_DISCOVERY_QUERIES.length;
+
+  // Store handle + the Google snippet so we can extract email from indexed content
+  // (fast path — avoids scraptik when email is already visible in the snippet).
+  interface Candidate { handle: string; snippet: string; }
+  const candidateHandles: Candidate[] = [];
 
   for (let iter = 0; iter < 3 && candidateHandles.length < 30 && result.leadsFound < targetLeads; iter++) {
     const query = TT_DISCOVERY_QUERIES[(queryOffset + iter) % TT_DISCOVERY_QUERIES.length];
     try {
       const links = await apifyGoogleSearch(query, apifyToken, 20);
-      for (const { link } of links) {
+      for (const { link, snippet, title } of links) {
         if (!link.includes('tiktok.com') || link.includes('/tag/') || link.includes('/video/')) continue;
         const handle = extractHandleFromUrl(link);
-        if (handle && !seenHandles.has(handle) && !candidateHandles.includes(handle)) {
-          candidateHandles.push(handle);
+        if (handle && !seenHandles.has(handle) && !candidateHandles.find(c => c.handle === handle)) {
+          candidateHandles.push({ handle, snippet: `${snippet} ${title}`.trim() });
         }
       }
     } catch (e) {
@@ -595,12 +607,21 @@ async function runTikTokBatch(
   }
 
   // ── STEP 4+5: Parallel profile lookups → ICP filter → email → DB insert ──
-  // Fetch full profile (bio + followers) via scraptik profile_username in parallel.
-  // processProfile applies ICP hard filter, email discovery, DB insert, Instantly enqueue.
+  // For each candidate, try to get the email from the Google snippet first (fast path).
+  // Only call scraptik for full profile data (bio + followers) regardless — we need
+  // those for the ICP check. But if snippet already has the email we skip the
+  // multi-stage email discovery that adds ~5-10s per profile.
   if (candidateHandles.length > 0) {
+    // Build a snippet-email map so we can inject it into processProfile
+    const snippetEmails = new Map<string, string>();
+    for (const { handle, snippet } of candidateHandles) {
+      const e = extractEmailFromBio(snippet);
+      if (e) snippetEmails.set(handle, e);
+    }
+
     // Cap at 20 to stay within Vercel 300s maxDuration
     const profileResults = await Promise.allSettled(
-      candidateHandles.slice(0, 20).map(h =>
+      candidateHandles.slice(0, 20).map(({ handle: h }) =>
         runActorSync(SCRAPTIK_ACTOR, { profile_username: h }, apifyToken, 30, 256)
       )
     );
@@ -608,20 +629,69 @@ async function runTikTokBatch(
       .filter(r => r.status === 'fulfilled')
       .flatMap(r => (r as PromiseFulfilledResult<unknown[]>).value);
 
+    // Track outcomes for diagnostic warnings
+    let diagFailedIcp = 0;
+    let diagNoEmail   = 0;
+    let diagDuplicate = 0;
+
     for (const item of profileItems) {
       if (result.leadsFound >= targetLeads) break;
-      const p           = item as Record<string, unknown>;
-      // scraptik profile_username: { user: { unique_id, signature, follower_count, email } }
-      // clockworks / scraptik alt:   { authorMeta: { name, fans, signature, nickName } }
-      const user        = (p.user       as Record<string, unknown>) || {};
-      const meta        = (p.authorMeta as Record<string, unknown>) || {};
-      const handle      = ((user.unique_id as string) || (user.uniqueId as string) || (meta.name as string) || '').toLowerCase().replace(/^@/, '');
-      const bio         = (user.signature as string) || (meta.signature as string) || '';
-      const followers   = (user.follower_count as number) || (user.fans as number) || (meta.fans as number) || 0;
-      const displayName = (user.nickname as string) || (user.nickName as string) || (meta.nickName as string) || handle;
-      const rawEmail    = ((user.email as string) || '').toLowerCase().trim();
-      const outcome     = await processProfile(handle, bio, followers, displayName, rawEmail);
-      if (outcome === 'duplicate') result.skippedDuplicate++;
+      const p = item as Record<string, unknown>;
+
+      // ── Robust field extraction ───────────────────────────────────────────
+      // scraptik profile_username mode may return:
+      //   A) { user: { unique_id | uniqueId, signature | bio, follower_count | followerCount } }
+      //   B) root-level object: { unique_id | uniqueId, signature | bio, follower_count | followerCount }
+      //   C) authorMeta nesting (clockworks legacy): { authorMeta: { name, fans, signature } }
+      const user = (p.user as Record<string, unknown>) || (p as Record<string, unknown>);
+      const meta = (p.authorMeta as Record<string, unknown>) || {};
+
+      const handle = (
+        (user.unique_id    as string) ||
+        (user.uniqueId     as string) ||
+        (meta.name         as string) || ''
+      ).toLowerCase().replace(/^@/, '');
+
+      const bio = (
+        (user.signature    as string) ||
+        (user.bio          as string) ||
+        (meta.signature    as string) || ''
+      );
+
+      // follower_count (snake) — native scraptik; followerCount (camelCase) — TikTok API native
+      const followers = (
+        (user.follower_count  as number) ||
+        (user.followerCount   as number) ||
+        (user.fans            as number) ||
+        (meta.fans            as number) || 0
+      );
+
+      const displayName = (
+        (user.nickname  as string) ||
+        (user.nickName  as string) ||
+        (meta.nickName  as string) || handle
+      );
+
+      // Email: prefer value embedded in scraptik response, else use snippet fast path
+      const rawEmail = (
+        ((user.email as string) || '').toLowerCase().trim() ||
+        snippetEmails.get(handle) || ''
+      );
+
+      const outcome = await processProfile(handle, bio, followers, displayName, rawEmail);
+      if (outcome === 'duplicate')   diagDuplicate++;
+      if (outcome === 'failed_icp')  diagFailedIcp++;
+      if (outcome === 'no_email')    diagNoEmail++;
+    }
+
+    // Diagnostic warning — visible in autopilot_runs.error_message so we can
+    // see exactly why a run found 0 leads without digging into logs.
+    if (result.leadsFound === 0 && profileItems.length > 0) {
+      result.warnings.push(
+        `${profileItems.length} profiles fetched, 0 leads: ${diagFailedIcp} failed ICP, ${diagNoEmail} no email, ${diagDuplicate} duplicate`
+      );
+    } else if (result.leadsFound === 0 && profileItems.length === 0) {
+      result.warnings.push(`scraptik returned 0 items for ${candidateHandles.length} candidates`);
     }
   } else if (result.errors.length === 0) {
     result.warnings.push('TikTok discovery found no new handles — all seen or filtered');
@@ -799,7 +869,8 @@ async function runInstagramBatch(
       const rawProfile: RawApifyProfile = { username: handle, fullName: displayName, biography: bio, followersCount: followers };
       if (applyIcpHardFilter([rawProfile], 'personal_brand').length === 0) continue;
       // Also enforce campaign-specific follower range
-      if (followers >= 0 && (followers < minFollowers || (maxFollowers > 0 && followers > maxFollowers))) continue;
+      // followers=0 means the scraper could not retrieve the count — treat as unknown, not a failure
+      if (followers > 0 && (followers < minFollowers || (maxFollowers > 0 && followers > maxFollowers))) continue;
 
       const emailRaw = (
         ((p.publicEmail as string) || '').toLowerCase().trim() ||

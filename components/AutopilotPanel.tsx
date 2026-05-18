@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Campaign, AutopilotRun, TikTokQueueStats } from '../lib/types';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Campaign, AutopilotRun } from '../lib/types';
 import { supabase } from '../lib/supabase';
 import {
   Bot,
@@ -13,9 +13,6 @@ import {
   ToggleRight,
   AlertCircle,
   Globe,
-  Upload,
-  Inbox,
-  Trash2,
 } from 'lucide-react';
 
 interface AutopilotPanelProps {
@@ -146,92 +143,8 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
   const [runs,       setRuns]       = useState<AutopilotRun[]>([]);
   const [loadingRuns, setLoadingRuns] = useState(true);
 
-  // ── Cola Manual state ──────────────────────────────────────────────────────
-  const [queueStats,    setQueueStats]    = useState<TikTokQueueStats | null>(null);
-  const [importing,     setImporting]     = useState(false);
-  const [importResult,  setImportResult]  = useState<{ queued: number; skipped_junk: number; skipped_duplicate: number } | null>(null);
-  const [importError,   setImportError]   = useState<string | null>(null);
-  const [clearing,      setClearing]      = useState(false);
-  const [isDragOver,    setIsDragOver]    = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
   const leadsToday = ap?.leadsToday ?? 0;
   const lastRunAt  = ap?.lastRunAt  ?? null;
-
-  // ── Load queue stats ───────────────────────────────────────────────────────
-  const loadQueueStats = useCallback(async () => {
-    const { data } = await supabase
-      .from('tiktok_handle_queue')
-      .select('status')
-      .eq('campaign_id', campaign.id);
-    if (!data) return;
-    const counts: TikTokQueueStats = { pending: 0, processing: 0, passed_icp: 0, failed_icp: 0, no_email: 0, added: 0, total: 0 };
-    for (const row of data as Array<{ status: string }>) {
-      const s = row.status as keyof Omit<TikTokQueueStats, 'total'>;
-      if (s in counts) (counts[s] as number)++;
-      counts.total++;
-    }
-    setQueueStats(counts);
-  }, [campaign.id]);
-
-  useEffect(() => { loadQueueStats(); }, [loadQueueStats]);
-
-  // ── Import handler ─────────────────────────────────────────────────────────
-  const handleImport = useCallback(async (jsonText: string) => {
-    setImporting(true);
-    setImportError(null);
-    setImportResult(null);
-    try {
-      const items: unknown[] = JSON.parse(jsonText);
-      if (!Array.isArray(items)) throw new Error('El JSON debe ser un array []');
-
-      const { data: { session } } = await supabase.auth.getSession();
-      const jwt = session?.access_token ?? '';
-      if (!jwt) throw new Error('No hay sesión activa. Recarga la página.');
-
-      const res = await fetch('/api/import-tiktok-handles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}` },
-        body: JSON.stringify({ campaignId: campaign.id, items }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
-
-      setImportResult(json);
-      await loadQueueStats();
-    } catch (e) {
-      setImportError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setImporting(false);
-    }
-  }, [campaign.id, loadQueueStats]);
-
-  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => { if (ev.target?.result) handleImport(ev.target.result as string); };
-    reader.readAsText(file);
-    e.target.value = '';
-  }, [handleImport]);
-
-  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragOver(false);
-    const file = e.dataTransfer.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => { if (ev.target?.result) handleImport(ev.target.result as string); };
-    reader.readAsText(file);
-  }, [handleImport]);
-
-  const handleClearPending = useCallback(async () => {
-    if (!confirm('¿Eliminar todos los handles pendientes de esta campaña? Esta acción no se puede deshacer.')) return;
-    setClearing(true);
-    await supabase.from('tiktok_handle_queue').delete().eq('campaign_id', campaign.id).eq('status', 'pending');
-    await loadQueueStats();
-    setClearing(false);
-  }, [campaign.id, loadQueueStats]);
 
   // Load last 7 runs for this campaign
   const loadRuns = useCallback(async () => {
@@ -537,133 +450,6 @@ export function AutopilotPanel({ campaign, onUpdate }: AutopilotPanelProps) {
           }
           {saving ? 'Guardando…' : saveOk ? 'Guardado' : 'Guardar configuración'}
         </button>
-      </div>
-
-      {/* ── Cola Manual de Handles ─────────────────────────────────────── */}
-      <div className="bg-card border border-border rounded-xl p-5 space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Inbox className="w-4 h-4 text-primary" />
-            <h3 className="font-semibold text-sm">Cola Manual de Handles</h3>
-            {queueStats && queueStats.total > 0 && (
-              <span className="text-xs bg-primary/10 text-primary border border-primary/20 rounded-full px-2 py-0.5">
-                {queueStats.pending} pendientes
-              </span>
-            )}
-          </div>
-          <button
-            onClick={loadQueueStats}
-            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Actualizar
-          </button>
-        </div>
-
-        {/* Low-stock alert — shown when ≤ 10 handles remain and queue has been used */}
-        {queueStats && queueStats.total > 0 && queueStats.pending <= 10 && (
-          <div className="flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
-            <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-medium text-amber-400">
-                {queueStats.pending === 0
-                  ? 'Cola vacía — el autopilot usará búsquedas Serper'
-                  : `Quedan ${queueStats.pending} handle${queueStats.pending === 1 ? '' : 's'} pendientes`
-                }
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Sube un nuevo JSON para recargar la cola y no interrumpir el flujo.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Drag & drop / click upload zone */}
-        <div
-          onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
-          onDragLeave={() => setIsDragOver(false)}
-          onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
-          className={`relative flex flex-col items-center justify-center gap-2 border-2 border-dashed rounded-xl p-6 cursor-pointer transition-colors ${
-            isDragOver
-              ? 'border-primary bg-primary/10'
-              : 'border-border hover:border-primary/50 hover:bg-secondary/50'
-          } ${importing ? 'pointer-events-none opacity-60' : ''}`}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".json,application/json"
-            onChange={handleFileChange}
-            className="hidden"
-          />
-          {importing
-            ? <Loader2 className="w-6 h-6 text-primary animate-spin" />
-            : <Upload className="w-6 h-6 text-muted-foreground" />
-          }
-          <p className="text-sm text-muted-foreground text-center">
-            {importing
-              ? 'Procesando JSON…'
-              : 'Arrastra el JSON del scraper aquí o haz clic para seleccionar'
-            }
-          </p>
-          <p className="text-xs text-muted-foreground/60">
-            dataset_tiktok-profile-scraper_*.json
-          </p>
-        </div>
-
-        {/* Import result banner */}
-        {importResult && (
-          <div className="flex items-start gap-3 bg-green-500/10 border border-green-500/30 rounded-xl p-4">
-            <CheckCircle className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
-            <div className="text-sm">
-              <p className="font-medium text-green-400">{importResult.queued} handles encolados</p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {importResult.skipped_duplicate} ya existían · {importResult.skipped_junk} descartados (junk)
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Import error banner */}
-        {importError && (
-          <div className="flex items-start gap-3 bg-red-500/10 border border-red-500/30 rounded-xl p-4">
-            <XCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
-            <p className="text-sm text-red-400">{importError}</p>
-          </div>
-        )}
-
-        {/* Queue stats grid */}
-        {queueStats && queueStats.total > 0 && (
-          <div className="grid grid-cols-3 gap-2">
-            {([
-              { label: 'Pendientes',   value: queueStats.pending,    color: 'text-amber-400'  },
-              { label: 'Añadidos',     value: queueStats.added,      color: 'text-green-400'  },
-              { label: 'Falló ICP',    value: queueStats.failed_icp, color: 'text-red-400'    },
-              { label: 'Sin email',    value: queueStats.no_email,   color: 'text-orange-400' },
-              { label: 'Procesando',   value: queueStats.processing, color: 'text-primary'    },
-              { label: 'Total',        value: queueStats.total,      color: 'text-foreground' },
-            ] as const).map(({ label, value, color }) => (
-              <div key={label} className="bg-secondary/50 rounded-lg px-3 py-2 text-center">
-                <p className={`text-lg font-bold ${color}`}>{value}</p>
-                <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Clear pending button */}
-        {queueStats && queueStats.pending > 0 && (
-          <div className="flex justify-end">
-            <button
-              onClick={handleClearPending}
-              disabled={clearing}
-              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-red-400 transition-colors disabled:opacity-50"
-            >
-              {clearing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-              Limpiar pendientes
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Run history */}

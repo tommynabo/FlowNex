@@ -1,0 +1,57 @@
+id,campaign_id,user_id,started_at,finished_at,leads_found,leads_added_to_instantly,status,error_message,batch_size,daily_total_after,target_leads
+116108c6-fe5f-4368-9efd-51151f1ecb22,10d55f38-ab50-4fa4-8a53-983497cffdf2,8db57d67-a100-4df5-9e25-5c30bfbf4576,2026-05-08 14:00:17.828045+00,2026-05-08 14:00:18.417+00,0,0,error,"Google Search failed: Apify POST acts/nFJndFXA5zjCTuudP/runs?timeout=45&memory=1024 → HTTP 402: {
+  ""error"": {
+    ""type"": ""x402-payment-required"",
+    ""message"": ""Please provide PAYMENT-SIGNATURE header with the payment. See https://x402.org.""
+  }
+}",5,0,
+33421cc7-3c87-4e01-9c9d-3485cab8a014,37bd2a50-42f4-4104-b0b0-a57cc8bde6f5,8db57d67-a100-4df5-9e25-5c30bfbf4576,2026-05-10 10:00:03.673059+00,2026-05-10 10:00:05.925+00,0,0,error,"TikTok profile scraper failed (iter 1): Apify POST acts/apidojo~tiktok-scraper/runs?timeout=50&memory=1024 → HTTP 402: {
+  ""error"": {
+    ""type"": ""x402-payment-required"",
+    ""message"": ""Please provide PAYMENT-SIGNATURE header with the payment. See https://x402.org.""
+  }
+}",3,0,10
+39590cab-ea74-46ba-a074-21f4065b024d,10d55f38-ab50-4fa4-8a53-983497cffdf2,8db57d67-a100-4df5-9e25-5c30bfbf4576,2026-05-09 13:00:04.003156+00,2026-05-09 13:00:06.086+00,0,0,error,"TikTok profile scraper failed (iter 1): Apify POST acts/apidojo~tiktok-scraper/runs?timeout=50&memory=1024 → HTTP 402: {
+  ""error"": {
+    ""type"": ""x402-payment-required"",
+    ""message"": ""Please provide PAYMENT-SIGNATURE header with the payment. See https://x402.org.""
+  }
+}",5,0,10
+4d53a730-b924-4a96-b4e6-7e54743d04f9,10d55f38-ab50-4fa4-8a53-983497cffdf2,8db57d67-a100-4df5-9e25-5c30bfbf4576,2026-05-08 13:00:17.423301+00,2026-05-08 13:00:18.53+00,0,0,error,"Google Search failed: Apify POST acts/nFJndFXA5zjCTuudP/runs?timeout=45&memory=1024 → HTTP 402: {
+  ""error"": {
+    ""type"": ""x402-payment-required"",
+    ""message"": ""Please provide PAYMENT-SIGNATURE header with the payment. See https://x402.org.""
+  }
+}",5,0,
+975d7eb4-4164-4681-8ec7-40e2a61cefa2,10d55f38-ab50-4fa4-8a53-983497cffdf2,8db57d67-a100-4df5-9e25-5c30bfbf4576,2026-05-10 13:00:04.356888+00,2026-05-10 13:00:06.982+00,0,0,error,"TikTok profile scraper failed (iter 1): Apify POST acts/apidojo~tiktok-scraper/runs?timeout=50&memory=1024 → HTTP 402: {
+  ""error"": {
+    ""type"": ""x402-payment-required"",
+    ""message"": ""Please provide PAYMENT-SIGNATURE header with the payment. See https://x402.org.""
+  }
+}",5,0,10
+9c5c63a3-ef95-414a-b277-ce27390854f9,10d55f38-ab50-4fa4-8a53-983497cffdf2,8db57d67-a100-4df5-9e25-5c30bfbf4576,2026-05-08 11:00:49.44953+00,2026-05-08 11:00:49.682+00,0,0,error,Cannot find module '/var/task/services/autopilot/CronSearchOrchestrator' imported from /var/task/api/cron/autopilot-engine.js,5,0,
+bafab431-cc89-42ea-ad80-7f6abaa11599,10d55f38-ab50-4fa4-8a53-983497cffdf2,8db57d67-a100-4df5-9e25-5c30bfbf4576,2026-05-09 14:00:06.723426+00,2026-05-09 14:00:08.372+00,0,0,error,"TikTok profile scraper failed (iter 1): Apify POST acts/apidojo~tiktok-scraper/runs?timeout=50&memory=1024 → HTTP 402: {
+  ""error"": {
+    ""type"": ""x402-payment-required"",
+    ""message"": ""Please provide PAYMENT-SIGNATURE header with the payment. See https://x402.org.""
+  }
+}",5,0,10
+bce418f5-a307-4af4-addc-97af8aaba201,37bd2a50-42f4-4104-b0b0-a57cc8bde6f5,8db57d67-a100-4df5-9e25-5c30bfbf4576,2026-05-11 09:00:04.360251+00,2026-05-11 09:00:05.792+00,0,0,error,"TikTok profile scraper failed (iter 1): Apify POST acts/apidojo~tiktok-scraper/runs?timeout=50&memory=1024 → HTTP 402: {
+  ""error"": {
+    ""type"": ""x402-payment-required"",
+    ""message"": ""Please provide PAYMENT-SIGNATURE header with the payment. See https://x402.org.""
+  }
+}",3,0,10
+cfd7e158-1666-4210-9a8e-92c75d0bf50f,37bd2a50-42f4-4104-b0b0-a57cc8bde6f5,8db57d67-a100-4df5-9e25-5c30bfbf4576,2026-05-11 10:00:03.14353+00,2026-05-11 10:00:05.103+00,0,0,error,"TikTok profile scraper failed (iter 1): Apify POST acts/apidojo~tiktok-scraper/runs?timeout=50&memory=1024 → HTTP 402: {
+  ""error"": {
+    ""type"": ""x402-payment-required"",
+    ""message"": ""Please provide PAYMENT-SIGNATURE header with the payment. See https://x402.org.""
+  }
+}",3,0,10
+d9b3af63-55a9-45ed-a866-49d8e6870413,10d55f38-ab50-4fa4-8a53-983497cffdf2,8db57d67-a100-4df5-9e25-5c30bfbf4576,2026-05-08 10:00:49.352598+00,2026-05-08 10:00:49.733+00,0,0,error,Cannot find module '/var/task/services/autopilot/CronSearchOrchestrator' imported from /var/task/api/cron/autopilot-engine.js,5,0,
+ffcd2235-0b8d-4dce-9df1-bba473b22cd5,10d55f38-ab50-4fa4-8a53-983497cffdf2,8db57d67-a100-4df5-9e25-5c30bfbf4576,2026-05-10 14:00:04.630208+00,2026-05-10 14:00:06.576+00,0,0,error,"TikTok profile scraper failed (iter 1): Apify POST acts/apidojo~tiktok-scraper/runs?timeout=50&memory=1024 → HTTP 402: {
+  ""error"": {
+    ""type"": ""x402-payment-required"",
+    ""message"": ""Please provide PAYMENT-SIGNATURE header with the payment. See https://x402.org.""
+  }
+}",5,0,10

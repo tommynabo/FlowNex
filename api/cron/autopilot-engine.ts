@@ -612,11 +612,19 @@ async function runTikTokBatch(
   // those for the ICP check. But if snippet already has the email we skip the
   // multi-stage email discovery that adds ~5-10s per profile.
   if (candidateHandles.length > 0) {
-    // Build a snippet-email map so we can inject it into processProfile
+    // Build two maps from the Google snippets:
+    // 1. snippetEmails  — email extracted from snippet (fast path, avoids scraptik email lookup)
+    // 2. snippetTexts   — full snippet text, used to augment bio for ICP check.
+    //    KEY INSIGHT: Google found these profiles because their bio/snippet matched ICP
+    //    keywords at index time. Users frequently update/clear their TikTok bio, so the
+    //    current bio from scraptik often no longer contains those keywords. By combining
+    //    current bio + Google snippet we get ICP signals from BOTH present and past.
     const snippetEmails = new Map<string, string>();
+    const snippetTexts  = new Map<string, string>();
     for (const { handle, snippet } of candidateHandles) {
       const e = extractEmailFromBio(snippet);
       if (e) snippetEmails.set(handle, e);
+      if (snippet) snippetTexts.set(handle, snippet);
     }
 
     // Cap at 20 to stay within Vercel 300s maxDuration
@@ -652,11 +660,16 @@ async function runTikTokBatch(
         (meta.name         as string) || ''
       ).toLowerCase().replace(/^@/, '');
 
-      const bio = (
+      const scrapBio = (
         (user.signature    as string) ||
         (user.bio          as string) ||
         (meta.signature    as string) || ''
       );
+      // Augment current bio with Google snippet — covers the common case where the
+      // user has since changed/cleared their bio but Google's index still has the
+      // ICP keywords we queried for (clipper, dm for promo, gym motivation, etc.)
+      const googleSnippet = snippetTexts.get(handle) || '';
+      const bio = googleSnippet ? `${scrapBio} ${googleSnippet}`.trim() : scrapBio;
 
       // follower_count (snake) — native scraptik; followerCount (camelCase) — TikTok API native
       const followers = (

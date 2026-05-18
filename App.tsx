@@ -726,8 +726,18 @@ function App() {
                               </span>
                             )}
                           </div>
-                          <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3">
-                            {step.body.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/\n+/g, ' ').trim()}
+                          <p className="text-xs text-muted-foreground leading-relaxed line-clamp-6 whitespace-pre-line">
+                            {step.body
+                              .replace(/<br\s*\/?>/gi, '\n')
+                              .replace(/<\/p>/gi, '\n')
+                              .replace(/<\/div>/gi, '\n')
+                              .replace(/<[^>]*>/g, '')
+                              .replace(/&nbsp;/g, ' ')
+                              .replace(/&amp;/g, '&')
+                              .replace(/&lt;/g, '<')
+                              .replace(/&gt;/g, '>')
+                              .replace(/\n{3,}/g, '\n\n')
+                              .trim()}
                           </p>
                         </div>
                       </div>

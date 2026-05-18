@@ -150,6 +150,7 @@ function App() {
         loadProfile(session.user.id);
         loadHistory(session.user.id);
         loadCampaigns(session.user.id);
+        loadInstantlyStats();
       }
     });
 
@@ -208,6 +209,17 @@ function App() {
       }
     } catch (e) {
       console.error('Error loading profile', e);
+    }
+  };
+
+  const loadInstantlyStats = async () => {
+    try {
+      const res = await fetch('/api/instantly-analytics');
+      if (!res.ok) return;
+      const data = await res.json() as { emailsSent: number; replied: number };
+      setVslStats(prev => ({ ...prev, emailsDelivered: data.emailsSent, conversions: data.replied }));
+    } catch (err) {
+      console.warn('[instantly-analytics] fetch failed:', err);
     }
   };
 
@@ -403,6 +415,7 @@ function App() {
         loadProfile(session.user.id);
         loadHistory(session.user.id);
         loadCampaigns(session.user.id);
+        loadInstantlyStats();
       }
     });
   };

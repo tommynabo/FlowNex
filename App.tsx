@@ -349,11 +349,8 @@ function App() {
             timezone:    r.autopilot_timezone     ?? 'UTC',
           } : undefined,
         })));
-        // Load Instantly stats scoped to the FlowNext Omega campaign
-        const omega = data.find(r => r.name?.toLowerCase().includes('omega') && r.instantly_campaign_id);
-        if (omega?.instantly_campaign_id) {
-          loadInstantlyStats(omega.instantly_campaign_id);
-        }
+        // Load Instantly stats for FlowNextOmega campaign (fixed ID)
+        loadInstantlyStats('f021448d-70d0-413a-82aa-932b54d326df');
       }
     } catch (e) {
       console.error('[CAMPAIGNS] Exception:', e);

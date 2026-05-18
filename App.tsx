@@ -112,6 +112,7 @@ function App() {
 
   // VSL Stats State
   const [vslStats, setVslStats] = useState({ emailsDelivered: 0, vslClicks: 0, conversions: 0 });
+  const [sequence, setSequence] = useState<Array<{number:number;subject:string;body:string;delay:number;delayUnit:string;variantCount:number}>>([]);
 
 
 
@@ -219,6 +220,17 @@ function App() {
       setVslStats(prev => ({ ...prev, emailsDelivered: data.emailsSent, conversions: data.replied }));
     } catch (err) {
       console.warn('[instantly-analytics] fetch failed:', err);
+    }
+  };
+
+  const loadSequence = async () => {
+    try {
+      const res = await fetch('/api/instantly-sequence');
+      if (!res.ok) return;
+      const data = await res.json() as { steps: Array<{number:number;subject:string;body:string;delay:number;delayUnit:string;variantCount:number}> };
+      setSequence(data.steps ?? []);
+    } catch (err) {
+      console.warn('[instantly-sequence] fetch failed:', err);
     }
   };
 
@@ -351,6 +363,7 @@ function App() {
         })));
         // Load Instantly stats for FlowNextOmega campaign (fixed ID)
         loadInstantlyStats('f021448d-70d0-413a-82aa-932b54d326df');
+        loadSequence();
       }
     } catch (e) {
       console.error('[CAMPAIGNS] Exception:', e);
@@ -677,6 +690,62 @@ function App() {
                 <p className="text-3xl font-bold" style={{ color: '#10b981' }}>{campaigns.length}</p>
               </div>
             </div>
+
+            {/* FlowNextOmega Sequence Viewer */}
+            {sequence.length > 0 && (
+              <div className="max-w-2xl mx-auto glass-card border border-border rounded-2xl overflow-hidden">
+                {/* Header */}
+                <div className="px-5 py-3 border-b border-border/60 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Secuencia · FlowNextOmega
+                  </span>
+                  <a
+                    href="https://app.instantly.ai/app/campaign/f021448d-70d0-413a-82aa-932b54d326df/sequences"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ml-auto text-xs text-primary/70 hover:text-primary transition-colors"
+                  >
+                    Editar en Instantly ↗
+                  </a>
+                </div>
+                {/* Steps */}
+                <div className="p-5 space-y-3">
+                  {sequence.map((step, i) => (
+                    <React.Fragment key={i}>
+                      <div className="flex gap-3 items-start">
+                        <div className="w-7 h-7 rounded-full bg-primary/10 border border-primary/40 flex items-center justify-center flex-shrink-0 mt-0.5">
+                          <span className="text-[11px] font-bold text-primary">{step.number}</span>
+                        </div>
+                        <div className="flex-1 bg-background/50 border border-border/50 rounded-xl p-4">
+                          <div className="flex items-start justify-between gap-2 mb-1.5">
+                            <p className="text-sm font-semibold text-foreground">{step.subject || '—'}</p>
+                            {step.variantCount > 1 && (
+                              <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full flex-shrink-0">
+                                {step.variantCount} variantes
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3">
+                            {step.body.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/\n+/g, ' ').trim()}
+                          </p>
+                        </div>
+                      </div>
+                      {i < sequence.length - 1 && (
+                        <div className="flex justify-center py-0.5">
+                          <div className="flex items-center gap-1.5 bg-muted/30 border border-border/40 rounded-full px-3 py-1">
+                            <span className="text-muted-foreground/60 text-xs">↓</span>
+                            <span className="text-[11px] text-muted-foreground">
+                              {step.delay} {step.delayUnit === 'days' ? (step.delay === 1 ? 'día' : 'días') : step.delayUnit}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

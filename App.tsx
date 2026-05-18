@@ -284,9 +284,14 @@ function App() {
         );
 
         setHistory(sessions);
-        const leadsSum = sessions.reduce((sum, s) => sum + s.leads.length, 0);
-        setTotalLeadsGenerated(leadsSum);
-        console.log(`[HISTORY] Cargadas ${sessions.length} búsquedas con ${leadsSum} leads del cloud`);
+        // Count ALL leads in DB — including autopilot leads (no search_id) that
+        // never appear in search_history sessions.
+        const { count: totalLeadCount } = await supabase
+          .from('leads')
+          .select('*', { count: 'exact', head: true });
+        const totalLeads = totalLeadCount ?? sessions.reduce((sum, s) => sum + s.leads.length, 0);
+        setTotalLeadsGenerated(totalLeads);
+        console.log(`[HISTORY] Cargadas ${sessions.length} búsquedas, ${totalLeads} leads totales (incluye autopilot)`);
       }
     } catch (e) {
       console.error('Error loading history', e);

@@ -1104,10 +1104,13 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
 
     const newLeadsToday = leadsToday + batchResult.leadsFound;
 
+    // Only advance the interval clock when leads were actually found.
+    // If 0 leads: autopilot_last_run_at stays unchanged so the next cron tick
+    // (~10 min) retries immediately instead of waiting the full scheduled interval.
     await supabase.from('campaigns').update({
       autopilot_leads_today: newLeadsToday,
       autopilot_reset_date:  todayDate,
-      autopilot_last_run_at: new Date().toISOString(),
+      ...(batchResult.leadsFound > 0 ? { autopilot_last_run_at: new Date().toISOString() } : {}),
     }).eq('id', campaign.id);
 
     if (runId) {

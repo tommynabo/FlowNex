@@ -150,7 +150,6 @@ function App() {
         loadProfile(session.user.id);
         loadHistory(session.user.id);
         loadCampaigns(session.user.id);
-        loadInstantlyStats();
       }
     });
 
@@ -212,9 +211,9 @@ function App() {
     }
   };
 
-  const loadInstantlyStats = async () => {
+  const loadInstantlyStats = async (campaignId: string) => {
     try {
-      const res = await fetch('/api/instantly-analytics');
+      const res = await fetch(`/api/instantly-analytics?ids=${encodeURIComponent(campaignId)}`);
       if (!res.ok) return;
       const data = await res.json() as { emailsSent: number; replied: number };
       setVslStats(prev => ({ ...prev, emailsDelivered: data.emailsSent, conversions: data.replied }));
@@ -350,6 +349,11 @@ function App() {
             timezone:    r.autopilot_timezone     ?? 'UTC',
           } : undefined,
         })));
+        // Load Instantly stats scoped to the FlowNext Omega campaign
+        const omega = data.find(r => r.name?.toLowerCase().includes('omega') && r.instantly_campaign_id);
+        if (omega?.instantly_campaign_id) {
+          loadInstantlyStats(omega.instantly_campaign_id);
+        }
       }
     } catch (e) {
       console.error('[CAMPAIGNS] Exception:', e);
@@ -415,7 +419,6 @@ function App() {
         loadProfile(session.user.id);
         loadHistory(session.user.id);
         loadCampaigns(session.user.id);
-        loadInstantlyStats();
       }
     });
   };

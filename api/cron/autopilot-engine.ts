@@ -1118,8 +1118,10 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
     summary.push({
       campaignId: campaign.id, campaignName: campaign.name, status: batchStatus,
       leadsFound: batchResult.leadsFound, addedToInstantly: batchResult.addedToInstantly,
+      skippedDuplicate: batchResult.skippedDuplicate,
       targetPerRun, windowHours: windowMins / 60,
-      errors: batchResult.errors.length > 0 ? batchResult.errors : undefined,
+      errors:   batchResult.errors.length   > 0 ? batchResult.errors   : undefined,
+      warnings: batchResult.warnings.length > 0 ? batchResult.warnings : undefined,
     });
   }
 

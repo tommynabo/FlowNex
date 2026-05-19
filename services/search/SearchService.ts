@@ -513,6 +513,7 @@ export class SearchService {
         let sent = 0;
         let skipped = 0;
         let failed = 0;
+        let mvRejected = 0;
 
         for (const lead of leadsWithEmail) {
             const email = lead.decisionMaker!.email!;
@@ -546,6 +547,10 @@ export class SearchService {
                     // Lead already exists in the campaign — not an error
                     skipped++;
                     onLog('[INSTANTLY] ℹ Ya en campaña: ' + email);
+                } else if (response.status === 422) {
+                    // MillionVerifier rejected the email (invalid / disposable)
+                    mvRejected++;
+                    onLog('[MV] ⚠ Email descartado por MillionVerifier: ' + email);
                 } else {
                     failed++;
                     const err = await response.json().catch(() => ({})) as { error?: string };
@@ -557,7 +562,7 @@ export class SearchService {
             }
         }
 
-        onLog('[INSTANTLY] 📊 ' + sent + ' enviados' + (skipped ? ', ' + skipped + ' ya existían' : '') + (failed ? ', ' + failed + ' errores' : ''));
+        onLog('[INSTANTLY] 📊 ' + sent + ' enviados' + (skipped ? ', ' + skipped + ' ya existían' : '') + (mvRejected ? ', ' + mvRejected + ' descartados por MV' : '') + (failed ? ', ' + failed + ' errores' : ''));
     }
 
     private parseHashtagsFromQuery(query: string): string[] {

@@ -6,11 +6,48 @@
  * Called automatically from SearchService after each completed search.
  *
  * Required env vars (server-side only):
- *   INSTANTLY_API_KEY       — Instantly.ai API key
- *   INSTANTLY_CAMPAIGN_ID   — UUID of the target Instantly campaign
+ *   INSTANTLY_API_KEY          — Instantly.ai API key
+ *   INSTANTLY_CAMPAIGN_ID      — UUID of the target Instantly campaign
+ *   MILLIONVERIFIER_API_KEY    — MillionVerifier Single API key (optional; skips
+ *                                verification if not set)
+ *
+ * Email verification logic (MillionVerifier):
+ *   ok / catch_all → proceed to Instantly
+ *   invalid / disposable → HTTP 422 { verified: false, reason: '<result>' }
+ *   unknown → proceed with a console warning (SMTP timeout, not a guaranteed bounce)
+ *   If MILLIONVERIFIER_API_KEY is missing → skip verification, proceed normally
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+
+// ── MillionVerifier helper ────────────────────────────────────────────────────
+
+type MvResult = 'ok' | 'catch_all' | 'invalid' | 'unknown' | 'disposable' | 'error';
+
+interface MvResponse {
+  result: MvResult;
+  subresult?: string;
+  email?: string;
+  error?: number;
+  credits_available?: number;
+}
+
+async function verifyEmailWithMillionVerifier(email: string, apiKey: string): Promise<MvResult> {
+  try {
+    const url = `https://api.millionverifier.com/api/v3/?api=${encodeURIComponent(apiKey)}&email=${encodeURIComponent(email)}&timeout=10`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) {
+      console.warn('[MV] API returned HTTP', res.status, 'for', email, '— treating as unknown');
+      return 'unknown';
+    }
+    const data = await res.json() as MvResponse;
+    console.log('[MV] Verified:', email, '→', data.result, '|', data.subresult ?? '');
+    return data.result ?? 'unknown';
+  } catch (e) {
+    console.warn('[MV] Verification failed for', email, '—', e instanceof Error ? e.message : String(e), '— treating as unknown');
+    return 'unknown';
+  }
+}
 
 interface AddLeadRequest {
   email: string;
@@ -76,7 +113,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     payload['variables'] = customVars; // Corregido para API v2
   }
 
-  // ── 5. Call Instantly API ─────────────────────────────────────────────────
+  // ── 5. MillionVerifier — email validation ────────────────────────────────
+  const mvApiKey = process.env.MILLIONVERIFIER_API_KEY;
+  if (mvApiKey) {
+    const mvResult = await verifyEmailWithMillionVerifier(body.email.toLowerCase().trim(), mvApiKey);
+    if (mvResult === 'invalid' || mvResult === 'disposable') {
+      console.log('[MV] ❌ Email descartado por MillionVerifier:', body.email, '| result:', mvResult);
+      return res.status(422).json({ verified: false, reason: mvResult, email: body.email });
+    }
+    if (mvResult === 'unknown') {
+      console.warn('[MV] ⚠ Resultado unknown para:', body.email, '— se envía a Instantly igualmente');
+    }
+  } else {
+    console.warn('[MV] MILLIONVERIFIER_API_KEY no configurada — se omite verificación');
+  }
+
+  // ── 6. Call Instantly API ─────────────────────────────────────────────────
   try {
     const response = await fetch('https://api.instantly.ai/api/v2/leads', {
       method: 'POST',

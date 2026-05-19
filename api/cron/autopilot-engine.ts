@@ -343,6 +343,32 @@ function extractEmailFromBio(bio: string): string | null {
   return match ? match[0].toLowerCase() : null;
 }
 
+// ─── MILLIONVERIFIER ─────────────────────────────────────────────────────────
+// Verifies an email before it is inserted to DB and sent to Instantly.
+// ok / catch_all → valid  |  invalid / disposable → discard  |  unknown → pass with warning
+
+type MvResult = 'ok' | 'catch_all' | 'invalid' | 'unknown' | 'disposable' | 'error';
+
+interface MvResponse {
+  result: MvResult;
+  subresult?: string;
+  error?: number;
+}
+
+async function verifyEmailWithMillionVerifier(email: string, apiKey: string): Promise<MvResult> {
+  try {
+    const url = `https://api.millionverifier.com/api/v3/?api=${encodeURIComponent(apiKey)}&email=${encodeURIComponent(email)}&timeout=10`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) return 'unknown';
+    const data = await res.json() as MvResponse;
+    console.log('[MV] Verified:', email, '→', data.result, '|', data.subresult ?? '');
+    return data.result ?? 'unknown';
+  } catch (e) {
+    console.warn('[MV] Verification failed for', email, '—', e instanceof Error ? e.message : String(e));
+    return 'unknown';
+  }
+}
+
 // ─── INSTANTLY ────────────────────────────────────────────────────────────────
 
 async function addLeadToInstantly(
@@ -487,6 +513,7 @@ async function runTikTokBatch(
   apifyToken: string,
   instantlyKey: string,
   targetLeads: number,
+  mvApiKey?: string,
 ): Promise<BatchResult> {
   const result: BatchResult = { leadsFound: 0, addedToInstantly: 0, skippedDuplicate: 0, errors: [], warnings: [] };
 
@@ -527,6 +554,18 @@ async function runTikTokBatch(
       emailFinal = ttEmail || igCrossRef;
     }
     if (!emailFinal) return 'no_email';
+
+    // ── MillionVerifier check ────────────────────────────────────────────────
+    if (mvApiKey) {
+      const mvResult = await verifyEmailWithMillionVerifier(emailFinal, mvApiKey);
+      if (mvResult === 'invalid' || mvResult === 'disposable') {
+        result.warnings.push(`[MV] ❌ @${handle} descartado — email inválido (${mvResult}): ${emailFinal}`);
+        return 'no_email';
+      }
+      if (mvResult === 'unknown') {
+        result.warnings.push(`[MV] ⚠ @${handle} — resultado unknown para ${emailFinal} — se acepta igualmente`);
+      }
+    }
 
     const { error: insertErr } = await supabase.from('leads').insert({
       user_id: campaign.user_id, campaign_id: campaign.id, name: displayName,
@@ -800,6 +839,7 @@ async function runInstagramBatch(
   apifyToken: string,
   instantlyKey: string,
   targetLeads: number,
+  mvApiKey?: string,
 ): Promise<BatchResult> {
   const result: BatchResult = { leadsFound: 0, addedToInstantly: 0, skippedDuplicate: 0, errors: [], warnings: [] };
 
@@ -899,6 +939,18 @@ async function runInstagramBatch(
       if (!emailFinal) emailFinal = await serperEmailSearch(handle, serperKey);
       if (!emailFinal) continue;
 
+      // ── MillionVerifier check ──────────────────────────────────────────────
+      if (mvApiKey) {
+        const mvResult = await verifyEmailWithMillionVerifier(emailFinal, mvApiKey);
+        if (mvResult === 'invalid' || mvResult === 'disposable') {
+          result.warnings.push(`[MV] ❌ @${handle} descartado — email inválido (${mvResult}): ${emailFinal}`);
+          continue;
+        }
+        if (mvResult === 'unknown') {
+          result.warnings.push(`[MV] ⚠ @${handle} — resultado unknown para ${emailFinal} — se acepta igualmente`);
+        }
+      }
+
       const { error: insertErr } = await supabase.from('leads').insert({
         user_id: campaign.user_id, campaign_id: campaign.id, name: displayName,
         ig_handle: handle, follower_count: followers, niche: campaign.icp_content_types?.[0] ?? '',
@@ -937,11 +989,12 @@ async function runAutopilotBatch(
   apifyToken: string,
   instantlyKey: string,
   targetLeads: number,
+  mvApiKey?: string,
 ): Promise<BatchResult> {
   if (campaign.icp_type === 'personal_brand') {
-    return runInstagramBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetLeads);
+    return runInstagramBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetLeads, mvApiKey);
   }
-  return runTikTokBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetLeads);
+  return runTikTokBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetLeads, mvApiKey);
 }
 
 // ─── VERCEL HANDLER ───────────────────────────────────────────────────────────
@@ -970,9 +1023,11 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
   const serperKey    = process.env.SERPER_API_KEY ?? process.env.SERPET_API_KEY ?? ''; // SERPET_ is a common typo — support both
   const apifyToken   = process.env.APIFY_TOKEN ?? process.env.VITE_APIFY_API_TOKEN ?? '';
   const instantlyKey = process.env.INSTANTLY_API_KEY ?? '';
+  const mvApiKey     = process.env.MILLIONVERIFIER_API_KEY ?? '';
   if (!serperKey)    return res.status(500).json({ error: 'Missing SERPER_API_KEY env var (also checked SERPET_API_KEY)' });
   if (!apifyToken)   return res.status(500).json({ error: 'Missing APIFY_TOKEN / VITE_APIFY_API_TOKEN env var' });
   if (!instantlyKey) return res.status(500).json({ error: 'Missing INSTANTLY_API_KEY env var' });
+  if (!mvApiKey)     console.warn('[autopilot-engine] MILLIONVERIFIER_API_KEY not set — email verification disabled');
 
   // Supabase
   let supabase: SupabaseClient;
@@ -1051,7 +1106,7 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
     let batchResult: BatchResult          = { leadsFound: 0, addedToInstantly: 0, skippedDuplicate: 0, errors: [], warnings: [] };
 
     try {
-      batchResult = await runAutopilotBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetPerRun);
+      batchResult = await runAutopilotBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetPerRun, mvApiKey || undefined);
       // Only real errors (not config warnings) drive status:'error'
       if (batchResult.errors.length > 0 && batchResult.leadsFound === 0) {
         batchStatus  = 'error';

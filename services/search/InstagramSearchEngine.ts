@@ -1532,10 +1532,11 @@ export class InstagramSearchEngine {
     let sent = 0;
     let skipped = 0;
     let failed = 0;
+    let mvRejected = 0;
 
     for (const lead of leadsWithEmail) {
       const email = lead.decisionMaker!.email!;
-      const fullName = lead.decisionMaker?.name || '';
+      const fullName = lead.decisionMaker?.name || ''
       const nameParts = fullName.split(' ');
       const firstName = nameParts[0] || '';
       const lastName = nameParts.slice(1).join(' ') || '';
@@ -1568,6 +1569,9 @@ export class InstagramSearchEngine {
         } else if (response.status === 409) {
           skipped++;
           onLog('[INSTANTLY] ℹ Ya en campaña: ' + email);
+        } else if (response.status === 422) {
+          mvRejected++;
+          onLog('[MV] ⚠ Email descartado por MillionVerifier: ' + email);
         } else {
           failed++;
           onLog('[INSTANTLY] ❌ Error ' + response.status + ' para ' + email + ': ' + JSON.stringify(responseData).substring(0, 300));
@@ -1581,6 +1585,7 @@ export class InstagramSearchEngine {
 
     onLog('[INSTANTLY] 📊 ' + sent + ' enviados' +
       (skipped ? ', ' + skipped + ' ya existían' : '') +
+      (mvRejected ? ', ' + mvRejected + ' descartados por MV' : '') +
       (failed ? ', ' + failed + ' errores' : ''));
   }
 

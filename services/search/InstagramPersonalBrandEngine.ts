@@ -696,7 +696,7 @@ export class InstagramPersonalBrandEngine {
       return;
     }
     onLog('[INSTANTLY] 📤 Enviando ' + leadsWithEmail.length + ' lead(s) a campaña de Instantly...');
-    let sent = 0; let skipped = 0; let failed = 0;
+    let sent = 0; let skipped = 0; let failed = 0; let mvRejected = 0;
     for (const lead of leadsWithEmail) {
       const email = lead.decisionMaker!.email!;
       const fullName = lead.decisionMaker?.name || '';
@@ -717,13 +717,14 @@ export class InstagramPersonalBrandEngine {
         });
         if (response.ok) { sent++; onLog('[INSTANTLY] ✅ ' + email + ' añadido'); }
         else if (response.status === 409) { skipped++; onLog('[INSTANTLY] ℹ Ya en campaña: ' + email); }
+        else if (response.status === 422) { mvRejected++; onLog('[MV] ⚠ Email descartado por MillionVerifier: ' + email); }
         else { failed++; onLog('[INSTANTLY] ❌ Error ' + response.status + ' para ' + email); }
       } catch (e: unknown) {
         failed++;
         onLog('[INSTANTLY] ❌ Error de red: ' + (e instanceof Error ? e.message : String(e)));
       }
     }
-    onLog('[INSTANTLY] 📊 ' + sent + ' enviados' + (skipped ? ', ' + skipped + ' ya existían' : '') + (failed ? ', ' + failed + ' errores' : ''));
+    onLog('[INSTANTLY] 📊 ' + sent + ' enviados' + (skipped ? ', ' + skipped + ' ya existían' : '') + (mvRejected ? ', ' + mvRejected + ' descartados por MV' : '') + (failed ? ', ' + failed + ' errores' : ''));
   }
 
   // ── Public entry point ────────────────────────────────────────────────────────

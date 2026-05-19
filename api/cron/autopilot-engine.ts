@@ -221,22 +221,6 @@ function getTodayInTz(timezone: string): string {
   }
 }
 
-// ─── SERPER (Google Search) ───────────────────────────────────────────────────
-
-async function serperGoogleSearch(query: string, apiKey: string, page = 1): Promise<Array<{ link: string }>> {
-  const res = await fetch('https://google.serper.dev/search', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-API-KEY': apiKey },
-    body: JSON.stringify({ q: query, num: 20, ...(page > 1 ? { page } : {}) }),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Serper POST /search → HTTP ${res.status}: ${text.substring(0, 200)}`);
-  }
-  const data = await res.json() as { organic?: Array<{ link?: string }> };
-  return (data.organic ?? []).filter(r => r.link).map(r => ({ link: r.link! }));
-}
-
 // ─── APIFY GOOGLE SEARCH ────────────────────────────────────────────────────
 // Uses scraperlink~google-search-results-serp-scraper instead of Serper.
 // Supports site: operator queries — no free-tier restrictions.
@@ -409,22 +393,16 @@ async function addLeadToInstantly(
   }
 }
 
-// ─── SERPER EMAIL SEARCH ─────────────────────────────────────────────────────
-// Best TikTok fallback: Google indexes creator emails across the web
-// (YouTube About, personal sites, collab directories, etc.).
-// Query: "@{handle} gmail.com" → extract email from organic result snippets.
+// ─── APIFY EMAIL SEARCH ──────────────────────────────────────────────────────
+// Uses scraperlink~google-search-results-serp-scraper via Apify (same actor as
+// apifyGoogleSearch) — eliminates the Serper API dependency for email discovery.
+// Query: "@{handle} gmail.com" → extract email from result snippets/titles.
 
-async function serperEmailSearch(handle: string, apiKey: string): Promise<string> {
+async function apifyEmailSearch(handle: string, apifyToken: string): Promise<string> {
   try {
-    const res = await fetch('https://google.serper.dev/search', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json', 'X-API-KEY': apiKey },
-      body:    JSON.stringify({ q: `"@${handle}" gmail.com`, num: 5 }),
-    });
-    if (!res.ok) return '';
-    const data = await res.json() as { organic?: Array<{ title?: string; snippet?: string }> };
-    for (const r of data.organic ?? []) {
-      for (const text of [r.snippet ?? '', r.title ?? '']) {
+    const results = await apifyGoogleSearch(`"@${handle}" gmail.com`, apifyToken, 5);
+    for (const { snippet, title } of results) {
+      for (const text of [snippet, title]) {
         const m = text.match(EMAIL_REGEX);
         if (m?.[0] && !m[0].includes('example.com') && !m[0].includes('sentry.io'))
           return m[0].toLowerCase();
@@ -509,7 +487,6 @@ async function inlineIgCrossRef(bio: string): Promise<string> {
 async function runTikTokBatch(
   campaign: CampaignRow,
   supabase: SupabaseClient,
-  serperKey: string,
   apifyToken: string,
   instantlyKey: string,
   targetLeads: number,
@@ -548,7 +525,7 @@ async function runTikTokBatch(
 
     let emailFinal = rawEmail ?? '';
     if (!emailFinal) emailFinal = extractEmailFromBio(bio) ?? '';  // fast path: email in bio
-    if (!emailFinal) emailFinal = await serperEmailSearch(handle, serperKey);
+    if (!emailFinal) emailFinal = await apifyEmailSearch(handle, apifyToken);
     if (!emailFinal) {
       const [ttEmail, igCrossRef] = await Promise.all([inlineTikTokEmail(handle), inlineIgCrossRef(bio)]);
       emailFinal = ttEmail || igCrossRef;
@@ -835,7 +812,6 @@ function extractHandleFromInstagramUrl(url: string): string | null {
 async function runInstagramBatch(
   campaign: CampaignRow,
   supabase: SupabaseClient,
-  serperKey: string,
   apifyToken: string,
   instantlyKey: string,
   targetLeads: number,
@@ -935,8 +911,8 @@ async function runInstagramBatch(
       let emailFinal = emailRaw;
       // Stage 2: inline Instagram HTML fetch
       if (!emailFinal) emailFinal = await inlineIgEmail(handle);
-      // Stage 3: Serper web search
-      if (!emailFinal) emailFinal = await serperEmailSearch(handle, serperKey);
+      // Stage 3: Apify email search
+      if (!emailFinal) emailFinal = await apifyEmailSearch(handle, apifyToken);
       if (!emailFinal) continue;
 
       // ── MillionVerifier check ──────────────────────────────────────────────
@@ -985,16 +961,15 @@ async function runInstagramBatch(
 async function runAutopilotBatch(
   campaign: CampaignRow,
   supabase: SupabaseClient,
-  serperKey: string,
   apifyToken: string,
   instantlyKey: string,
   targetLeads: number,
   mvApiKey?: string,
 ): Promise<BatchResult> {
   if (campaign.icp_type === 'personal_brand') {
-    return runInstagramBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetLeads, mvApiKey);
+    return runInstagramBatch(campaign, supabase, apifyToken, instantlyKey, targetLeads, mvApiKey);
   }
-  return runTikTokBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetLeads, mvApiKey);
+  return runTikTokBatch(campaign, supabase, apifyToken, instantlyKey, targetLeads, mvApiKey);
 }
 
 // ─── VERCEL HANDLER ───────────────────────────────────────────────────────────
@@ -1020,11 +995,9 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
   if (!isVercelCron && !(cronSecret && bearerToken === cronSecret)) return res.status(401).json({ error: 'Unauthorized' });
 
   // Env vars
-  const serperKey    = process.env.SERPER_API_KEY ?? process.env.SERPET_API_KEY ?? ''; // SERPET_ is a common typo — support both
   const apifyToken   = process.env.APIFY_TOKEN ?? process.env.VITE_APIFY_API_TOKEN ?? '';
   const instantlyKey = process.env.INSTANTLY_API_KEY ?? '';
   const mvApiKey     = process.env.MILLIONVERIFIER_API_KEY ?? '';
-  if (!serperKey)    return res.status(500).json({ error: 'Missing SERPER_API_KEY env var (also checked SERPET_API_KEY)' });
   if (!apifyToken)   return res.status(500).json({ error: 'Missing APIFY_TOKEN / VITE_APIFY_API_TOKEN env var' });
   if (!instantlyKey) return res.status(500).json({ error: 'Missing INSTANTLY_API_KEY env var' });
   if (!mvApiKey)     console.warn('[autopilot-engine] MILLIONVERIFIER_API_KEY not set — email verification disabled');
@@ -1106,7 +1079,7 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
     let batchResult: BatchResult          = { leadsFound: 0, addedToInstantly: 0, skippedDuplicate: 0, errors: [], warnings: [] };
 
     try {
-      batchResult = await runAutopilotBatch(campaign, supabase, serperKey, apifyToken, instantlyKey, targetPerRun, mvApiKey || undefined);
+      batchResult = await runAutopilotBatch(campaign, supabase, apifyToken, instantlyKey, targetPerRun, mvApiKey || undefined);
       // Only real errors (not config warnings) drive status:'error'
       if (batchResult.errors.length > 0 && batchResult.leadsFound === 0) {
         batchStatus  = 'error';

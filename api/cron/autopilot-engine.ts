@@ -96,6 +96,70 @@ const REGION_QUERY_TERMS: Record<string, string[]> = {
   AU: ['Australia'],
 };
 
+// ─── TIKTOK DISCOVERY CONSTANTS ──────────────────────────────────────────────
+// Full 18-pool keyword set from TikTokFacelessEngine — inlined here so Vercel
+// bundler can tree-shake correctly without cross-directory service imports.
+
+const TT_GOOGLE_QUERY_BATCH = 5; // parallel Apify runs per outer iteration
+
+const TT_FACELESS_POOLS: string[][] = [
+  // 0. Clipper / editor identity + Gmail — highest precision, guaranteed email
+  ['"gmail.com"', '"clipper"', '"editor"', '"edits"', '"daily clips"', '"dm for promo"'],
+  // 1. EN faceless motivation / no-excuses + Gmail
+  ['"gmail.com"', '"no excuses"', '"best version"', '"discipline"', '"slideshow"', '"no face"'],
+  // 2. Figure-clip / entrepreneur clipper + Gmail — Hormozi, Gadzhi, Goggins editors
+  ['"gmail.com"', '"hormozi"', '"iman gadzhi"', '"david goggins"', '"tate"', '"goggins"'],
+  // 3. Entrepreneur / community signals + Gmail — WOP, Skool, SMMA members
+  ['"gmail.com"', '"smma"', '"skool"', '"wop"', '"online business"', '"make money online"'],
+  // 4. Business inquiry / collabs signal — explicit contact intent
+  ['"business inquiries"', '"for business"', '"for collabs"', '"clips"', '"motivation"', '"mindset"'],
+  // 5. DM for promo / rates — explicit monetisation + contact intent
+  ['"dm for promo"', '"dm for promos"', '"dm for rates"', '"hustle"', '"grind"', '"discipline"'],
+  // 6. Monetisation links + Gmail — Payhip / Gumroad / Forms creators actively selling
+  ['"payhip.com"', '"gumroad.com"', '"forms.gle"', '"clips"', '"motivation"', '"slideshow"'],
+  // 7. Anchor-account clipper reference + Gmail
+  ['"gmail.com"', '"hormozi clips"', '"goggins edits"', '"tate clips"', '"gadzhi clips"', '"alex hormozi"'],
+  // 8. Community burst (WOP/Skool/clipping) + Gmail
+  ['"skool"', '"wop"', '"clipping"', '"dm for collab"', '"gmail.com"', '"daily clips"'],
+  // 9. FITNESS FACELESS — #gymmotivation
+  ['"#gymmotivation"', '"#motivation"', '"#discipline"', '"#hardwork"', '"slideshow"'],
+  // 10. GymTok faceless — #gymtok physique/Pinterest slideshows
+  ['"#gymtok"', '"#fitness"', '"#hustle"', '"slideshow"', '"#bestversion"'],
+  // 11. Physique / gains faceless — money×fitness crossover
+  ['"#physique"', '"#gains"', '"#gym"', '"slideshow"', '"#motivation"'],
+  // 12. @-prefixed clipper/editor bio mentions
+  ['"@clipper"', '"@editor"', '"@motivation"', '"gmail.com"', '"dm for promo"'],
+  // 13. @-prefixed figure references — editors who mention known figures with @
+  ['"@hormozi"', '"@gadzhi"', '"@goggins"', '"@tate"', '"gmail.com"', '"edits"'],
+  // 14. Bodybuilding fan page
+  ['"bodybuilding fan page"', '"gym motivation"', '"gmail.com"', '"dm for collab"', '"physique page"', '"fan page"'],
+  // 15. Fitness clipper / gym clips page
+  ['"fitness clips"', '"gym clips"', '"bodybuilder"', '"gmail.com"', '"dm for paid"', '"paid collab"'],
+  // 16. Personal coaching CTA — "DM [result]" pattern + skinny-fat niche
+  ['"DM LEAN"', '"DM SHRED"', '"DM BULK"', '"DM PROGRAM"', '"skinny-fat"', '"skinny fat"'],
+  // 17. #gymtok × #gymotivation intersection
+  ['"#gymtok"', '"#gymotivation"', '"#gym"', '"#gains"', '"slideshow"'],
+];
+
+const TT_GYMTOK_VARIANTS: Array<{ query: string }> = [
+  // A — Email-first: #gymtok + Gmail + physique/discipline keywords
+  { query: 'site:tiktok.com "#gymtok" ("gmail.com" OR "dm for promo") ("physique" OR "discipline" OR "no excuses" OR "best version") -site:tiktok.com/tag/ -restaurant -store -boutique -cooking -dance' },
+  // B — CTA-based: paid collab + natty/gains signals
+  { query: 'site:tiktok.com "#gymtok" ("dm for paid" OR "dm for collab" OR "paid collab" OR "dm for promo") ("natty" OR "gains" OR "transformation" OR "motivation") -site:tiktok.com/tag/ -restaurant -store -boutique -cooking -dance' },
+  // C — #gymtok × #gymmotivation + Gmail
+  { query: 'site:tiktok.com "#gymtok" "#gymmotivation" ("gmail.com" OR "business inquiries") ("slideshow" OR "mindset" OR "discipline") -site:tiktok.com/tag/ -restaurant -store -boutique -cooking -dance' },
+  // D — Faceless format: #gymtok + slideshow/no-face + contact signal
+  { query: 'site:tiktok.com "#gymtok" ("slideshow" OR "no face" OR "faceless") ("gmail.com" OR "dm for promo" OR "for business") -site:tiktok.com/tag/ -restaurant -store -boutique -cooking -dance' },
+  // E — Niche hashtag intersection: #gymtok + #natty/#physique/#gains + Gmail
+  { query: 'site:tiktok.com "#gymtok" ("#natty" OR "#physique" OR "#gains" OR "#transformation") ("gmail.com" OR "dm for promo" OR "business inquiries") -site:tiktok.com/tag/ -restaurant -store -boutique -cooking -dance' },
+  // F — Monetisation sweep: #gymtok + payhip/gumroad/for collabs
+  { query: 'site:tiktok.com "#gymtok" ("business inquiries" OR "for collabs" OR "payhip" OR "gumroad") ("fitness" OR "gym" OR "workout" OR "hustle") -site:tiktok.com/tag/ -restaurant -store -boutique -cooking -dance' },
+];
+
+const TT_STATS_CITIES  = ['Toronto', 'Chicago', 'Houston', 'Miami', 'Dallas', 'Atlanta', 'Phoenix', 'Denver', 'Seattle', 'Calgary', 'Vancouver', 'Boston', 'San Diego', 'Austin', 'Orlando'];
+const TT_STATS_HEIGHTS = ["5'8\"", "5'9\"", "5'10\"", "5'11\"", "6'", "6'1\"", "6'2\"", "6'3\""];
+const TT_STATS_WEIGHTS = ['155lbs', '160lbs', '165lbs', '170lbs', '175lbs', '180lbs', '185lbs', '190lbs', '195lbs', '200lbs'];
+
 // ─── TYPES ────────────────────────────────────────────────────────────────────
 
 interface CampaignRow {
@@ -482,6 +546,70 @@ async function inlineIgCrossRef(bio: string): Promise<string> {
   return inlineIgEmail(igHandle);
 }
 
+// ─── TIKTOK DISCOVERY QUERY BUILDERS ─────────────────────────────────────────
+// Mirrors TikTokFacelessEngine query builder — inlined for safe Vercel bundling.
+
+function buildLocationSuffix(regions: string[]): string {
+  if (!regions.length || regions.length > 3) return '';
+  const allTerms = regions.flatMap(r => REGION_QUERY_TERMS[r] ?? []);
+  return allTerms.length ? '(' + allTerms.join(' OR ') + ')' : '';
+}
+
+function buildTikTokStatsQuery(): string {
+  const city   = TT_STATS_CITIES[Math.floor(Math.random() * TT_STATS_CITIES.length)];
+  const height = TT_STATS_HEIGHTS[Math.floor(Math.random() * TT_STATS_HEIGHTS.length)];
+  const weight = TT_STATS_WEIGHTS[Math.floor(Math.random() * TT_STATS_WEIGHTS.length)];
+  return `site:tiktok.com "${city}" "${height}" "${weight}" -site:tiktok.com/tag/ -restaurant -dance`;
+}
+
+function buildGymtokQuery(outerAttempt: number, slotIndex: number, regions: string[]): string {
+  const variantIdx = (outerAttempt * 3 + slotIndex) % TT_GYMTOK_VARIANTS.length;
+  const base = TT_GYMTOK_VARIANTS[variantIdx].query;
+  const loc  = buildLocationSuffix(regions);
+  return loc ? `${base} ${loc}` : base;
+}
+
+function buildTikTokSearchQuery(subAttempt: number, regions: string[]): string {
+  const outerAttempt = Math.ceil((subAttempt + 1) / TT_GOOGLE_QUERY_BATCH);
+  const loc    = buildLocationSuffix(regions);
+  const withLoc = (q: string) => loc ? `${q} ${loc}` : q;
+
+  // Stats block — ~7% of budget (outer attempts 1, 16, 31…)
+  if (outerAttempt % 15 === 1) return withLoc(buildTikTokStatsQuery());
+
+  // Community burst — every 5th outer attempt uses Pool 8 (WOP/Skool/clipping)
+  if (outerAttempt % 5 === 0) {
+    const pool8 = TT_FACELESS_POOLS[8];
+    const g = '(' + pool8.join(' OR ') + ')';
+    const e = '("gmail.com" OR "business inquiries" OR "dm for promo" OR "dm for promos")';
+    return withLoc(`site:tiktok.com ${g} ${e} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+  }
+
+  // 17-pool rotation (pools 0–16)
+  const poolIdx = ((subAttempt - 4) % 17 + 17) % 17;
+  const terms   = TT_FACELESS_POOLS[poolIdx];
+  const orGroup = '(' + terms.join(' OR ') + ')';
+
+  // Pools 9–16: no strict email gate — faceless boost
+  if (poolIdx >= 9) {
+    const boost = '("slideshow" OR "link in bio" OR "payhip" OR "gumroad" OR "dm for promo")';
+    return withLoc(`site:tiktok.com ${orGroup} ${boost} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+  }
+
+  // Email-first pools (0–8): 6-cycle signal combinations
+  const emailSignal  = '("gmail.com" OR "business inquiries" OR "for business" OR "dm for business" OR "for collabs")';
+  const dmCtaGroup   = '("dm for promo" OR "dm for promos" OR "dm for rates" OR "payhip" OR "gumroad")';
+  const hormoziFigs  = '("hormozi" OR "iman gadzhi" OR "goggins" OR "tate")';
+  const volumeSignal = '("slideshow" OR "carousel" OR "daily content" OR "viral clips" OR "short form")';
+  const mod = subAttempt % 6;
+  if (mod === 0) return withLoc(`site:tiktok.com ${orGroup} ${emailSignal} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+  if (mod === 1) return withLoc(`site:tiktok.com ${orGroup} ${emailSignal} ${dmCtaGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+  if (mod === 2) return withLoc(`site:tiktok.com ${orGroup} ${emailSignal} ${hormoziFigs} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+  if (mod === 3) return withLoc(`site:tiktok.com ${orGroup} ${emailSignal} ${volumeSignal} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+  if (mod === 4) return withLoc(`site:tiktok.com ${orGroup} ${dmCtaGroup} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+  return withLoc(`site:tiktok.com ${orGroup} ${emailSignal} -site:tiktok.com/tag/ ${ANTI_ICP_NEGATIVES}`);
+}
+
 // ─── TIKTOK BATCH ORCHESTRATION ──────────────────────────────────────────────
 
 async function runTikTokBatch(
@@ -567,59 +695,48 @@ async function runTikTokBatch(
     return 'added';
   }
 
-  // ── STEP 1-3: Google site:tiktok.com discovery (mirrors TikTokFacelessEngine) ──
-  // The manual engine works because Google pre-filters: only creators whose bio
-  // already contains Gmail + ICP keywords appear in results. Hashtag search returns
-  // random creators — most fail ICP (sparse bios) and email discovery.
-  // apifyGoogleSearch uses scraperlink~google-search-results-serp-scraper (no
-  // free-tier Serper restrictions). Three queries per run, rotating every 10 min.
+  // ── STEP 1-3: Google site:tiktok.com discovery — 5 parallel queries per iteration ──
+  // Mirrors TikTokFacelessEngine: slots 0-2 = GYMTOK variants, slots 3-4 = pool queries.
+  // 5 parallel Apify actors → wall-time ≈ single actor (~45s) instead of 3 × 45s serial.
+  // 2 outer iterations = 10 total queries per cron tick → 10 distinct search angles.
 
-  // 8 targeted queries for faceless-clipper/gym-motivation ICP, ordered by yield:
-  const TT_DISCOVERY_QUERIES = [
-    // 0. Clipper/editor identity + Gmail — highest precision
-    `site:tiktok.com ("gmail.com" OR "dm for promo") ("clipper" OR "editor" OR "edits" OR "daily clips") -site:tiktok.com/tag/ -restaurant -fashion -dance`,
-    // 1. Gym motivation + Gmail
-    `site:tiktok.com "gym motivation" ("gmail.com" OR "dm for promo" OR "dm for collab") ("physique" OR "discipline" OR "clips") -site:tiktok.com/tag/`,
-    // 2. #gymtok + Gmail + ICP signals
-    `site:tiktok.com "#gymtok" ("gmail.com" OR "dm for promo") ("physique" OR "discipline" OR "no excuses" OR "best version") -site:tiktok.com/tag/ -restaurant -dance`,
-    // 3. #gymmotivation + faceless format + contact signal
-    `site:tiktok.com "#gymmotivation" ("slideshow" OR "no face" OR "clips") ("gmail.com" OR "dm for promo" OR "for business") -site:tiktok.com/tag/`,
-    // 4. Figure-clip editors (Hormozi/Goggins/Tate) + Gmail
-    `site:tiktok.com ("hormozi" OR "goggins" OR "gadzhi" OR "tate") ("gmail.com" OR "dm for promo") ("clips" OR "edits" OR "editor") -site:tiktok.com/tag/`,
-    // 5. DM for promo/rates + hustle/discipline
-    `site:tiktok.com ("dm for promo" OR "dm for rates" OR "paid collab") ("hustle" OR "grind" OR "discipline" OR "gains") -site:tiktok.com/tag/ -restaurant`,
-    // 6. Physique/gym clips page + Gmail
-    `site:tiktok.com ("physique page" OR "gym clips" OR "fitness clips" OR "bodybuilding fan page") ("gmail.com" OR "dm for collab") -site:tiktok.com/tag/`,
-    // 7. Community (WOP/Skool/SMMA) + Gmail
-    `site:tiktok.com ("skool" OR "wop" OR "smma") ("gmail.com" OR "dm for promo") ("clips" OR "motivation" OR "mindset") -site:tiktok.com/tag/`,
-  ] as const;
-
-  const queryOffset = Math.floor(Date.now() / 600_000) % TT_DISCOVERY_QUERIES.length;
-
-  // Store handle + the Google snippet so we can extract email from indexed content
-  // (fast path — avoids scraptik when email is already visible in the snippet).
+  const baseOffset = Math.floor(Date.now() / 600_000); // rotates every 10 min
   interface Candidate { handle: string; snippet: string; }
   const candidateHandles: Candidate[] = [];
 
-  for (let iter = 0; iter < 3 && candidateHandles.length < 30 && result.leadsFound < targetLeads; iter++) {
-    const query = TT_DISCOVERY_QUERIES[(queryOffset + iter) % TT_DISCOVERY_QUERIES.length];
-    try {
-      const links = await apifyGoogleSearch(query, apifyToken, 20);
-      for (const { link, snippet, title } of links) {
+  for (let outerIter = 0; outerIter < 2 && candidateHandles.length < 30 && result.leadsFound < targetLeads; outerIter++) {
+    const outerAttempt = baseOffset + outerIter;
+    // Slots 0-2: #gymtok variants (highest ICP yield); slots 3-4: rotating pool queries
+    const queries = [
+      buildGymtokQuery(outerAttempt, 0, regions),
+      buildGymtokQuery(outerAttempt, 1, regions),
+      buildGymtokQuery(outerAttempt, 2, regions),
+      buildTikTokSearchQuery(outerAttempt * TT_GOOGLE_QUERY_BATCH + 3, regions),
+      buildTikTokSearchQuery(outerAttempt * TT_GOOGLE_QUERY_BATCH + 4, regions),
+    ];
+
+    const searchResults = await Promise.allSettled(
+      queries.map(q => apifyGoogleSearch(q, apifyToken, 20)),
+    );
+
+    for (let i = 0; i < searchResults.length; i++) {
+      const r = searchResults[i];
+      if (r.status === 'rejected') {
+        result.errors.push(`TikTok Google discovery failed (outer ${outerIter + 1}, slot ${i}): ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`);
+        continue;
+      }
+      for (const { link, snippet, title } of r.value) {
         if (!link.includes('tiktok.com') || link.includes('/tag/') || link.includes('/video/')) continue;
         const handle = extractHandleFromUrl(link);
         if (handle && !seenHandles.has(handle) && !candidateHandles.find(c => c.handle === handle)) {
           candidateHandles.push({ handle, snippet: `${snippet} ${title}`.trim() });
         }
       }
-    } catch (e) {
-      result.errors.push(`TikTok Google discovery failed (iter ${iter + 1}): ${e instanceof Error ? e.message : String(e)}`);
-      break;
     }
   }
 
   if (candidateHandles.length === 0 && result.errors.length === 0) {
-    result.warnings.push(`TikTok Google discovery returned no handles (queries ${queryOffset}–${(queryOffset + 2) % TT_DISCOVERY_QUERIES.length})`);
+    result.warnings.push(`TikTok Google discovery returned no handles (outer attempts ${baseOffset}–${baseOffset + 1})`);
   }
 
   // ── STEP 4+5: Parallel profile lookups → ICP filter → email → DB insert ──
@@ -1023,8 +1140,8 @@ async function _handler(req: VercelRequest, res: VercelResponse) {
 
   const summary: Array<{
     campaignId: string; campaignName: string; status: string;
-    leadsFound?: number; addedToInstantly?: number; targetPerRun?: number;
-    windowHours?: number; reason?: string; errors?: string[];
+    leadsFound?: number; addedToInstantly?: number; skippedDuplicate?: number; targetPerRun?: number;
+    windowHours?: number; reason?: string; errors?: string[]; warnings?: string[];
   }> = [];
 
   for (const campaign of (campaigns ?? []) as CampaignRow[]) {

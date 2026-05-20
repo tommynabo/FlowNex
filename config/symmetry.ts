@@ -13,6 +13,8 @@ export interface SymmetryFaq {
 
 export interface SymmetryContext {
   companyName: string;
+  loomLink: string;
+  rolePageLink: string;
   companyMission: string;
   offerDescription: string;
   jobDescription: string;
@@ -23,6 +25,8 @@ export interface SymmetryContext {
 
 export const SYMMETRY_CONTEXT: SymmetryContext = {
   companyName: 'Symmetry',
+  loomLink: 'https://www.loom.com/share/f795c20c49fb4ab0a77d4ee09ec2d4ce',
+  rolePageLink: 'https://symmetry.club/roles/ugc-creator-en',
 
   companyMission:
     'Symmetry is the #1 Health & Fitness app in the Spanish-speaking world, with millions of downloads ' +
@@ -72,6 +76,14 @@ export const SYMMETRY_CONTEXT: SymmetryContext = {
     '7. No menciones condiciones exactas de contrato por email; eso lo gestiona el Head of Content en la llamada',
 
   faq: [
+    {
+      question: 'Is this a brand collab? / Rate per post? / Rate per video? / I work per-post / What\'s your budget per video?',
+      answer:
+        'This is NOT a brand collab or a per-post deal — there is no per-piece fee. ' +
+        'It is a paid role on our content team: you are a team member, not a brand partner. ' +
+        'Compensation is performance-based: base $4k/mo scaling up to $20k/mo, tied to downloads driven by your content. ' +
+        'The reason it\'s not per-piece: creators produce high volume and we want people scaling with us, not booking one-off campaigns.',
+    },
     {
       question: '¿Cuánto se paga? / What\'s the pay? / What\'s the salary?',
       answer:

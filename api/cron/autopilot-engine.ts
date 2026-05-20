@@ -79,7 +79,7 @@ function applyIcpHardFilter(profiles: RawApifyProfile[], icpType: 'personal_bran
     }
     if (icpType === 'faceless_clipper') {
       const tier1 = _ICP_TIER1_KW.find(kw => full.includes(kw));
-      if (!tier1 && _ICP_TIER2_KW.filter(kw => full.includes(kw)).length < 3) return false;
+      if (!tier1 && _ICP_TIER2_KW.filter(kw => full.includes(kw)).length < 2) return false;
     }
     return true;
   });
@@ -629,12 +629,17 @@ async function runTikTokBatch(
   const regions      = campaign.icp_regions ?? [];
   if (!instantlyId) result.warnings.push('Instantly skipped: instantly_campaign_id is not set on this campaign');
 
-  // Step 1: Dedup — load known handles once, update in-memory during the run
-  const { data: existingLeads } = await supabase
-    .from('leads').select('ig_handle').eq('campaign_id', campaign.id).not('ig_handle', 'is', null);
-  const seenHandles = new Set<string>(
-    (existingLeads ?? []).map((r: { ig_handle: string }) => r.ig_handle?.toLowerCase()).filter(Boolean),
-  );
+  // Step 1: Dedup — load known handles (confirmed leads) + previously-tried handles (queue)
+  // so we never waste a scraptik call on a handle we've already evaluated.
+  const [{ data: existingLeads }, { data: queueItems }] = await Promise.all([
+    supabase.from('leads').select('ig_handle').eq('campaign_id', campaign.id).not('ig_handle', 'is', null),
+    supabase.from('tiktok_handle_queue').select('handle').eq('campaign_id', campaign.id)
+      .in('status', ['failed_icp', 'no_email', 'added', 'passed_icp']),
+  ]);
+  const seenHandles = new Set<string>([
+    ...(existingLeads ?? []).map((r: { ig_handle: string }) => r.ig_handle?.toLowerCase()).filter(Boolean),
+    ...(queueItems ?? []).map((r: { handle: string }) => r.handle?.toLowerCase()).filter(Boolean),
+  ]);
 
   // ── Shared profile processor ─────────────────────────────────────────────
   // Used by both STEP 0 (queue drain) and STEP 4+ (Serper loop) to avoid
@@ -774,6 +779,7 @@ async function runTikTokBatch(
     let diagFailedIcp = 0;
     let diagNoEmail   = 0;
     let diagDuplicate = 0;
+    const outcomeMap  = new Map<string, 'added' | 'failed_icp' | 'no_email' | 'duplicate'>();
 
     for (const item of profileItems) {
       if (result.leadsFound >= targetLeads) break;
@@ -825,6 +831,7 @@ async function runTikTokBatch(
       );
 
       const outcome = await processProfile(handle, bio, followers, displayName, rawEmail);
+      outcomeMap.set(handle, outcome);
       if (outcome === 'duplicate')   diagDuplicate++;
       if (outcome === 'failed_icp')  diagFailedIcp++;
       if (outcome === 'no_email')    diagNoEmail++;
@@ -838,6 +845,21 @@ async function runTikTokBatch(
       );
     } else if (result.leadsFound === 0 && profileItems.length === 0) {
       result.warnings.push(`scraptik returned 0 items for ${candidateHandles.length} candidates`);
+    }
+
+    // Persist failed/no-email handles to tiktok_handle_queue so they're pre-filtered on future runs.
+    const rejectedRows = [...outcomeMap.entries()]
+      .filter(([, status]) => status === 'failed_icp' || status === 'no_email')
+      .map(([handle, status]) => ({
+        user_id:     campaign.user_id,
+        campaign_id: campaign.id,
+        handle,
+        position:    0,
+        status,
+      }));
+    if (rejectedRows.length > 0) {
+      await supabase.from('tiktok_handle_queue')
+        .upsert(rejectedRows, { onConflict: 'campaign_id,handle', ignoreDuplicates: true });
     }
   } else if (result.errors.length === 0) {
     result.warnings.push('TikTok discovery found no new handles — all seen or filtered');
